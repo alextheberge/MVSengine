@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /// @mvs-feature("rust_surface")
 /// @mvs-protocol("rust_api")
 pub fn handshake(version: u32) -> bool {

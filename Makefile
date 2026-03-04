@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 SHELL := /usr/bin/env bash
 .SHELLFLAGS := -eu -o pipefail -c
 

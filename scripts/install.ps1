@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 param(
   [string]$Repo = $(if ($env:MVS_REPO) { $env:MVS_REPO } else { "alextheberge/MVSengine" }),
   [string]$Version = $(if ($env:MVS_VERSION) { $env:MVS_VERSION } else { "latest" }),

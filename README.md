@@ -92,3 +92,10 @@ scripts/verify-release.sh dist/vX.Y.Z/mvs-manager-X.Y.Z-<target>.tar.gz dist/vX.
 ```
 
 See [docs/USAGE.md](docs/USAGE.md) and [docs/RELEASE.md](docs/RELEASE.md) for complete workflows.
+
+## License
+
+This repository is licensed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`).
+
+- Full license text: [LICENSE](LICENSE)
+- If you modify and run this software for users over a network, AGPL requires offering corresponding source to those users.

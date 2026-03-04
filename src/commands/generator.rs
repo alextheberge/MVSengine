@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 use anyhow::{Context, Result};
 
 use crate::cli::GenerateArgs;

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 set -euo pipefail
 
 if [[ $# -lt 2 || $# -gt 4 ]]; then

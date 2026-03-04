@@ -2,6 +2,10 @@
 name = "mvs-manager"
 version = "0.1.0"
 edition = "2021"
+license = "AGPL-3.0-only"
+repository = "https://github.com/alextheberge/MVSengine"
+readme = "README.md"
+description = "MVS Engine manager CLI for multidimensional post-SemVer versioning."
 
 [dependencies]
 anyhow = "1.0"

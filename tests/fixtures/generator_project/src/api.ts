@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // @mvs-feature("offline_storage")
 // @mvs-feature:auth_flow
 // @mvs-protocol("auth-api-v1")
