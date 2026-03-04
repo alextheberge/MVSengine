@@ -20,8 +20,17 @@ pub fn run(args: ValidateArgs) -> Result<()> {
         )
     })?;
 
-    let result =
-        validate_host_extension(&host, &extension, args.context.as_deref(), args.allow_shims);
+    let result = validate_host_extension(
+        &host,
+        &extension,
+        args.context.as_deref(),
+        args.allow_shims,
+        if args.host_model_capabilities.is_empty() {
+            None
+        } else {
+            Some(args.host_model_capabilities.as_slice())
+        },
+    );
 
     if result.compatible {
         if result.degraded {

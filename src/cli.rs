@@ -39,6 +39,12 @@ pub struct GenerateArgs {
     #[arg(long)]
     pub arch_reason: Option<String>,
 
+    #[arg(long, default_value_t = false, conflicts_with = "backwards_compatible")]
+    pub lock_step: bool,
+
+    #[arg(long, value_name = "N", conflicts_with = "lock_step")]
+    pub backwards_compatible: Option<u64>,
+
     #[arg(long, default_value_t = false)]
     pub dry_run: bool,
 }
@@ -53,6 +59,9 @@ pub struct LintArgs {
 
     #[arg(long)]
     pub ai_schema: Option<PathBuf>,
+
+    #[arg(long, value_delimiter = ',')]
+    pub available_model_capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -68,6 +77,9 @@ pub struct ValidateArgs {
 
     #[arg(long, default_value_t = true)]
     pub allow_shims: bool,
+
+    #[arg(long, value_delimiter = ',')]
+    pub host_model_capabilities: Vec<String>,
 }
 
 pub fn run() -> Result<()> {

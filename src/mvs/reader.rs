@@ -12,6 +12,7 @@ pub fn validate_host_extension(
     extension: &Manifest,
     context: Option<&str>,
     allow_shims: bool,
+    host_model_capabilities_override: Option<&[String]>,
 ) -> ValidationResult {
     let mut reasons = Vec::new();
     let mut compatible = true;
@@ -41,48 +42,40 @@ pub fn validate_host_extension(
                 host.compatibility.extension_range.max_prot,
                 host_prot
             ));
+
+            if let Some(reason) = extension.latest_protocol_reason(extension_prot) {
+                reasons.push(format!(
+                    "Extension protocol {} rationale: {}",
+                    extension_prot, reason
+                ));
+            }
+            if let Some(reason) = host.latest_protocol_reason(host_prot) {
+                reasons.push(format!("Host protocol {} rationale: {}", host_prot, reason));
+            }
         }
     }
 
-    match context {
-        Some(target_context) => {
-            if extension.identity.cont != target_context {
-                compatible = false;
-                reasons.push(format!(
-                    "Context mismatch: extension CONT is `{}`, requested `{}`.",
-                    extension.identity.cont, target_context
-                ));
-            }
+    let target_context = context.unwrap_or(&extension.identity.cont);
+    if !context_satisfies(target_context, &extension.identity.cont) {
+        compatible = false;
+        reasons.push(format!(
+            "Context mismatch: extension CONT `{}` is not compatible with target `{}`.",
+            extension.identity.cont, target_context
+        ));
+    }
 
-            if !host.environment.profiles.is_empty()
-                && !host
-                    .environment
-                    .profiles
-                    .iter()
-                    .any(|profile| profile == target_context)
-            {
-                compatible = false;
-                reasons.push(format!(
-                    "Host runtime profiles do not include requested context `{}`.",
-                    target_context
-                ));
-            }
-        }
-        None => {
-            if !host.environment.profiles.is_empty()
-                && !host
-                    .environment
-                    .profiles
-                    .iter()
-                    .any(|profile| profile == &extension.identity.cont)
-            {
-                compatible = false;
-                reasons.push(format!(
-                    "Host runtime profiles do not include extension context `{}`.",
-                    extension.identity.cont
-                ));
-            }
-        }
+    if !host.environment.profiles.is_empty()
+        && !host
+            .environment
+            .profiles
+            .iter()
+            .any(|profile| context_pair_compatible(profile, target_context))
+    {
+        compatible = false;
+        reasons.push(format!(
+            "Host runtime profiles do not support target context `{}`.",
+            target_context
+        ));
     }
 
     for (capability, required) in &extension.capabilities {
@@ -100,6 +93,44 @@ pub fn validate_host_extension(
         reasons.push(format!(
             "AI contract schema version unsupported: extension requires {}, host provides {}.",
             extension.ai_contract.tool_schema_version, host.ai_contract.tool_schema_version
+        ));
+    }
+
+    let host_runtime_capabilities: Vec<String> = host_model_capabilities_override
+        .map(|capabilities| capabilities.to_vec())
+        .unwrap_or_else(|| {
+            if host.ai_contract.provided_model_capabilities.is_empty() {
+                host.ai_contract.required_model_capabilities.clone()
+            } else {
+                host.ai_contract.provided_model_capabilities.clone()
+            }
+        });
+
+    let host_capability_set: std::collections::BTreeSet<String> = host_runtime_capabilities
+        .iter()
+        .map(|item| item.trim().to_ascii_lowercase())
+        .filter(|item| !item.is_empty())
+        .collect();
+
+    let missing_ai_capabilities: Vec<String> = extension
+        .ai_contract
+        .required_model_capabilities
+        .iter()
+        .filter_map(|required| {
+            let normalized = required.trim().to_ascii_lowercase();
+            if host_capability_set.contains(&normalized) {
+                None
+            } else {
+                Some(required.clone())
+            }
+        })
+        .collect();
+
+    if !missing_ai_capabilities.is_empty() {
+        compatible = false;
+        reasons.push(format!(
+            "AI capability mismatch: host runtime is missing required model capabilities: {}.",
+            missing_ai_capabilities.join(", ")
         ));
     }
 
@@ -122,6 +153,14 @@ fn has_shim(host: &Manifest, from_prot: u64, to_prot: u64) -> bool {
         .legacy_shims
         .iter()
         .any(|shim| shim.from_prot == from_prot && shim.to_prot == to_prot)
+}
+
+fn context_satisfies(actual: &str, required: &str) -> bool {
+    actual == required || actual.starts_with(&format!("{required}."))
+}
+
+fn context_pair_compatible(left: &str, right: &str) -> bool {
+    context_satisfies(left, right) || context_satisfies(right, left)
 }
 
 #[cfg(test)]
@@ -155,7 +194,7 @@ mod tests {
             .capabilities
             .insert("offline_storage".to_string(), true);
 
-        let result = validate_host_extension(&host, &extension, None, true);
+        let result = validate_host_extension(&host, &extension, None, true, None);
         assert!(result.compatible);
         assert!(!result.degraded);
     }
@@ -179,7 +218,7 @@ mod tests {
             max_prot: 1,
         };
 
-        let result = validate_host_extension(&host, &extension, None, true);
+        let result = validate_host_extension(&host, &extension, None, true, None);
         assert!(result.compatible);
         assert!(result.degraded);
     }
@@ -190,11 +229,41 @@ mod tests {
         let mut extension = base_manifest("cli", 1);
         extension.capabilities.insert("streaming".to_string(), true);
 
-        let result = validate_host_extension(&host, &extension, None, true);
+        let result = validate_host_extension(&host, &extension, None, true, None);
         assert!(!result.compatible);
         assert!(result
             .reasons
             .iter()
             .any(|reason| reason.contains("Missing required capability")));
+    }
+
+    #[test]
+    fn context_hierarchy_allows_general_extension_on_specific_runtime() {
+        let mut host = base_manifest("edge.mobile", 1);
+        host.environment.profiles = vec!["edge.mobile".to_string()];
+        let extension = base_manifest("edge", 1);
+
+        let result = validate_host_extension(&host, &extension, None, true, None);
+        assert!(result.compatible);
+    }
+
+    #[test]
+    fn fails_when_ai_runtime_capabilities_do_not_satisfy_extension() {
+        let host = base_manifest("cli", 1);
+        let mut extension = base_manifest("cli", 1);
+        extension.ai_contract.required_model_capabilities = vec!["reasoning-v1".to_string()];
+
+        let result = validate_host_extension(
+            &host,
+            &extension,
+            None,
+            true,
+            Some(&["tool_calling".to_string()]),
+        );
+        assert!(!result.compatible);
+        assert!(result
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("AI capability mismatch")));
     }
 }

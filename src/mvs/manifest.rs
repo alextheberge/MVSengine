@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -24,6 +29,9 @@ pub struct Manifest {
 
     #[serde(default)]
     pub evidence: Evidence,
+
+    #[serde(default)]
+    pub history: Vec<HistoryEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +74,8 @@ pub struct AiContract {
     pub tool_schema_hash: String,
     #[serde(default)]
     pub required_model_capabilities: Vec<String>,
+    #[serde(default)]
+    pub provided_model_capabilities: Vec<String>,
     pub prompt_contract_id: String,
 }
 
@@ -84,6 +94,17 @@ pub struct Evidence {
     pub public_api_hash: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryEntry {
+    pub mvs: String,
+    pub arch: u64,
+    pub feat: u64,
+    pub prot: u64,
+    pub cont: String,
+    pub reasons: Vec<String>,
+    pub changed_at_unix: u64,
+}
+
 impl ProtocolRange {
     pub fn contains(&self, prot: u64) -> bool {
         prot >= self.min_prot && prot <= self.max_prot
@@ -96,6 +117,7 @@ impl Default for AiContract {
             tool_schema_version: 1,
             tool_schema_hash: String::new(),
             required_model_capabilities: Vec::new(),
+            provided_model_capabilities: Vec::new(),
             prompt_contract_id: "default".to_string(),
         }
     }
@@ -117,6 +139,7 @@ impl Manifest {
             ai_contract: AiContract::default(),
             environment: Environment::default(),
             evidence: Evidence::default(),
+            history: Vec::new(),
         };
 
         manifest.sync_identity_string();
@@ -190,6 +213,38 @@ impl Manifest {
 
         Ok(())
     }
+
+    pub fn append_history_entry(&mut self, reasons: Vec<String>) {
+        if reasons.is_empty() {
+            return;
+        }
+
+        let entry = HistoryEntry {
+            mvs: self.identity.mvs.clone(),
+            arch: self.identity.arch,
+            feat: self.identity.feat,
+            prot: self.identity.prot,
+            cont: self.identity.cont.clone(),
+            reasons,
+            changed_at_unix: current_unix_timestamp(),
+        };
+        self.history.push(entry);
+    }
+
+    pub fn latest_protocol_reason(&self, prot: u64) -> Option<String> {
+        self.history.iter().rev().find_map(|entry| {
+            if entry.prot != prot {
+                return None;
+            }
+
+            entry
+                .reasons
+                .iter()
+                .find(|reason| reason.to_ascii_lowercase().contains("protocol"))
+                .cloned()
+                .or_else(|| entry.reasons.first().cloned())
+        })
+    }
 }
 
 fn validate_range(label: &str, range: &ProtocolRange) -> Result<()> {
@@ -203,6 +258,13 @@ fn validate_range(label: &str, range: &ProtocolRange) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn current_unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -233,5 +295,19 @@ mod tests {
         manifest.sync_identity_string();
 
         assert!(manifest.validate().is_err());
+    }
+
+    #[test]
+    fn history_entries_can_be_recorded_and_queried() {
+        let mut manifest = Manifest::default_for_context("cli");
+        manifest.identity.prot = 12;
+        manifest.sync_identity_string();
+        manifest.append_history_entry(vec![
+            "Protocol incremented due to Auth Flow break in /src/api/auth.ts.".to_string(),
+        ]);
+
+        let reason = manifest.latest_protocol_reason(12);
+        assert!(reason.is_some());
+        assert!(reason.unwrap_or_default().contains("Auth Flow break"));
     }
 }

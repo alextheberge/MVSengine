@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use crate::cli::GenerateArgs;
 use crate::mvs::crawler::{crawl_codebase, ApiSignature, CrawlReport};
 use crate::mvs::hashing::{hash_file, hash_items};
-use crate::mvs::manifest::{Manifest, ProtocolRange};
+use crate::mvs::manifest::{LegacyShim, Manifest, ProtocolRange};
 
 /// @mvs-feature("manifest_generation")
 /// @mvs-protocol("cli_generate_command")
@@ -35,6 +35,7 @@ pub fn run(args: GenerateArgs) -> Result<()> {
         arch_break: args.arch_break,
         arch_reason: args.arch_reason.as_deref(),
     });
+    let range_strategy = resolve_range_strategy(&args);
 
     manifest.identity.arch += decision.arch_increment;
     manifest.identity.feat += decision.feat_increment;
@@ -59,20 +60,17 @@ pub fn run(args: GenerateArgs) -> Result<()> {
         manifest.environment.profiles.push(context.to_string());
     }
 
-    normalize_range(
-        &mut manifest.compatibility.host_range,
-        manifest.identity.prot,
-    );
-    normalize_range(
-        &mut manifest.compatibility.extension_range,
-        manifest.identity.prot,
-    );
+    let mut reasons_to_persist = decision.reasons.clone();
+    if let Some(strategy_reason) = apply_range_strategy(&mut manifest, range_strategy) {
+        reasons_to_persist.push(strategy_reason);
+    }
+    manifest.append_history_entry(reasons_to_persist.clone());
 
     println!("MVS identity: {}", manifest.identity.mvs);
-    if decision.reasons.is_empty() {
+    if reasons_to_persist.is_empty() {
         println!("No axis increments required; evidence was refreshed.");
     } else {
-        for reason in &decision.reasons {
+        for reason in &reasons_to_persist {
             println!("- {reason}");
         }
     }
@@ -104,6 +102,13 @@ struct AxisInputs<'a> {
     ai_schema_hash: &'a str,
     arch_break: bool,
     arch_reason: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RangeStrategy {
+    Normalize,
+    LockStep,
+    BackwardsCompatible(u64),
 }
 
 fn derive_axis_decision(inputs: AxisInputs<'_>) -> AxisDecision {
@@ -194,12 +199,91 @@ fn normalize_range(range: &mut ProtocolRange, current_prot: u64) {
     }
 }
 
+fn resolve_range_strategy(args: &GenerateArgs) -> RangeStrategy {
+    if args.lock_step {
+        return RangeStrategy::LockStep;
+    }
+
+    if let Some(window) = args.backwards_compatible {
+        return RangeStrategy::BackwardsCompatible(window);
+    }
+
+    RangeStrategy::Normalize
+}
+
+fn apply_range_strategy(manifest: &mut Manifest, strategy: RangeStrategy) -> Option<String> {
+    let current_prot = manifest.identity.prot;
+
+    match strategy {
+        RangeStrategy::Normalize => {
+            normalize_range(&mut manifest.compatibility.host_range, current_prot);
+            normalize_range(&mut manifest.compatibility.extension_range, current_prot);
+            None
+        }
+        RangeStrategy::LockStep => {
+            manifest.compatibility.host_range = ProtocolRange {
+                min_prot: current_prot,
+                max_prot: current_prot,
+            };
+            manifest.compatibility.extension_range = ProtocolRange {
+                min_prot: current_prot,
+                max_prot: current_prot,
+            };
+            clear_auto_shims(manifest);
+            Some(format!(
+                "Range strategy `lock-step` applied (host/extension ranges pinned to PROT {}).",
+                current_prot
+            ))
+        }
+        RangeStrategy::BackwardsCompatible(window) => {
+            let min_prot = current_prot.saturating_sub(window);
+            manifest.compatibility.host_range = ProtocolRange {
+                min_prot,
+                max_prot: current_prot,
+            };
+            manifest.compatibility.extension_range = ProtocolRange {
+                min_prot,
+                max_prot: current_prot,
+            };
+            generate_auto_shims(manifest, min_prot, current_prot);
+            Some(format!(
+                "Range strategy `backwards-compatible-{}` applied (PROT {}-{} with generated legacy shims).",
+                window, min_prot, current_prot
+            ))
+        }
+    }
+}
+
+const AUTO_SHIM_PREFIX: &str = "auto_backward_compat";
+
+fn clear_auto_shims(manifest: &mut Manifest) {
+    manifest
+        .compatibility
+        .legacy_shims
+        .retain(|shim| !shim.adapter.starts_with(AUTO_SHIM_PREFIX));
+}
+
+fn generate_auto_shims(manifest: &mut Manifest, min_prot: u64, current_prot: u64) {
+    clear_auto_shims(manifest);
+
+    for from_prot in min_prot..current_prot {
+        manifest.compatibility.legacy_shims.push(LegacyShim {
+            from_prot,
+            to_prot: current_prot,
+            adapter: format!("{AUTO_SHIM_PREFIX}_v{from_prot}_to_v{current_prot}"),
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::mvs::crawler::{ApiSignature, CrawlReport, TagOccurrence};
-    use crate::mvs::manifest::Manifest;
+    use std::path::PathBuf;
 
-    use super::{derive_axis_decision, AxisInputs};
+    use crate::cli::GenerateArgs;
+    use crate::mvs::crawler::{ApiSignature, CrawlReport, TagOccurrence};
+    use crate::mvs::manifest::{LegacyShim, Manifest};
+
+    use super::{apply_range_strategy, derive_axis_decision, resolve_range_strategy, AxisInputs};
 
     #[test]
     fn increments_arch_and_prot_for_double_channel_break() {
@@ -248,5 +332,73 @@ mod tests {
             .reasons
             .iter()
             .any(|reason| reason.contains("public API signature drift")));
+    }
+
+    #[test]
+    fn backwards_compatible_strategy_generates_shims_and_ranges() {
+        let mut manifest = Manifest::default_for_context("cli");
+        manifest.identity.prot = 6;
+        manifest.sync_identity_string();
+
+        let reason =
+            apply_range_strategy(&mut manifest, super::RangeStrategy::BackwardsCompatible(3));
+
+        assert_eq!(manifest.compatibility.host_range.min_prot, 3);
+        assert_eq!(manifest.compatibility.host_range.max_prot, 6);
+        assert_eq!(manifest.compatibility.legacy_shims.len(), 3);
+        assert!(reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("backwards-compatible-3"));
+    }
+
+    #[test]
+    fn lock_step_strategy_pins_ranges_and_clears_auto_shims() {
+        let mut manifest = Manifest::default_for_context("cli");
+        manifest.identity.prot = 4;
+        manifest.sync_identity_string();
+        manifest.compatibility.legacy_shims.push(LegacyShim {
+            from_prot: 1,
+            to_prot: 4,
+            adapter: "auto_backward_compat_v1_to_v4".to_string(),
+        });
+        manifest.compatibility.legacy_shims.push(LegacyShim {
+            from_prot: 2,
+            to_prot: 4,
+            adapter: "manual_custom_shim".to_string(),
+        });
+
+        let reason = apply_range_strategy(&mut manifest, super::RangeStrategy::LockStep);
+
+        assert_eq!(manifest.compatibility.host_range.min_prot, 4);
+        assert_eq!(manifest.compatibility.host_range.max_prot, 4);
+        assert_eq!(manifest.compatibility.extension_range.min_prot, 4);
+        assert_eq!(manifest.compatibility.extension_range.max_prot, 4);
+        assert_eq!(manifest.compatibility.legacy_shims.len(), 1);
+        assert_eq!(
+            manifest.compatibility.legacy_shims[0].adapter,
+            "manual_custom_shim"
+        );
+        assert!(reason.as_deref().unwrap_or_default().contains("lock-step"));
+    }
+
+    #[test]
+    fn resolve_strategy_from_args() {
+        let args = GenerateArgs {
+            root: PathBuf::from("."),
+            manifest: PathBuf::from("mvs.json"),
+            context: None,
+            ai_schema: None,
+            arch_break: false,
+            arch_reason: None,
+            lock_step: false,
+            backwards_compatible: Some(2),
+            dry_run: false,
+        };
+
+        match resolve_range_strategy(&args) {
+            super::RangeStrategy::BackwardsCompatible(window) => assert_eq!(window, 2),
+            _ => panic!("unexpected strategy"),
+        }
     }
 }

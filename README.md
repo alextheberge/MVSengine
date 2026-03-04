@@ -23,9 +23,14 @@ make build-release
 ## Core Commands
 ```bash
 mvs-manager generate --root . --manifest mvs.json --context cli
+mvs-manager generate --root . --manifest mvs.json --context edge.mobile --backwards-compatible 3
 mvs-manager lint --root . --manifest mvs.json
+mvs-manager lint --root . --manifest mvs.json --available-model-capabilities tool_calling,json_schema,reasoning-v1
 mvs-manager validate --host-manifest host.json --extension-manifest extension.json
+mvs-manager validate --host-manifest host.json --extension-manifest extension.json --host-model-capabilities tool_calling,reasoning-v1
 ```
+
+`mvs.json` now persists version-change rationale in `history`, enabling compatibility reports to explain why protocol breaks occurred.
 
 ## Release + Verification
 

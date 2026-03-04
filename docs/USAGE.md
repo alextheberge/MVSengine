@@ -12,6 +12,18 @@ Use `--arch-break` for explicit data/schema breaks:
 mvs-manager generate --root . --manifest mvs.json --context cli --arch-break --arch-reason "persistent schema migration"
 ```
 
+Range strategy flags:
+
+```bash
+# lock host/extension protocol ranges to current PROT
+mvs-manager generate --root . --manifest mvs.json --context cli --lock-step
+
+# declare compatibility window and auto-generate shim declarations
+mvs-manager generate --root . --manifest mvs.json --context cli --backwards-compatible 3
+```
+
+Every increment rationale is persisted to `mvs.json.history`.
+
 ## 2) Build-gate with linter
 
 ```bash
@@ -24,10 +36,27 @@ Optional AI schema drift checks:
 mvs-manager lint --root . --manifest mvs.json --ai-schema ./tool_schema.json
 ```
 
+AI liveness checks (runtime capability validation):
+
+```bash
+mvs-manager lint --root . --manifest mvs.json --available-model-capabilities tool_calling,json_schema,reasoning-v1
+```
+
 ## 3) Validate host/extension compatibility
 
 ```bash
 mvs-manager validate --host-manifest host.json --extension-manifest extension.json --allow-shims true
+```
+
+Context hierarchies are supported. Example: `edge` extensions can run on `edge.mobile` hosts when ranges and capabilities pass.
+
+AI runtime capability override for validation:
+
+```bash
+mvs-manager validate \
+  --host-manifest host.json \
+  --extension-manifest extension.json \
+  --host-model-capabilities tool_calling,reasoning-v1
 ```
 
 ## Makefile shortcuts

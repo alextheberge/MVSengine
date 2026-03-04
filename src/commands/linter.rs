@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::{anyhow, Context, Result};
 
 use crate::cli::LintArgs;
@@ -63,6 +65,36 @@ pub fn run(args: LintArgs) -> Result<()> {
             "AI tool-calling schema hash drift detected. PROT increment is required for AI contract changes."
                 .to_string(),
         );
+    }
+
+    if !args.available_model_capabilities.is_empty() {
+        let available: BTreeSet<String> = args
+            .available_model_capabilities
+            .iter()
+            .map(|item| item.trim().to_ascii_lowercase())
+            .filter(|item| !item.is_empty())
+            .collect();
+
+        let missing: Vec<String> = manifest
+            .ai_contract
+            .required_model_capabilities
+            .iter()
+            .filter_map(|required| {
+                let normalized = required.trim().to_ascii_lowercase();
+                if available.contains(&normalized) {
+                    None
+                } else {
+                    Some(required.clone())
+                }
+            })
+            .collect();
+
+        if !missing.is_empty() {
+            failures.push(format!(
+                "AI capability liveness failed: runtime is missing required model capabilities: {}.",
+                missing.join(", ")
+            ));
+        }
     }
 
     if failures.is_empty() {

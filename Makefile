@@ -16,9 +16,13 @@ CONTEXT ?= cli
 AI_SCHEMA ?=
 ARCH_BREAK ?= false
 ARCH_REASON ?=
+LOCK_STEP ?= false
+BACKWARDS_COMPATIBLE ?=
 HOST_MANIFEST ?= tests/fixtures/manifests/host_with_shim.json
 EXTENSION_MANIFEST ?= tests/fixtures/manifests/extension_out_of_range.json
 ALLOW_SHIMS ?= true
+AVAILABLE_MODEL_CAPABILITIES ?=
+HOST_MODEL_CAPABILITIES ?=
 TARGET ?=
 
 VERSION_TAG ?= v$(shell $(CARGO) metadata --no-deps --format-version=1 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' | head -n1)
@@ -49,6 +53,10 @@ print-config: ## Print effective build/runtime configuration.
 	@printf "MANIFEST=%s\n" "$(MANIFEST)"
 	@printf "CONTEXT=%s\n" "$(CONTEXT)"
 	@printf "AI_SCHEMA=%s\n" "$(AI_SCHEMA)"
+	@printf "LOCK_STEP=%s\n" "$(LOCK_STEP)"
+	@printf "BACKWARDS_COMPATIBLE=%s\n" "$(BACKWARDS_COMPATIBLE)"
+	@printf "AVAILABLE_MODEL_CAPABILITIES=%s\n" "$(AVAILABLE_MODEL_CAPABILITIES)"
+	@printf "HOST_MODEL_CAPABILITIES=%s\n" "$(HOST_MODEL_CAPABILITIES)"
 	@printf "TARGET=%s\n" "$(TARGET)"
 	@printf "VERSION_TAG=%s\n" "$(VERSION_TAG)"
 	@printf "DIST_ROOT=%s\n" "$(DIST_ROOT)"
@@ -91,6 +99,8 @@ generate: ## Run manifest generator (writes MANIFEST).
 	@args=(generate --root "$(ROOT)" --manifest "$(MANIFEST)" --context "$(CONTEXT)"); \
 	if [[ "$(ARCH_BREAK)" == "true" ]]; then args+=(--arch-break); fi; \
 	if [[ -n "$(ARCH_REASON)" ]]; then args+=(--arch-reason "$(ARCH_REASON)"); fi; \
+	if [[ "$(LOCK_STEP)" == "true" ]]; then args+=(--lock-step); fi; \
+	if [[ -n "$(BACKWARDS_COMPATIBLE)" ]]; then args+=(--backwards-compatible "$(BACKWARDS_COMPATIBLE)"); fi; \
 	if [[ -n "$(AI_SCHEMA)" ]]; then args+=(--ai-schema "$(AI_SCHEMA)"); fi; \
 	$(CARGO) run -- "$${args[@]}"
 
@@ -98,19 +108,21 @@ generate-dry: ## Run generator in dry-run mode.
 	@args=(generate --root "$(ROOT)" --manifest "$(MANIFEST)" --context "$(CONTEXT)" --dry-run); \
 	if [[ "$(ARCH_BREAK)" == "true" ]]; then args+=(--arch-break); fi; \
 	if [[ -n "$(ARCH_REASON)" ]]; then args+=(--arch-reason "$(ARCH_REASON)"); fi; \
+	if [[ "$(LOCK_STEP)" == "true" ]]; then args+=(--lock-step); fi; \
+	if [[ -n "$(BACKWARDS_COMPATIBLE)" ]]; then args+=(--backwards-compatible "$(BACKWARDS_COMPATIBLE)"); fi; \
 	if [[ -n "$(AI_SCHEMA)" ]]; then args+=(--ai-schema "$(AI_SCHEMA)"); fi; \
 	$(CARGO) run -- "$${args[@]}"
 
 lint-manifest: ## Verify code and manifest are aligned.
 	@args=(lint --root "$(ROOT)" --manifest "$(MANIFEST)"); \
 	if [[ -n "$(AI_SCHEMA)" ]]; then args+=(--ai-schema "$(AI_SCHEMA)"); fi; \
+	if [[ -n "$(AVAILABLE_MODEL_CAPABILITIES)" ]]; then args+=(--available-model-capabilities "$(AVAILABLE_MODEL_CAPABILITIES)"); fi; \
 	$(CARGO) run -- "$${args[@]}"
 
 validate: ## Validate extension compatibility against host manifest.
-	$(CARGO) run -- validate \
-		--host-manifest "$(HOST_MANIFEST)" \
-		--extension-manifest "$(EXTENSION_MANIFEST)" \
-		--allow-shims "$(ALLOW_SHIMS)"
+	@args=(validate --host-manifest "$(HOST_MANIFEST)" --extension-manifest "$(EXTENSION_MANIFEST)" --allow-shims "$(ALLOW_SHIMS)"); \
+	if [[ -n "$(HOST_MODEL_CAPABILITIES)" ]]; then args+=(--host-model-capabilities "$(HOST_MODEL_CAPABILITIES)"); fi; \
+	$(CARGO) run -- "$${args[@]}"
 
 fixture-smoke: ## Run generator/linter against fixture project.
 	@tmp_dir="$$(mktemp -d)"; \

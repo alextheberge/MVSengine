@@ -1,20 +1,20 @@
 {
   "$schema": "https://mvs.dev/schema/v1",
   "identity": {
-    "mvs": "0.2.2-cli",
+    "mvs": "0.2.3-cli",
     "arch": 0,
     "feat": 2,
-    "prot": 2,
+    "prot": 3,
     "cont": "cli"
   },
   "compatibility": {
     "host_range": {
       "min_prot": 0,
-      "max_prot": 2
+      "max_prot": 3
     },
     "extension_range": {
       "min_prot": 0,
-      "max_prot": 2
+      "max_prot": 3
     },
     "legacy_shims": []
   },
@@ -30,6 +30,7 @@
       "tool_calling",
       "json_schema"
     ],
+    "provided_model_capabilities": [],
     "prompt_contract_id": "mvs-manager-cli-v1"
   },
   "environment": {
@@ -43,6 +44,19 @@
   "evidence": {
     "feature_hash": "1f6ce081de26f86c580ec65258ba0d39d2877a34f384af92578e6fdb07718e20",
     "protocol_hash": "481fb0a06a4081f5cc57f0be22e468b1dc35f53ae3d938c1608a748c78a29469",
-    "public_api_hash": "f87523863c07344772a513500a6101fb27b713df9184b1122612179e8cb54dc5"
-  }
+    "public_api_hash": "370e5c8912bbd016e82ff31a57cf82c462c9ec3dbe1099cfb79421fa68824f5f"
+  },
+  "history": [
+    {
+      "mvs": "0.2.3-cli",
+      "arch": 0,
+      "feat": 2,
+      "prot": 3,
+      "cont": "cli",
+      "reasons": [
+        "Protocol incremented due to public API signature drift (example source: src/cli.rs)."
+      ],
+      "changed_at_unix": 1772656819
+    }
+  ]
 }
