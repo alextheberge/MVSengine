@@ -36,11 +36,12 @@ GPG_PRIVATE_KEY_FILE ?=
 INSTALL_REPO ?= alextheberge/MVSengine
 INSTALL_VERSION ?= latest
 INSTALL_DIR ?= $(HOME)/.local/bin
+GITHOOKS_DIR ?= .githooks
 
 HOST_TARGET := $(shell rustc -vV 2>/dev/null | awk '/host:/ {print $$2}')
 CARGO_TARGET_FLAG := $(if $(strip $(TARGET)),--target $(TARGET),)
 
-.PHONY: help print-config bootstrap fmt fmt-check check clippy test test-unit test-integration build build-release docs clean ci generate generate-dry lint-manifest validate fixture-smoke release-local release-host release-target release-matrix-local release-merge-checksums release-sign-checksums release-verify install watch doctor
+.PHONY: help print-config bootstrap fmt fmt-check check clippy test test-unit test-integration build build-release docs clean ci generate generate-dry lint-manifest validate fixture-smoke release-local release-host release-target release-matrix-local release-merge-checksums release-sign-checksums release-verify install install-hooks run-precommit watch doctor
 
 help: ## Show all available targets.
 	@awk 'BEGIN {FS = ":.*##"; printf "\nMVS Engine Make Targets\n\n"} /^[a-zA-Z0-9_.-]+:.*##/ { printf "  %-26s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -180,6 +181,18 @@ release-local: release-host ## Alias for host release packaging.
 
 install: ## Install released binary via scripts/install.sh.
 	@MVS_REPO="$(INSTALL_REPO)" MVS_VERSION="$(INSTALL_VERSION)" MVS_INSTALL_DIR="$(INSTALL_DIR)" scripts/install.sh
+
+install-hooks: ## Configure git to use repository hooks and install pre-commit gate.
+	@if [[ ! -d "$(GITHOOKS_DIR)" ]]; then \
+		echo "hooks directory not found: $(GITHOOKS_DIR)"; \
+		exit 1; \
+	fi
+	@git config core.hooksPath "$(GITHOOKS_DIR)"
+	@chmod +x "$(GITHOOKS_DIR)/pre-commit"
+	@echo "Configured git hooks path: $(GITHOOKS_DIR)"
+
+run-precommit: ## Run the same gate used by the pre-commit hook.
+	@make lint-manifest
 
 ci: fmt-check check clippy test fixture-smoke lint-manifest ## Full local/CI quality gate.
 	@echo "CI checks passed."

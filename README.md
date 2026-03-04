@@ -20,6 +20,13 @@ make ci
 make build-release
 ```
 
+## Enforce MVS on Commit
+```bash
+make install-hooks
+```
+
+This installs a repo-managed `pre-commit` hook that runs `make lint-manifest`.
+
 ## Core Commands
 ```bash
 mvs-manager generate --root . --manifest mvs.json --context cli

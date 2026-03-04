@@ -62,12 +62,15 @@ mvs-manager validate \
 ## Makefile shortcuts
 
 ```bash
+make install-hooks
 make generate
 make lint-manifest
 make validate
 make ci
 make build-release
 ```
+
+`make install-hooks` sets `core.hooksPath` to `.githooks` and enables a pre-commit gate that runs `make lint-manifest`.
 
 ## Troubleshooting
 
