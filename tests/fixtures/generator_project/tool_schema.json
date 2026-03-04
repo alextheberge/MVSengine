@@ -1,0 +1,9 @@
+{
+  "title": "MVS Tool Contract",
+  "type": "object",
+  "properties": {
+    "intent": { "type": "string" },
+    "context": { "type": "string" }
+  },
+  "required": ["intent"]
+}

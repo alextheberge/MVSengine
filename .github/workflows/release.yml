@@ -1,0 +1,129 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version_tag:
+        description: "Version tag to package (example: v1.2.3). Optional for tag builds."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version tag
+        shell: bash
+        run: |
+          if [[ -n "${{ github.event.inputs.version_tag }}" ]]; then
+            tag="${{ github.event.inputs.version_tag }}"
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="v0.0.0-dev.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "VERSION_TAG=${tag}" >> "$GITHUB_ENV"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build and package
+        shell: bash
+        run: |
+          chmod +x scripts/release/package.sh
+          TARGET="${{ matrix.target }}" VERSION_TAG="${VERSION_TAG}" scripts/release/package.sh
+
+      - name: Upload target artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/${{ env.VERSION_TAG }}/*
+          if-no-files-found: error
+
+  assemble:
+    name: Assemble Release Assets
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version tag
+        shell: bash
+        run: |
+          if [[ -n "${{ github.event.inputs.version_tag }}" ]]; then
+            tag="${{ github.event.inputs.version_tag }}"
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="v0.0.0-dev.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "VERSION_TAG=${tag}" >> "$GITHUB_ENV"
+
+      - name: Download built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist/${{ env.VERSION_TAG }}
+
+      - name: Merge checksums
+        shell: bash
+        run: |
+          chmod +x scripts/release/merge_checksums.sh
+          scripts/release/merge_checksums.sh "dist/${VERSION_TAG}"
+
+      - name: Optional GPG sign checksums
+        if: ${{ secrets.MVS_GPG_PRIVATE_KEY != '' }}
+        env:
+          MVS_GPG_PRIVATE_KEY: ${{ secrets.MVS_GPG_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          printf '%s' "${MVS_GPG_PRIVATE_KEY}" > private.key
+          gpg --batch --import private.key
+          gpg --batch --yes --armor --detach-sign --output "dist/${VERSION_TAG}/checksums.txt.asc" "dist/${VERSION_TAG}/checksums.txt"
+          rm -f private.key
+
+      - name: Publish GitHub Release (tag builds)
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ env.VERSION_TAG }}/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+
+      - name: Upload assembled artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: assembled-${{ env.VERSION_TAG }}
+          path: dist/${{ env.VERSION_TAG }}/*
+          if-no-files-found: error

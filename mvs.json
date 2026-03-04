@@ -1,0 +1,48 @@
+{
+  "$schema": "https://mvs.dev/schema/v1",
+  "identity": {
+    "mvs": "0.2.2-cli",
+    "arch": 0,
+    "feat": 2,
+    "prot": 2,
+    "cont": "cli"
+  },
+  "compatibility": {
+    "host_range": {
+      "min_prot": 0,
+      "max_prot": 2
+    },
+    "extension_range": {
+      "min_prot": 0,
+      "max_prot": 2
+    },
+    "legacy_shims": []
+  },
+  "capabilities": {
+    "manifest_compatibility_validation": true,
+    "manifest_generation": true,
+    "manifest_linting": true
+  },
+  "ai_contract": {
+    "tool_schema_version": 1,
+    "tool_schema_hash": "",
+    "required_model_capabilities": [
+      "tool_calling",
+      "json_schema"
+    ],
+    "prompt_contract_id": "mvs-manager-cli-v1"
+  },
+  "environment": {
+    "profiles": [
+      "cli"
+    ],
+    "runtime_constraints": {
+      "rust": "1.74+"
+    }
+  },
+  "evidence": {
+    "feature_hash": "1f6ce081de26f86c580ec65258ba0d39d2877a34f384af92578e6fdb07718e20",
+    "protocol_hash": "481fb0a06a4081f5cc57f0be22e468b1dc35f53ae3d938c1608a748c78a29469",
+    "public_api_hash": "f87523863c07344772a513500a6101fb27b713df9184b1122612179e8cb54dc5"
+  }
+}

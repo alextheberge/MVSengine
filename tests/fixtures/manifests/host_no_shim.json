@@ -1,0 +1,33 @@
+{
+  "$schema": "https://mvs.dev/schema/v1",
+  "identity": {
+    "mvs": "0.2.2-cli",
+    "arch": 0,
+    "feat": 2,
+    "prot": 2,
+    "cont": "cli"
+  },
+  "compatibility": {
+    "host_range": { "min_prot": 2, "max_prot": 2 },
+    "extension_range": { "min_prot": 2, "max_prot": 2 },
+    "legacy_shims": []
+  },
+  "capabilities": {
+    "offline_storage": true
+  },
+  "ai_contract": {
+    "tool_schema_version": 2,
+    "tool_schema_hash": "",
+    "required_model_capabilities": ["tool_calling"],
+    "prompt_contract_id": "host-v2"
+  },
+  "environment": {
+    "profiles": ["cli"],
+    "runtime_constraints": { "rust": "1.74+" }
+  },
+  "evidence": {
+    "feature_hash": "",
+    "protocol_hash": "",
+    "public_api_hash": ""
+  }
+}
