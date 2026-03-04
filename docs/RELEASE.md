@@ -25,7 +25,19 @@ Workflow: `.github/workflows/release.yml`
 
 Trigger options:
 - Push a tag: `vX.Y.Z`
+- Publish a GitHub release
 - Manual dispatch from Actions UI
+
+Before tagging:
+
+```bash
+make dogfood-sync-version
+make ci
+```
+
+This enforces:
+- `Cargo.toml` version = MVS numeric version (`ARCH.FEAT.PROT`)
+- canonical release tag = `vARCH.FEAT.PROT` (for example `mvs.json: 0.2.3-cli` => tag `v0.2.3`)
 
 Build matrix currently publishes:
 - `x86_64-unknown-linux-gnu`
@@ -38,7 +50,7 @@ The workflow:
 2. Packages archive + checksum per target.
 3. Merges `checksums.txt`.
 4. Optionally signs checksums with GPG when `MVS_GPG_PRIVATE_KEY` secret is configured.
-5. Publishes release assets on tag builds.
+5. Publishes or updates release assets for tag/release events.
 
 ## Signature verification (optional)
 

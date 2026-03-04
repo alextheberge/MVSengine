@@ -38,11 +38,12 @@ INSTALL_REPO ?= alextheberge/MVSengine
 INSTALL_VERSION ?= latest
 INSTALL_DIR ?= $(HOME)/.local/bin
 GITHOOKS_DIR ?= .githooks
+EXPECTED_TAG ?=
 
 HOST_TARGET := $(shell rustc -vV 2>/dev/null | awk '/host:/ {print $$2}')
 CARGO_TARGET_FLAG := $(if $(strip $(TARGET)),--target $(TARGET),)
 
-.PHONY: help print-config bootstrap fmt fmt-check check clippy test test-unit test-integration build build-release docs clean ci generate generate-dry lint-manifest validate fixture-smoke release-local release-host release-target release-matrix-local release-merge-checksums release-sign-checksums release-verify install install-hooks run-precommit watch doctor
+.PHONY: help print-config bootstrap fmt fmt-check check clippy test test-unit test-integration build build-release docs clean ci generate generate-dry lint-manifest validate fixture-smoke release-local release-host release-target release-matrix-local release-merge-checksums release-sign-checksums release-verify install install-hooks run-precommit dogfood-check dogfood-sync-version watch doctor
 
 help: ## Show all available targets.
 	@awk 'BEGIN {FS = ":.*##"; printf "\nMVS Engine Make Targets\n\n"} /^[a-zA-Z0-9_.-]+:.*##/ { printf "  %-26s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -195,7 +196,14 @@ install-hooks: ## Configure git to use repository hooks and install pre-commit g
 run-precommit: ## Run the same gate used by the pre-commit hook.
 	@make lint-manifest
 
-ci: fmt-check check clippy test fixture-smoke lint-manifest ## Full local/CI quality gate.
+dogfood-check: ## Ensure Cargo version matches mvs.json numeric version (and optional EXPECTED_TAG).
+	@EXPECTED_TAG="$(EXPECTED_TAG)" scripts/release/check_dogfood.sh
+
+dogfood-sync-version: ## Sync Cargo.toml version from mvs.json identity (ARCH.FEAT.PROT-CONT -> ARCH.FEAT.PROT).
+	@scripts/release/sync_cargo_version.sh
+	@$(CARGO) check -q
+
+ci: fmt-check check clippy test fixture-smoke lint-manifest dogfood-check ## Full local/CI quality gate.
 	@echo "CI checks passed."
 
 watch: ## Run cargo watch loop if available.

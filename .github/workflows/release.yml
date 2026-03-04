@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "v*"
+  release:
+    types:
+      - published
   workflow_dispatch:
     inputs:
       version_tag:
@@ -40,12 +43,20 @@ jobs:
         run: |
           if [[ -n "${{ github.event.inputs.version_tag }}" ]]; then
             tag="${{ github.event.inputs.version_tag }}"
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            tag="${{ github.event.release.tag_name }}"
           elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             tag="${GITHUB_REF_NAME}"
           else
             tag="v0.0.0-dev.${GITHUB_RUN_NUMBER}"
           fi
           echo "VERSION_TAG=${tag}" >> "$GITHUB_ENV"
+
+      - name: Dogfood version/tag check
+        shell: bash
+        run: |
+          chmod +x scripts/release/check_dogfood.sh
+          EXPECTED_TAG="${VERSION_TAG}" scripts/release/check_dogfood.sh
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -82,6 +93,8 @@ jobs:
         run: |
           if [[ -n "${{ github.event.inputs.version_tag }}" ]]; then
             tag="${{ github.event.inputs.version_tag }}"
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            tag="${{ github.event.release.tag_name }}"
           elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             tag="${GITHUB_REF_NAME}"
           else
@@ -103,20 +116,24 @@ jobs:
           scripts/release/merge_checksums.sh "dist/${VERSION_TAG}"
 
       - name: Optional GPG sign checksums
-        if: ${{ secrets.MVS_GPG_PRIVATE_KEY != '' }}
         env:
           MVS_GPG_PRIVATE_KEY: ${{ secrets.MVS_GPG_PRIVATE_KEY }}
         shell: bash
         run: |
+          if [[ -z "${MVS_GPG_PRIVATE_KEY}" ]]; then
+            echo "MVS_GPG_PRIVATE_KEY is not configured; skipping checksum signing."
+            exit 0
+          fi
           printf '%s' "${MVS_GPG_PRIVATE_KEY}" > private.key
           gpg --batch --import private.key
           gpg --batch --yes --armor --detach-sign --output "dist/${VERSION_TAG}/checksums.txt.asc" "dist/${VERSION_TAG}/checksums.txt"
           rm -f private.key
 
       - name: Publish GitHub Release (tag builds)
-        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'release' }}
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.VERSION_TAG }}
           files: dist/${{ env.VERSION_TAG }}/*
           fail_on_unmatched_files: true
           generate_release_notes: true

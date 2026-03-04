@@ -13,12 +13,12 @@ Cross-platform CLI implementing multidimensional versioning: `[ARCH].[FEAT].[PRO
 
 ### macOS/Linux
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alextheberge/MVSengine/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/alextheberge/MVSengine/master/scripts/install.sh | bash
 ```
 
 ### Windows PowerShell
 ```powershell
-irm https://raw.githubusercontent.com/alextheberge/MVSengine/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/alextheberge/MVSengine/master/scripts/install.ps1 | iex
 ```
 
 ### 2) Initialize your project manifest
@@ -60,6 +60,27 @@ make install-hooks
 ```
 
 This installs a repo-managed `pre-commit` hook that runs `make lint-manifest`.
+
+## GitHub Release Setup (Required for Installer)
+
+1. Enable Actions with write access:
+   - Repository Settings -> Actions -> Workflow permissions -> **Read and write permissions**
+2. Keep dogfood versions aligned:
+   ```bash
+   make dogfood-sync-version
+   make ci
+   ```
+3. Tag using canonical MVS numeric version:
+   - If `mvs.json` is `0.2.3-cli`, tag must be `v0.2.3`
+   ```bash
+   git tag v0.2.3
+   git push origin v0.2.3
+   ```
+4. Wait for the `Release` workflow to publish assets:
+   - `mvs-manager-<version>-<target>.<tar.gz|zip>`
+   - `checksums.txt`
+
+The installer (`.../scripts/install.sh`) depends on these release assets.
 
 ## Local Build
 ```bash
