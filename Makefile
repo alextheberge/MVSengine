@@ -29,7 +29,7 @@ CHECKSUMS_PATH ?=
 SIGNATURE_PATH ?=
 PUBLIC_KEY_PATH ?=
 GPG_PRIVATE_KEY_FILE ?=
-INSTALL_REPO ?=
+INSTALL_REPO ?= alextheberge/MVSengine
 INSTALL_VERSION ?= latest
 INSTALL_DIR ?= $(HOME)/.local/bin
 
@@ -166,11 +166,7 @@ release-verify: ## Verify ARCHIVE_PATH against CHECKSUMS_PATH and optional signa
 release-local: release-host ## Alias for host release packaging.
 	@echo "Release artifacts under $(DIST_ROOT)/$(VERSION_TAG)"
 
-install: ## Install released binary via scripts/install.sh (set INSTALL_REPO=owner/repo).
-	@if [[ -z "$(INSTALL_REPO)" ]]; then \
-		echo "Set INSTALL_REPO=owner/repo"; \
-		exit 1; \
-	fi
+install: ## Install released binary via scripts/install.sh.
 	@MVS_REPO="$(INSTALL_REPO)" MVS_VERSION="$(INSTALL_VERSION)" MVS_INSTALL_DIR="$(INSTALL_DIR)" scripts/install.sh
 
 ci: fmt-check check clippy test fixture-smoke lint-manifest ## Full local/CI quality gate.

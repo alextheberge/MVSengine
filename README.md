@@ -6,13 +6,12 @@ Cross-platform CLI implementing multidimensional versioning: `[ARCH].[FEAT].[PRO
 
 ### macOS/Linux
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/scripts/install.sh | MVS_REPO=<owner>/<repo> bash
+curl -fsSL https://raw.githubusercontent.com/alextheberge/MVSengine/main/scripts/install.sh | bash
 ```
 
 ### Windows PowerShell
 ```powershell
-irm https://raw.githubusercontent.com/<owner>/<repo>/main/scripts/install.ps1 | iex
-# set MVS_REPO first
+irm https://raw.githubusercontent.com/alextheberge/MVSengine/main/scripts/install.ps1 | iex
 ```
 
 ## Local Build

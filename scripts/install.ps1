@@ -1,15 +1,11 @@
 param(
-  [string]$Repo = $env:MVS_REPO,
+  [string]$Repo = $(if ($env:MVS_REPO) { $env:MVS_REPO } else { "alextheberge/MVSengine" }),
   [string]$Version = $(if ($env:MVS_VERSION) { $env:MVS_VERSION } else { "latest" }),
   [string]$InstallDir = $(if ($env:MVS_INSTALL_DIR) { $env:MVS_INSTALL_DIR } else { "$HOME\\.local\\bin" })
 )
 
 $ErrorActionPreference = "Stop"
 $BinName = "mvs-manager"
-
-if (-not $Repo) {
-  throw "Set MVS_REPO=owner/repo before running install.ps1"
-}
 
 $target = "x86_64-pc-windows-msvc"
 

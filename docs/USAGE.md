@@ -56,5 +56,5 @@ make build-release
 - Add a `legacy_shims` adapter only if degraded compatibility is intentionally supported.
 
 ### Installer cannot find release
-- Confirm `MVS_REPO` points to the correct `owner/repo`.
+- Confirm `MVS_REPO` points to `alextheberge/MVSengine`.
 - Ensure tag exists and archive target matches your OS/CPU.

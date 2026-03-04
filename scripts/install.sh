@@ -2,14 +2,9 @@
 set -euo pipefail
 
 BIN_NAME="mvs-manager"
-REPO="${MVS_REPO:-}"
+REPO="${MVS_REPO:-alextheberge/MVSengine}"
 VERSION="${MVS_VERSION:-latest}"
 INSTALL_DIR="${MVS_INSTALL_DIR:-$HOME/.local/bin}"
-
-if [[ -z "${REPO}" ]]; then
-  echo "Set MVS_REPO=owner/repo before running install.sh" >&2
-  exit 1
-fi
 
 if ! command -v curl >/dev/null 2>&1; then
   echo "curl is required" >&2
