@@ -35,6 +35,14 @@ make dogfood-sync-version
 make ci
 ```
 
+Automated equivalent (sync + CI + commit version files + push branch):
+
+```bash
+make release-github
+```
+
+`release-github` pushes your current branch (default `origin`) so `Auto Tag Version` can create the canonical `vX.Y.Z` tag and dispatch `Release`.
+
 This enforces:
 - `Cargo.toml` version = MVS numeric version (`ARCH.FEAT.PROT`)
 - canonical release tag = `vARCH.FEAT.PROT` (for example `mvs.json: 0.2.3-cli` => tag `v0.2.3`)

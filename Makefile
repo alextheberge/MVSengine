@@ -39,11 +39,16 @@ INSTALL_VERSION ?= latest
 INSTALL_DIR ?= $(HOME)/.local/bin
 GITHOOKS_DIR ?= .githooks
 EXPECTED_TAG ?=
+RELEASE_REMOTE ?= origin
+RELEASE_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+RELEASE_ALLOW_NON_DEFAULT ?= false
+RELEASE_AUTO_COMMIT ?= true
+RELEASE_PUSH ?= true
 
 HOST_TARGET := $(shell rustc -vV 2>/dev/null | awk '/host:/ {print $$2}')
 CARGO_TARGET_FLAG := $(if $(strip $(TARGET)),--target $(TARGET),)
 
-.PHONY: help print-config bootstrap fmt fmt-check check clippy test test-unit test-integration build build-release docs clean ci generate generate-dry lint-manifest validate fixture-smoke release-local release-host release-target release-matrix-local release-merge-checksums release-sign-checksums release-verify install install-hooks run-precommit dogfood-check dogfood-sync-version watch doctor
+.PHONY: help print-config bootstrap fmt fmt-check check clippy test test-unit test-integration build build-release docs clean ci generate generate-dry lint-manifest validate fixture-smoke release-local release-host release-target release-matrix-local release-merge-checksums release-sign-checksums release-verify release-github install install-hooks run-precommit dogfood-check dogfood-sync-version watch doctor
 
 help: ## Show all available targets.
 	@awk 'BEGIN {FS = ":.*##"; printf "\nMVS Engine Make Targets\n\n"} /^[a-zA-Z0-9_.-]+:.*##/ { printf "  %-26s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -180,6 +185,14 @@ release-verify: ## Verify ARCHIVE_PATH against CHECKSUMS_PATH and optional signa
 
 release-local: release-host ## Alias for host release packaging.
 	@echo "Release artifacts under $(DIST_ROOT)/$(VERSION_TAG)"
+
+release-github: dogfood-sync-version ci ## Prepare and push release version updates to trigger GitHub auto-tag + release workflows.
+	@RELEASE_REMOTE="$(RELEASE_REMOTE)" \
+	RELEASE_BRANCH="$(RELEASE_BRANCH)" \
+	RELEASE_ALLOW_NON_DEFAULT="$(RELEASE_ALLOW_NON_DEFAULT)" \
+	RELEASE_AUTO_COMMIT="$(RELEASE_AUTO_COMMIT)" \
+	RELEASE_PUSH="$(RELEASE_PUSH)" \
+	scripts/release/github_release.sh
 
 install: ## Install released binary via scripts/install.sh.
 	@MVS_REPO="$(INSTALL_REPO)" MVS_VERSION="$(INSTALL_VERSION)" MVS_INSTALL_DIR="$(INSTALL_DIR)" scripts/install.sh

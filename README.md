@@ -79,6 +79,11 @@ This installs a repo-managed `pre-commit` hook that runs `make lint-manifest`.
 
 The installer (`.../scripts/install.sh`) depends on these release assets.
 
+One-command flow from repo root:
+```bash
+make release-github
+```
+
 ## Local Build
 ```bash
 make ci
