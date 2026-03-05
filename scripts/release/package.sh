@@ -25,6 +25,96 @@ if [[ "${TARGET}" == *"windows"* ]]; then
   binary_ext=".exe"
 fi
 
+create_zip_archive() {
+  local source_dir="$1"
+  local destination="$2"
+
+  if command -v zip >/dev/null 2>&1; then
+    (
+      cd "${source_dir}"
+      zip -rq "${destination}" .
+    )
+    return
+  fi
+
+  if command -v 7z >/dev/null 2>&1; then
+    (
+      cd "${source_dir}"
+      7z a -bd -tzip "${destination}" . >/dev/null
+    )
+    return
+  fi
+
+  local py_bin=""
+  if command -v python3 >/dev/null 2>&1; then
+    py_bin="python3"
+  elif command -v python >/dev/null 2>&1; then
+    py_bin="python"
+  fi
+
+  if [[ -n "${py_bin}" ]]; then
+    "${py_bin}" - "${source_dir}" "${destination}" <<'PY'
+import os
+import pathlib
+import sys
+import zipfile
+
+source = pathlib.Path(sys.argv[1]).resolve()
+destination = pathlib.Path(sys.argv[2]).resolve()
+
+with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
+    for path in source.rglob("*"):
+        if path.is_file():
+            archive.write(path, path.relative_to(source))
+PY
+    return
+  fi
+
+  echo "unable to create zip archive: missing zip, 7z, and python" >&2
+  exit 1
+}
+
+compute_sha256() {
+  local artifact="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${artifact}" | awk '{print $1}'
+    return
+  fi
+
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "${artifact}" | awk '{print $1}'
+    return
+  fi
+
+  if command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "${artifact}" | awk '{print $2}'
+    return
+  fi
+
+  local py_bin=""
+  if command -v python3 >/dev/null 2>&1; then
+    py_bin="python3"
+  elif command -v python >/dev/null 2>&1; then
+    py_bin="python"
+  fi
+
+  if [[ -n "${py_bin}" ]]; then
+    "${py_bin}" - "${artifact}" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+digest = hashlib.sha256(path.read_bytes()).hexdigest()
+print(digest)
+PY
+    return
+  fi
+
+  echo "unable to compute sha256 checksum: missing sha256sum, shasum, openssl, and python" >&2
+  exit 1
+}
+
 cargo build --release --target "${TARGET}"
 
 binary_path="target/${TARGET}/release/${BIN_NAME}${binary_ext}"
@@ -54,19 +144,12 @@ archive_name="${BIN_NAME}-${release_label}-${TARGET}.${archive_ext}"
 archive_path="${output_dir}/${archive_name}"
 
 if [[ "${archive_ext}" == "zip" ]]; then
-  (
-    cd "${staging_dir}"
-    zip -rq "${OLDPWD}/${archive_path}" .
-  )
+  create_zip_archive "${staging_dir}" "${OLDPWD}/${archive_path}"
 else
   tar -C "${staging_dir}" -czf "${archive_path}" .
 fi
 
-if command -v sha256sum >/dev/null 2>&1; then
-  checksum="$(sha256sum "${archive_path}" | awk '{print $1}')"
-else
-  checksum="$(shasum -a 256 "${archive_path}" | awk '{print $1}')"
-fi
+checksum="$(compute_sha256 "${archive_path}")"
 
 echo "${checksum}  ${archive_name}" > "${output_dir}/${archive_name}.sha256"
 
