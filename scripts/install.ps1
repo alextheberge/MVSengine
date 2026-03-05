@@ -10,9 +10,53 @@ $BinName = "mvs-manager"
 
 $target = "x86_64-pc-windows-msvc"
 
+function Test-ReleaseAssets {
+  param(
+    [Parameter(Mandatory = $true)][string]$RepoName,
+    [Parameter(Mandatory = $true)][string]$Tag,
+    [Parameter(Mandatory = $true)][string]$TargetTriple
+  )
+
+  $versionLabel = $Tag.TrimStart("v")
+  $archiveName = "$BinName-$versionLabel-$TargetTriple.zip"
+  $base = "https://github.com/$RepoName/releases/download/$Tag"
+  $archiveUrl = "$base/$archiveName"
+  $checksumsUrl = "$base/checksums.txt"
+
+  try {
+    Invoke-WebRequest -Method Head -Uri $archiveUrl | Out-Null
+    Invoke-WebRequest -Method Head -Uri $checksumsUrl | Out-Null
+    return $true
+  } catch {
+    return $false
+  }
+}
+
 if ($Version -eq "latest") {
   $latest = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$Repo/releases/latest"
-  $Version = $latest.tag_name
+  $latestTag = $latest.tag_name
+
+  if ($latestTag -match '^v\d+\.\d+\.\d+$' -and (Test-ReleaseAssets -RepoName $Repo -Tag $latestTag -TargetTriple $target)) {
+    $Version = $latestTag
+  } else {
+    $tags = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$Repo/tags?per_page=50"
+    $resolved = $null
+
+    foreach ($tagEntry in $tags) {
+      if ($tagEntry.name -notmatch '^v\d+\.\d+\.\d+$') {
+        continue
+      }
+      if (Test-ReleaseAssets -RepoName $Repo -Tag $tagEntry.name -TargetTriple $target) {
+        $resolved = $tagEntry.name
+        break
+      }
+    }
+
+    if (-not $resolved) {
+      throw "Failed to resolve downloadable release assets. Latest tag '$latestTag' is invalid for installer expectations. Publish assets for a canonical tag (for example v0.2.3) or set MVS_VERSION explicitly."
+    }
+    $Version = $resolved
+  }
 }
 
 $versionLabel = $Version.TrimStart("v")

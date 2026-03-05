@@ -52,6 +52,22 @@ detect_target() {
 }
 
 resolve_version() {
+  local target="$1"
+  local archive_ext="tar.gz"
+  if [[ "${target}" == *"windows"* ]]; then
+    archive_ext="zip"
+  fi
+
+  release_has_assets() {
+    local tag="$1"
+    local version_label archive_name archive_url checksums_url
+    version_label="${tag#v}"
+    archive_name="${BIN_NAME}-${version_label}-${target}.${archive_ext}"
+    archive_url="https://github.com/${REPO}/releases/download/${tag}/${archive_name}"
+    checksums_url="https://github.com/${REPO}/releases/download/${tag}/checksums.txt"
+    curl -fsIL "${archive_url}" >/dev/null 2>&1 && curl -fsIL "${checksums_url}" >/dev/null 2>&1
+  }
+
   if [[ "${VERSION}" != "latest" ]]; then
     echo "${VERSION}"
     return
@@ -59,11 +75,29 @@ resolve_version() {
 
   local latest
   latest="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
-  if [[ -z "${latest}" ]]; then
-    echo "failed to resolve latest release tag from GitHub API" >&2
-    exit 1
+  if [[ -n "${latest}" && "${latest}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && release_has_assets "${latest}"; then
+    echo "${latest}"
+    return
   fi
-  echo "${latest}"
+
+  local candidates
+  candidates="$(curl -fsSL "https://api.github.com/repos/${REPO}/tags?per_page=50" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\(v[0-9][^"]*\)".*/\1/p')"
+  while IFS= read -r candidate; do
+    [[ -z "${candidate}" ]] && continue
+    [[ ! "${candidate}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && continue
+    if release_has_assets "${candidate}"; then
+      echo "${candidate}"
+      return
+    fi
+  done <<< "${candidates}"
+
+  if [[ -n "${latest}" ]]; then
+    echo "failed to resolve a downloadable release: latest tag '${latest}' has no matching assets for ${target}" >&2
+  else
+    echo "failed to resolve latest release tag from GitHub API" >&2
+  fi
+  echo "Publish release assets for a canonical tag (for example v0.2.3) or set MVS_VERSION explicitly." >&2
+  exit 1
 }
 
 verify_archive() {
@@ -93,7 +127,7 @@ verify_archive() {
 }
 
 target="$(detect_target)"
-version_tag="$(resolve_version)"
+version_tag="$(resolve_version "${target}")"
 version_label="${version_tag#v}"
 archive_ext="tar.gz"
 if [[ "${target}" == *"windows"* ]]; then
