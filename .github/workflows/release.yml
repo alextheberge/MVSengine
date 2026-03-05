@@ -4,14 +4,11 @@ on:
   push:
     tags:
       - "v*"
-  release:
-    types:
-      - published
   workflow_dispatch:
     inputs:
       version_tag:
-        description: "Version tag to package (example: v1.2.3). Optional for tag builds."
-        required: false
+        description: "Version tag to package (example: v1.2.3)."
+        required: true
         type: string
 
 permissions:
@@ -43,8 +40,6 @@ jobs:
         run: |
           if [[ -n "${{ github.event.inputs.version_tag }}" ]]; then
             tag="${{ github.event.inputs.version_tag }}"
-          elif [[ "${{ github.event_name }}" == "release" ]]; then
-            tag="${{ github.event.release.tag_name }}"
           elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             tag="${GITHUB_REF_NAME}"
           else
@@ -93,8 +88,6 @@ jobs:
         run: |
           if [[ -n "${{ github.event.inputs.version_tag }}" ]]; then
             tag="${{ github.event.inputs.version_tag }}"
-          elif [[ "${{ github.event_name }}" == "release" ]]; then
-            tag="${{ github.event.release.tag_name }}"
           elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             tag="${GITHUB_REF_NAME}"
           else
@@ -130,7 +123,7 @@ jobs:
           rm -f private.key
 
       - name: Publish GitHub Release (tag builds)
-        if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'release' }}
+        if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.version_tag != '') }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION_TAG }}

@@ -1,0 +1,82 @@
+name: Auto Tag Version
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "mvs.json"
+      - "Cargo.toml"
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: auto-tag-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tag-canonical-version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Dogfood version check
+        shell: bash
+        run: |
+          chmod +x scripts/release/check_dogfood.sh
+          scripts/release/check_dogfood.sh
+
+      - name: Resolve canonical tag from mvs.json
+        id: resolve
+        shell: bash
+        run: |
+          mvs_identity="$(sed -n 's/.*"mvs"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' mvs.json | head -n1)"
+          numeric_version="${mvs_identity%%-*}"
+          canonical_tag="v${numeric_version}"
+          echo "CANONICAL_TAG=${canonical_tag}" >> "$GITHUB_ENV"
+          echo "canonical_tag=${canonical_tag}" >> "$GITHUB_OUTPUT"
+          echo "Resolved canonical tag: ${canonical_tag}"
+
+      - name: Create and push tag when missing
+        id: create_tag
+        shell: bash
+        run: |
+          if git ls-remote --tags origin "refs/tags/${CANONICAL_TAG}" | grep -q .; then
+            echo "Tag ${CANONICAL_TAG} already exists; skipping."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${CANONICAL_TAG}" -m "Release ${CANONICAL_TAG}"
+          git push origin "refs/tags/${CANONICAL_TAG}"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+          echo "Pushed ${CANONICAL_TAG}"
+
+      - name: Dispatch release workflow
+        if: steps.create_tag.outputs.created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANONICAL_TAG: ${{ steps.resolve.outputs.canonical_tag }}
+        shell: bash
+        run: |
+          payload="$(cat <<JSON
+          {"ref":"${GITHUB_REF_NAME}","inputs":{"version_tag":"${CANONICAL_TAG}"}}
+          JSON
+          )"
+
+          curl --fail-with-body -L -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/dispatches" \
+            -d "${payload}"
+          echo "Dispatched release workflow for ${CANONICAL_TAG}"

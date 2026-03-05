@@ -25,10 +25,10 @@ Workflow: `.github/workflows/release.yml`
 
 Trigger options:
 - Push a tag: `vX.Y.Z`
-- Publish a GitHub release
+- Push changes to `mvs.json` or `Cargo.toml` on `main`/`master` (auto-tags canonical version and dispatches release)
 - Manual dispatch from Actions UI
 
-Before tagging:
+Before release:
 
 ```bash
 make dogfood-sync-version
@@ -50,7 +50,7 @@ The workflow:
 2. Packages archive + checksum per target.
 3. Merges `checksums.txt`.
 4. Optionally signs checksums with GPG when `MVS_GPG_PRIVATE_KEY` secret is configured.
-5. Publishes or updates release assets for tag/release events.
+5. Publishes or updates release assets for tag/dispatch events.
 
 ## Signature verification (optional)
 

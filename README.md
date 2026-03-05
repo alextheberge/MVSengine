@@ -70,13 +70,10 @@ This installs a repo-managed `pre-commit` hook that runs `make lint-manifest`.
    make dogfood-sync-version
    make ci
    ```
-3. Tag using canonical MVS numeric version:
-   - If `mvs.json` is `0.2.3-cli`, tag must be `v0.2.3`
-   ```bash
-   git tag v0.2.3
-   git push origin v0.2.3
-   ```
-4. Wait for the `Release` workflow to publish assets:
+3. Push version changes to `main` or `master`:
+   - `Auto Tag Version` workflow creates canonical tag automatically.
+   - If `mvs.json` is `0.2.3-cli`, canonical tag is `v0.2.3`.
+4. Wait for `Auto Tag Version` to dispatch `Release` and publish assets:
    - `mvs-manager-<version>-<target>.<tar.gz|zip>`
    - `checksums.txt`
 
