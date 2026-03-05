@@ -76,6 +76,7 @@ This installs a repo-managed `pre-commit` hook that runs `make lint-manifest`.
 4. Wait for `Auto Tag Version` to dispatch `Release` and publish assets:
    - `mvs-manager-<version>-<target>.<tar.gz|zip>`
    - `checksums.txt`
+   - If needed, run `Auto Tag Version` manually from GitHub Actions (`Run workflow`) to force tag/release dispatch.
 
 The installer (`.../scripts/install.sh`) depends on these release assets.
 

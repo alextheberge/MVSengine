@@ -8,6 +8,7 @@ on:
     paths:
       - "mvs.json"
       - "Cargo.toml"
+  workflow_dispatch:
 
 permissions:
   actions: write
@@ -62,7 +63,7 @@ jobs:
           echo "Pushed ${CANONICAL_TAG}"
 
       - name: Dispatch release workflow
-        if: steps.create_tag.outputs.created == 'true'
+        if: steps.create_tag.outputs.created == 'true' || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
           CANONICAL_TAG: ${{ steps.resolve.outputs.canonical_tag }}

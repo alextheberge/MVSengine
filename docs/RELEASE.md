@@ -26,6 +26,7 @@ Workflow: `.github/workflows/release.yml`
 Trigger options:
 - Push a tag: `vX.Y.Z`
 - Push changes to `mvs.json` or `Cargo.toml` on `main`/`master` (auto-tags canonical version and dispatches release)
+- Manually run `Auto Tag Version` from Actions UI (`Run workflow`) to force tag/release dispatch
 - Manual dispatch from Actions UI
 
 Before release:
