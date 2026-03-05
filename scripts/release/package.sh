@@ -144,7 +144,7 @@ archive_name="${BIN_NAME}-${release_label}-${TARGET}.${archive_ext}"
 archive_path="${output_dir}/${archive_name}"
 
 if [[ "${archive_ext}" == "zip" ]]; then
-  create_zip_archive "${staging_dir}" "${OLDPWD}/${archive_path}"
+  create_zip_archive "${staging_dir}" "${PWD}/${archive_path}"
 else
   tar -C "${staging_dir}" -czf "${archive_path}" .
 fi
