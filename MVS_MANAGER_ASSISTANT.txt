@@ -1,0 +1,105 @@
+You are preparing this project for `mvs-manager`, a multidimensional version manager that tracks:
+
+ARCH.FEAT.PROT-CONT
+
+Your job is to make this repository scannable and verifiable by `mvs-manager` without changing behavior unless required.
+
+Work instructions:
+
+1. Initialize or refresh the manifest.
+   - If `mvs.json` does not exist, create it by running:
+     `mvs-manager generate --root . --manifest mvs.json --context <context>`
+   - Choose a short runtime context that matches the app, for example:
+     `cli`, `web`, `server`, `edge`, `edge.mobile`, `desktop`
+   - If `mvs.json` already exists, preserve its intent and regenerate it instead of replacing it by hand.
+
+2. Add MVS comment decorators to real source files.
+   - `mvs-manager` scans these file types:
+     `.rs`, `.ts`, `.tsx`, `.js`, `.jsx`, `.go`, `.py`, `.java`, `.kt`, `.cs`
+   - It ignores these directories:
+     `.git`, `node_modules`, `dist`, `build`, `target`, `vendor`, `.next`, `tests`, `examples`, `benches`
+   - Add comment markers immediately above the relevant public/exported declaration or integration boundary.
+   - Accepted decorator forms:
+     `@mvs-feature("name")`
+     `@mvs-feature:name`
+     `@mvs-protocol("name")`
+     `@mvs-protocol:name`
+   - These are comment-based markers, not runtime language decorators.
+
+3. Use `@mvs-feature` for meaningful product or runtime capabilities.
+   - Tag stable capabilities such as authentication, offline storage, sync, import/export, billing, streaming, plugin support, background jobs, or other user-visible/runtime-relevant features.
+   - Do not tag every helper function.
+   - Use stable names in snake_case, kebab-case, or dotted form.
+   - Prefer one feature tag per capability boundary, not noisy duplicates everywhere.
+
+4. Use `@mvs-protocol` for integration and contract surfaces.
+   - Tag public contracts such as HTTP APIs, RPC handlers, CLI command surfaces, SDK entrypoints, extension/host handshakes, queue payload contracts, webhooks, or other machine-to-machine boundaries.
+   - Add protocol tags wherever a change would break consumers, extensions, plugins, automation, or external callers.
+   - If the project has multiple distinct integration surfaces, tag each with its own stable protocol name.
+
+5. Make sure the public API is visible to the scanner.
+   - `mvs-manager` also hashes public/exported API signatures.
+   - Ensure externally consumed surfaces are actually public/exported in the language’s normal way.
+   - Examples:
+     - TypeScript/JavaScript: `export function`, `export class`, `export interface`, `export type`, `export enum`, `export const`
+     - Rust: `pub fn`, `pub struct`, `pub enum`, `pub trait`, `pub type`, `pub const`, `pub static`, and `pub` impl methods
+     - Go: exported identifiers start with an uppercase letter
+     - Python: non-underscore `def` functions are scanned
+     - Java/C#/Kotlin: public declarations are scanned
+
+6. Update `mvs.json` deliberately where automation cannot infer intent.
+   - Keep `identity.cont` aligned with the chosen runtime context.
+   - Update `capabilities` to reflect required/provided runtime features that other manifests may validate against.
+   - Update `environment.profiles` and `environment.runtime_constraints` when runtime context or platform constraints matter.
+   - If this project exposes an AI tool schema, set `ai_contract` fields and use:
+     `mvs-manager generate --root . --manifest mvs.json --context <context> --ai-schema <path>`
+   - Do not hand-edit `evidence` hashes unless there is no other option; prefer regenerating.
+
+7. Use the correct versioning trigger.
+   - Feature tag set drift increments `FEAT`.
+   - Protocol tag drift increments `PROT`.
+   - Public API signature drift increments `PROT`.
+   - AI tool schema hash drift increments `PROT`.
+   - Persistent data or architecture breaks should be declared explicitly:
+     `mvs-manager generate --root . --manifest mvs.json --context <context> --arch-break --arch-reason "<reason>"`
+
+8. Choose compatibility strategy intentionally.
+   - Default generate: normalize current protocol ranges.
+   - Lock-step host/extension compatibility:
+     `mvs-manager generate --root . --manifest mvs.json --context <context> --lock-step`
+   - Backwards-compatible protocol window with generated legacy shims:
+     `mvs-manager generate --root . --manifest mvs.json --context <context> --backwards-compatible <N>`
+
+9. Add tags using the project’s comment syntax.
+   - TypeScript/JavaScript example:
+     `// @mvs-feature("auth_flow")`
+     `// @mvs-protocol("auth-api-v1")`
+     `export async function login(...) { ... }`
+   - Rust example:
+     `/// @mvs-feature("runtime_bridge")`
+     `/// @mvs-protocol("host_extension_handshake")`
+     `pub fn handshake(...) -> bool { ... }`
+   - Python example:
+     `# @mvs-feature("background_jobs")`
+     `# @mvs-protocol("worker-task-v1")`
+     `def run_job(...):`
+
+10. Verify before stopping.
+    - Run:
+      `mvs-manager lint --root . --manifest mvs.json`
+    - If there is AI schema validation:
+      `mvs-manager lint --root . --manifest mvs.json --ai-schema <path>`
+    - If the runtime must satisfy model capabilities:
+      `mvs-manager lint --root . --manifest mvs.json --available-model-capabilities tool_calling,json_schema,reasoning-v1`
+
+11. Deliverable requirements.
+    - Modify code only where needed to expose/tag real public or contract surfaces.
+    - Prefer small, precise edits.
+    - At the end, report:
+      - which files were annotated
+      - which feature names were introduced
+      - which protocol names were introduced
+      - which `mvs-manager` commands were run
+      - whether `lint` passed
+
+If you must choose between broad tagging and accurate tagging, choose accurate tagging. The goal is to make real compatibility and contract surfaces visible to `mvs-manager`, not to maximize annotation count.
