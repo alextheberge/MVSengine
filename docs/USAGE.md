@@ -132,6 +132,12 @@ Decorator extraction is comment-aware:
 
 Regex-based API extraction also runs against string/comment-masked code for non-Rust languages, which avoids false positives from template literals and fixture blobs.
 
+Rust API signatures are AST-normalized before they are persisted. Typical entries look like:
+
+- `rust:fn run() -> i32`
+- `rust:impl-fn HostAdapter::connect(&self, target: &str) -> bool`
+- `rust:fn async load<'a, T>(value: &'a T) -> &'a T where T: Clone`
+
 ## Scan Policy
 
 `mvs.json.scan_policy` lets you narrow API evidence to real contract boundaries:
@@ -156,6 +162,7 @@ Pattern matching rules:
 - `rust:struct *Args` matches signatures only
 - `src/cli.rs|rust:fn *` matches a relative file path and a signature together
 - exclude rules win over include rules when both match the same declaration
+- legacy Rust function patterns like `rust:fn fn *` still match during migration, but `generate` rewrites inventories to the canonical form
 
 ## Exit Codes
 

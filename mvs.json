@@ -54,7 +54,7 @@
   "evidence": {
     "feature_hash": "20a854fe0033b2a4deb245a49f2fa2f59da2fa8a4f2184ac7c2446d5f2e98426",
     "protocol_hash": "1ecfef2dac4e737bfb78404171e3d8b15cf67a2d47802696507d0ae492e39306",
-    "public_api_hash": "ba48146a451684e63e7e735377b4462cac783ed6e628d3dd26be52028ee987c5",
+    "public_api_hash": "6a86f0b108e171c5e4bf8275bed49230b4cec90d0f16270e6eedabeaa6fa11f3",
     "feature_inventory": [
       "manifest_compatibility_validation",
       "manifest_generation",
@@ -68,7 +68,7 @@
     "public_api_inventory": [
       {
         "file": "src/cli.rs",
-        "signature": "rust:fn fn run() -> i32"
+        "signature": "rust:fn run() -> i32"
       }
     ]
   },

@@ -40,6 +40,7 @@ Work instructions:
 
 5. Make sure the public API is visible to the scanner.
    - `mvs-manager` also hashes public/exported API signatures.
+   - Rust signatures are canonicalized from the AST, so inventories and filters use forms like `rust:fn run() -> i32` or `rust:impl-fn HostAdapter::connect(&self, target: &str) -> bool`.
    - Ensure externally consumed surfaces are actually public/exported in the language’s normal way.
    - Examples:
      - TypeScript/JavaScript: `export function`, `export class`, `export interface`, `export type`, `export enum`, `export const`
@@ -103,6 +104,7 @@ Work instructions:
     - A selector like `src/cli.rs|rust:fn *` matches both the relative file path and signature.
     - If both include and exclude rules match, exclude wins.
     - Copy patterns from `mvs.json.evidence.public_api_inventory` when you need exact selectors.
+    - Legacy Rust function patterns with duplicated `fn` still match during migration, but regenerated manifests rewrite them canonically.
 
 12. Deliverable requirements.
     - Modify code only where needed to expose/tag real public or contract surfaces.

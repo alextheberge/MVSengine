@@ -116,7 +116,7 @@ mvs-manager validate --host-manifest host.json --extension-manifest extension.js
 
 - `feature_inventory`: sorted unique `@mvs-feature(...)` tag names
 - `protocol_inventory`: sorted unique `@mvs-protocol(...)` tag names
-- `public_api_inventory`: sorted `file + signature` entries for detected public API surfaces
+- `public_api_inventory`: sorted `file + canonical signature` entries for detected public API surfaces
 
 This gives you two things:
 
@@ -151,6 +151,14 @@ Typical `evidence` shape:
 ```
 
 If an older manifest predates these inventory snapshots, `lint` will fail until you regenerate once. That is intentional: it brings the manifest up to the current evidence model.
+
+Rust API entries are now AST-normalized into stable, readable forms such as:
+
+- `rust:fn run() -> i32`
+- `rust:impl-fn HostAdapter::connect(&self, target: &str) -> bool`
+- `rust:fn async load<'a, T>(value: &'a T) -> &'a T where T: Clone`
+
+This reduces formatting noise in `public_api_inventory` and makes policy patterns easier to author.
 
 ## Scanner Precision
 
@@ -220,6 +228,7 @@ Pattern rules:
 - A selector pattern such as `src/cli.rs|rust:fn *` matches both the relative file path and the signature
 - If both include and exclude rules match the same declaration, the exclude rule wins
 - The easiest way to author patterns is to copy a signature from `mvs.json.evidence.public_api_inventory` or `lint --format json`
+- Legacy Rust function patterns with duplicated `fn` still match during migration, but regenerated manifests rewrite them to the canonical form
 
 ## Machine-Readable Output
 

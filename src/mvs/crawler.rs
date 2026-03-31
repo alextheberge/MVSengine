@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Context, Result};
 use quote::ToTokens;
 use regex::Regex;
-use syn::{ImplItem, Item, TraitItem, Visibility};
+use syn::{FnArg, ImplItem, Item, ReturnType, Signature, TraitItem, Visibility};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::mvs::manifest::ScanPolicy;
@@ -736,7 +736,7 @@ fn collect_rust_items(items: &[Item], module_prefix: &str, signatures: &mut Vec<
     for item in items {
         match item {
             Item::Fn(item_fn) if is_public(&item_fn.vis) => {
-                let sig = normalize_signature(&item_fn.sig.to_token_stream().to_string());
+                let sig = format_rust_signature(&item_fn.sig);
                 signatures.push(format!("rust:fn {module_prefix}{sig}"));
             }
             Item::Struct(item_struct) if is_public(&item_struct.vis) => {
@@ -760,7 +760,7 @@ fn collect_rust_items(items: &[Item], module_prefix: &str, signatures: &mut Vec<
                 signatures.push(format!("rust:trait {trait_name}"));
                 for trait_item in &item_trait.items {
                     if let TraitItem::Fn(method) = trait_item {
-                        let sig = normalize_signature(&method.sig.to_token_stream().to_string());
+                        let sig = format_rust_signature(&method.sig);
                         signatures.push(format!("rust:trait-fn {trait_name}::{sig}"));
                     }
                 }
@@ -798,7 +798,7 @@ fn collect_rust_items(items: &[Item], module_prefix: &str, signatures: &mut Vec<
                             continue;
                         }
 
-                        let sig = normalize_signature(&method.sig.to_token_stream().to_string());
+                        let sig = format_rust_signature(&method.sig);
                         signatures.push(format!("rust:impl-fn {module_prefix}{impl_scope}::{sig}"));
                     }
                 }
@@ -819,6 +819,112 @@ fn is_public(visibility: &Visibility) -> bool {
     matches!(visibility, Visibility::Public(_))
 }
 
+fn format_rust_signature(signature: &Signature) -> String {
+    let qualifiers = format_rust_qualifiers(signature);
+    let generics = format_rust_generics(signature);
+    let params = signature
+        .inputs
+        .iter()
+        .map(format_rust_fn_arg)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let output = format_rust_return_type(&signature.output);
+    let where_clause = signature
+        .generics
+        .where_clause
+        .as_ref()
+        .map(|clause| {
+            let normalized = normalize_signature(&clause.to_token_stream().to_string());
+            format!(" {}", normalized.trim_end_matches(','))
+        })
+        .unwrap_or_default();
+
+    format!(
+        "{qualifiers}{}{generics}({params}){output}{where_clause}",
+        signature.ident
+    )
+}
+
+fn format_rust_qualifiers(signature: &Signature) -> String {
+    let mut qualifiers = Vec::new();
+    if signature.constness.is_some() {
+        qualifiers.push("const".to_string());
+    }
+    if signature.asyncness.is_some() {
+        qualifiers.push("async".to_string());
+    }
+    if signature.unsafety.is_some() {
+        qualifiers.push("unsafe".to_string());
+    }
+    if let Some(abi) = &signature.abi {
+        qualifiers.push(normalize_signature(&abi.to_token_stream().to_string()));
+    }
+
+    if qualifiers.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", qualifiers.join(" "))
+    }
+}
+
+fn format_rust_generics(signature: &Signature) -> String {
+    let params = normalize_signature(&signature.generics.params.to_token_stream().to_string());
+    if params.is_empty() {
+        String::new()
+    } else {
+        format!("<{params}>")
+    }
+}
+
+fn format_rust_fn_arg(argument: &FnArg) -> String {
+    match argument {
+        FnArg::Receiver(receiver) => {
+            if receiver.colon_token.is_some() {
+                let mut rendered = String::new();
+                if receiver.mutability.is_some() {
+                    rendered.push_str("mut ");
+                }
+                rendered.push_str("self: ");
+                rendered.push_str(&normalize_signature(
+                    &receiver.ty.to_token_stream().to_string(),
+                ));
+                return rendered;
+            }
+
+            let mut rendered = String::new();
+            if let Some((_, lifetime)) = &receiver.reference {
+                rendered.push('&');
+                if let Some(lifetime) = lifetime {
+                    rendered.push_str(&lifetime.to_token_stream().to_string());
+                    rendered.push(' ');
+                }
+            }
+            if receiver.mutability.is_some() {
+                rendered.push_str("mut ");
+            }
+            rendered.push_str("self");
+            rendered
+        }
+        FnArg::Typed(argument) => {
+            let pattern = normalize_signature(&argument.pat.to_token_stream().to_string());
+            let ty = normalize_signature(&argument.ty.to_token_stream().to_string());
+            format!("{pattern}: {ty}")
+        }
+    }
+}
+
+fn format_rust_return_type(output: &ReturnType) -> String {
+    match output {
+        ReturnType::Default => String::new(),
+        ReturnType::Type(_, ty) => {
+            format!(
+                " -> {}",
+                normalize_signature(&ty.to_token_stream().to_string())
+            )
+        }
+    }
+}
+
 fn normalize_signature(raw: &str) -> String {
     let mut normalized = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     for (from, to) in [
@@ -830,8 +936,11 @@ fn normalize_signature(raw: &str) -> String {
         (" :", ":"),
         (" ::", "::"),
         (" < ", "<"),
+        ("< ", "<"),
         (" >", ">"),
         (" = ", "="),
+        ("& mut ", "&mut "),
+        ("& ", "&"),
         (" & ", "&"),
     ] {
         normalized = normalized.replace(from, to);
@@ -987,15 +1096,41 @@ mod tests {
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature.contains("fn handshake")));
-        assert!(report
-            .public_api
-            .iter()
-            .any(|entry| entry.signature.contains("HostAdapter::fn connect")));
+            .any(|entry| entry.signature == "rust:fn handshake(version: u32) -> bool"));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature == "rust:impl-fn HostAdapter::connect(&self, target: &str) -> bool"
+        }));
         assert!(!report
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("private_method")));
+    }
+
+    #[test]
+    fn rust_ast_extraction_preserves_generics_and_where_clauses_in_canonical_form() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("lib.rs"),
+            r#"
+            pub async fn load<'a, T>(value: &'a T) -> &'a T
+            where
+                T: Clone,
+            {
+                value
+            }
+        "#,
+        )
+        .expect("failed to write rust fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature == "rust:fn async load<'a, T>(value: &'a T) -> &'a T where T: Clone"
+        }));
     }
 
     #[test]

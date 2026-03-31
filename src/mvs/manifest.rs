@@ -9,6 +9,8 @@ use std::{
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::mvs::hashing::hash_items;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
     #[serde(rename = "$schema")]
@@ -207,8 +209,9 @@ impl Manifest {
     pub fn load(path: &Path) -> Result<Self> {
         let raw = fs::read_to_string(path)
             .with_context(|| format!("failed to read manifest: {}", path.display()))?;
-        let manifest: Self = serde_json::from_str(&raw)
+        let mut manifest: Self = serde_json::from_str(&raw)
             .with_context(|| format!("failed to parse manifest: {}", path.display()))?;
+        manifest.evidence = manifest.evidence.canonicalized();
         manifest.validate()?;
         Ok(manifest)
     }
@@ -344,6 +347,16 @@ impl ScanPolicy {
 }
 
 impl Evidence {
+    pub fn canonicalized(&self) -> Self {
+        let mut evidence = self.clone();
+        evidence.public_api_inventory =
+            canonicalize_public_api_inventory(&evidence.public_api_inventory);
+        if !evidence.public_api_inventory.is_empty() {
+            evidence.public_api_hash = hash_public_api_inventory(&evidence.public_api_inventory);
+        }
+        evidence
+    }
+
     pub fn semantic_diff(
         &self,
         feature_inventory: &[String],
@@ -411,6 +424,27 @@ fn diff_public_api(
     }
 }
 
+fn canonicalize_public_api_inventory(inventory: &[PublicApiSnapshot]) -> Vec<PublicApiSnapshot> {
+    let mut canonical: Vec<PublicApiSnapshot> = inventory
+        .iter()
+        .map(|item| PublicApiSnapshot {
+            file: normalize_policy_path(&item.file),
+            signature: canonicalize_public_api_signature(&item.signature),
+        })
+        .collect();
+    canonical.sort();
+    canonical.dedup();
+    canonical
+}
+
+fn hash_public_api_inventory(inventory: &[PublicApiSnapshot]) -> String {
+    hash_items(
+        inventory
+            .iter()
+            .map(|item| format!("{}|{}", item.file, item.signature)),
+    )
+}
+
 fn validate_policy_paths(label: &str, paths: &[String]) -> Result<()> {
     for path in paths {
         if Path::new(path.trim()).is_absolute() {
@@ -461,12 +495,44 @@ fn path_matches(relative_path: &str, pattern: &str) -> bool {
 fn public_api_rule_matches(pattern: &str, relative_path: &str, signature: &str) -> bool {
     let trimmed = pattern.trim();
     let normalized_path = normalize_policy_path(relative_path);
+    let canonical_signature = canonicalize_public_api_signature(signature);
     if let Some((path_pattern, signature_pattern)) = trimmed.split_once('|') {
         wildcard_matches(&normalize_policy_path(path_pattern), &normalized_path)
-            && wildcard_matches(signature_pattern.trim(), signature)
+            && wildcard_matches(
+                &canonicalize_public_api_signature(signature_pattern.trim()),
+                &canonical_signature,
+            )
     } else {
-        wildcard_matches(trimmed, signature)
+        wildcard_matches(
+            &canonicalize_public_api_signature(trimmed),
+            &canonical_signature,
+        )
     }
+}
+
+fn canonicalize_public_api_signature(signature: &str) -> String {
+    let mut canonical = signature.trim().to_string();
+
+    if let Some(rest) = canonical.strip_prefix("rust:fn fn ") {
+        canonical = format!("rust:fn {rest}");
+    } else if let Some(rest) = canonical.strip_prefix("rust:impl-fn ") {
+        canonical = format!("rust:impl-fn {}", rest.replacen("::fn ", "::", 1));
+    } else if let Some(rest) = canonical.strip_prefix("rust:trait-fn ") {
+        canonical = format!("rust:trait-fn {}", rest.replacen("::fn ", "::", 1));
+    }
+
+    for (from, to) in [
+        ("& mut self", "&mut self"),
+        ("& self", "&self"),
+        (":&mut", ": &mut"),
+        (":&", ": &"),
+        ("< ", "<"),
+        (" >", ">"),
+    ] {
+        canonical = canonical.replace(from, to);
+    }
+
+    canonical.trim_end_matches(',').to_string()
 }
 
 fn wildcard_matches(pattern: &str, candidate: &str) -> bool {
@@ -641,11 +707,9 @@ mod tests {
             public_api_excludes: vec!["rust:fn fn internal_*".to_string()],
         };
 
-        assert!(policy.includes_public_api_item("src/cli.rs", "rust:fn fn run() -> i32"));
+        assert!(policy.includes_public_api_item("src/cli.rs", "rust:fn run() -> i32"));
         assert!(policy.includes_public_api_item("src/cli.rs", "rust:enum OutputFormat"));
-        assert!(
-            !policy.includes_public_api_item("src/cli.rs", "rust:fn fn internal_probe() -> i32")
-        );
+        assert!(!policy.includes_public_api_item("src/cli.rs", "rust:fn internal_probe() -> i32"));
         assert!(!policy.includes_public_api_item("src/cli.rs", "rust:struct GenerateArgs"));
         assert!(!policy.includes_public_api_item("src/internal.rs", "rust:enum OutputFormat"));
     }
@@ -656,5 +720,40 @@ mod tests {
         manifest.scan_policy.public_api_excludes = vec!["src/cli.rs|".to_string()];
 
         assert!(manifest.validate().is_err());
+    }
+
+    #[test]
+    fn evidence_canonicalization_migrates_legacy_rust_signatures() {
+        let evidence = Evidence {
+            feature_hash: "f".to_string(),
+            protocol_hash: "p".to_string(),
+            public_api_hash: "legacy".to_string(),
+            feature_inventory: Vec::new(),
+            protocol_inventory: Vec::new(),
+            public_api_inventory: vec![
+                PublicApiSnapshot {
+                    file: "./src/cli.rs".to_string(),
+                    signature: "rust:fn fn run() -> i32".to_string(),
+                },
+                PublicApiSnapshot {
+                    file: "src/lib.rs".to_string(),
+                    signature: "rust:impl-fn HostAdapter::fn connect(& self, target:&str) -> bool"
+                        .to_string(),
+                },
+            ],
+        };
+
+        let canonical = evidence.canonicalized();
+
+        assert_eq!(canonical.public_api_inventory[0].file, "src/cli.rs");
+        assert_eq!(
+            canonical.public_api_inventory[0].signature,
+            "rust:fn run() -> i32"
+        );
+        assert_eq!(
+            canonical.public_api_inventory[1].signature,
+            "rust:impl-fn HostAdapter::connect(&self, target: &str) -> bool"
+        );
+        assert_ne!(canonical.public_api_hash, "legacy");
     }
 }

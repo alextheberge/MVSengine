@@ -8,6 +8,7 @@ use std::{
 };
 
 use assert_cmd::prelude::*;
+use mvs_manager::mvs::hashing::hash_items;
 use predicates::str::contains;
 use serde_json::Value;
 
@@ -461,4 +462,95 @@ fn public_api_include_filters_persist_and_ignore_non_contract_drift() {
     .success()
     .stdout(contains("Lint passed"))
     .stdout(contains("Public API includes"));
+}
+
+#[test]
+fn lint_accepts_legacy_rust_signature_format_and_generate_rewrites_it() {
+    let temp = TempWorkspace::new();
+    let fixture_project = fixtures_root().join("generator_project");
+    let project_root = temp.path().join("project");
+    copy_dir_recursive(&fixture_project, &project_root);
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "src/lib.rs",
+            "--public-api-include",
+            "rust:fn *",
+        ])
+        .assert()
+        .success();
+
+    let mut generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+    let legacy_signature = "rust:fn fn handshake(version: u32) -> bool";
+    generated["evidence"]["public_api_inventory"] = serde_json::json!([
+        {
+            "file": "src/lib.rs",
+            "signature": legacy_signature
+        }
+    ]);
+    generated["evidence"]["public_api_hash"] =
+        Value::String(hash_items([format!("src/lib.rs|{legacy_signature}")]));
+
+    fs::write(
+        &manifest_path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&generated).expect("failed to serialize manifest")
+        ),
+    )
+    .expect("failed to write legacy-format manifest");
+
+    let mut lint = binary_cmd();
+    lint.args([
+        "lint",
+        "--root",
+        project_root.to_str().expect("non-utf8 path"),
+        "--manifest",
+        manifest_path.to_str().expect("non-utf8 path"),
+    ])
+    .assert()
+    .success()
+    .stdout(contains("Lint passed"));
+
+    let mut regenerate = binary_cmd();
+    regenerate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "src/lib.rs",
+            "--public-api-include",
+            "rust:fn *",
+        ])
+        .assert()
+        .success();
+
+    let rewritten: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read rewritten manifest"),
+    )
+    .expect("rewritten manifest should be valid JSON");
+    assert_eq!(rewritten["identity"]["mvs"], "0.1.1-cli");
+    assert_eq!(
+        rewritten["evidence"]["public_api_inventory"][0]["signature"],
+        "rust:fn handshake(version: u32) -> bool"
+    );
 }
