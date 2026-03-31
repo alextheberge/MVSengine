@@ -97,6 +97,8 @@ make build-release
 ```bash
 mvs-manager generate --root . --manifest mvs.json --context cli
 mvs-manager generate --root . --manifest mvs.json --context edge.mobile --backwards-compatible 3
+mvs-manager generate --root . --manifest mvs.json --context cli --public-api-root src/cli.rs
+mvs-manager generate --root . --manifest mvs.json --context cli --exclude-path src/generated
 mvs-manager generate --root . --manifest mvs.json --context cli --format json
 mvs-manager lint --root . --manifest mvs.json
 mvs-manager lint --root . --manifest mvs.json --format json
@@ -160,6 +162,45 @@ The crawler now tokenizes source before matching decorators or regex-based publi
 - regex-based API scanners operate on comment/string-masked code so multiline template examples do not create fake exports
 
 This matters for repositories that keep code examples, fixture payloads, or prompt templates alongside real source. Those examples no longer pollute `mvs.json.evidence`.
+
+## API Boundary Policy
+
+You can persist scan policy in `mvs.json` so public API evidence reflects the contract you actually support instead of every reachable `pub` item.
+
+The `scan_policy` block supports:
+
+- `public_api_roots`: relative file or directory roots that define the public API boundary
+- `exclude_paths`: relative file or directory prefixes to skip entirely during tag and API scanning
+
+Example:
+
+```json
+{
+  "scan_policy": {
+    "public_api_roots": [
+      "src/cli.rs"
+    ],
+    "exclude_paths": [
+      "src/generated"
+    ]
+  }
+}
+```
+
+You can set these during generation:
+
+```bash
+mvs-manager generate --root . --manifest mvs.json --context cli --public-api-root src/cli.rs
+mvs-manager generate --root . --manifest mvs.json --context cli --exclude-path src/generated
+```
+
+Practical guidance:
+
+- CLI-first projects: point `public_api_roots` at the CLI facade such as `src/cli.rs`
+- SDKs and libraries: point `public_api_roots` at exported facades such as `src/lib.rs`, `src/index.ts`, or `src/public/`
+- Generated or vendor-like code under the root: add it to `exclude_paths`
+
+This policy only scopes public API evidence. Feature and protocol tags are still gathered across the scanned codebase unless a path is explicitly excluded.
 
 ## Machine-Readable Output
 

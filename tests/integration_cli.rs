@@ -340,3 +340,57 @@ fn validate_json_failure_uses_stable_exit_code() {
     assert_eq!(payload["exit_code"], 30);
     assert_eq!(payload["compatible"], false);
 }
+
+#[test]
+fn scoped_public_api_root_ignores_internal_public_api_drift() {
+    let temp = TempWorkspace::new();
+    let fixture_project = fixtures_root().join("generator_project");
+    let project_root = temp.path().join("project");
+    copy_dir_recursive(&fixture_project, &project_root);
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "src/api.ts",
+        ])
+        .assert()
+        .success();
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+    assert_eq!(
+        generated["scan_policy"]["public_api_roots"][0],
+        "src/api.ts"
+    );
+
+    let lib_file = project_root.join("src/lib.rs");
+    let updated = format!(
+        "{}\npub fn internal_probe(seed: u64) -> u64 {{ seed + 1 }}\n",
+        fs::read_to_string(&lib_file).expect("failed to read lib file")
+    );
+    fs::write(&lib_file, updated).expect("failed to write internal api drift");
+
+    let mut lint = binary_cmd();
+    lint.args([
+        "lint",
+        "--root",
+        project_root.to_str().expect("non-utf8 path"),
+        "--manifest",
+        manifest_path.to_str().expect("non-utf8 path"),
+    ])
+    .assert()
+    .success()
+    .stdout(contains("Lint passed"));
+}

@@ -36,7 +36,9 @@ fn try_run(args: &GenerateArgs) -> std::result::Result<GenerateReport, CommandFa
     let previous_identity = manifest.identity.mvs.clone();
     let previous_evidence = manifest.evidence.clone();
 
-    let crawl = crawl_codebase(&args.root)
+    apply_scan_policy_overrides(&mut manifest, args);
+
+    let crawl = crawl_codebase(&args.root, &manifest.scan_policy)
         .with_context(|| format!("failed to crawl source root: {}", args.root.display()))
         .map_err(|error| CommandFailure::new(EXIT_GENERATE_ERROR, format!("{error:#}")))?;
 
@@ -127,6 +129,7 @@ fn try_run(args: &GenerateArgs) -> std::result::Result<GenerateReport, CommandFa
         dry_run: args.dry_run,
         manifest_written: !args.dry_run,
         range_strategy: range_strategy.label().to_string(),
+        scan_policy: manifest.scan_policy.clone(),
         identity: GenerateIdentityReport {
             previous: previous_identity,
             current: manifest.identity.mvs.clone(),
@@ -194,6 +197,7 @@ struct GenerateReport {
     dry_run: bool,
     manifest_written: bool,
     range_strategy: String,
+    scan_policy: crate::mvs::manifest::ScanPolicy,
     identity: GenerateIdentityReport,
     reasons: Vec<String>,
     evidence: GenerateEvidenceReport,
@@ -306,6 +310,34 @@ fn build_public_api_inventory(signatures: &[ApiSignature]) -> Vec<PublicApiSnaps
     inventory
 }
 
+fn apply_scan_policy_overrides(manifest: &mut Manifest, args: &GenerateArgs) {
+    if !args.exclude_paths.is_empty() {
+        manifest.scan_policy.exclude_paths = normalize_policy_paths(&args.exclude_paths);
+    }
+
+    if !args.public_api_roots.is_empty() {
+        manifest.scan_policy.public_api_roots = normalize_policy_paths(&args.public_api_roots);
+    }
+}
+
+fn normalize_policy_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
+    let mut normalized: Vec<String> = paths
+        .iter()
+        .filter_map(|path| {
+            let value = path.to_string_lossy().replace('\\', "/");
+            let value = value.trim_start_matches("./").trim_matches('/').to_string();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        })
+        .collect();
+    normalized.sort();
+    normalized.dedup();
+    normalized
+}
+
 fn render_generate_report(
     report: &GenerateReport,
     format: OutputFormat,
@@ -328,6 +360,7 @@ fn render_generate_report(
                 report.evidence.protocol_inventory_count,
                 report.evidence.public_api_inventory_count
             );
+            render_scan_policy(&report.scan_policy);
 
             if report.manifest_written {
                 println!("Manifest written to {}", report.manifest_path);
@@ -338,6 +371,21 @@ fn render_generate_report(
             Ok(())
         }
         OutputFormat::Json => emit_json(report),
+    }
+}
+
+fn render_scan_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) {
+    if !scan_policy.public_api_roots.is_empty() {
+        println!(
+            "- Public API roots: {}",
+            scan_policy.public_api_roots.join(", ")
+        );
+    }
+    if !scan_policy.exclude_paths.is_empty() {
+        println!(
+            "- Excluded scan paths: {}",
+            scan_policy.exclude_paths.join(", ")
+        );
     }
 }
 
@@ -597,6 +645,8 @@ mod tests {
             lock_step: false,
             backwards_compatible: Some(2),
             dry_run: false,
+            exclude_paths: Vec::new(),
+            public_api_roots: Vec::new(),
             format: OutputFormat::Text,
         };
 

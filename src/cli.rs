@@ -62,6 +62,12 @@ pub struct GenerateArgs {
     #[arg(long, default_value_t = false)]
     pub dry_run: bool,
 
+    #[arg(long = "exclude-path")]
+    pub exclude_paths: Vec<PathBuf>,
+
+    #[arg(long = "public-api-root")]
+    pub public_api_roots: Vec<PathBuf>,
+
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 }

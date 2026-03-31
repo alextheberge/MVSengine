@@ -29,7 +29,7 @@ fn try_run(args: &LintArgs) -> std::result::Result<LintReport, CommandFailure> {
         .with_context(|| format!("failed to load manifest: {}", args.manifest.display()))
         .map_err(|error| CommandFailure::new(EXIT_MANIFEST_ERROR, format!("{error:#}")))?;
 
-    let crawl = crawl_codebase(&args.root)
+    let crawl = crawl_codebase(&args.root, &manifest.scan_policy)
         .with_context(|| format!("failed to crawl source root: {}", args.root.display()))
         .map_err(|error| CommandFailure::new(EXIT_LINT_ERROR, format!("{error:#}")))?;
 
@@ -122,6 +122,7 @@ fn try_run(args: &LintArgs) -> std::result::Result<LintReport, CommandFailure> {
             exit_code: EXIT_SUCCESS,
             manifest_path: args.manifest.display().to_string(),
             root: args.root.display().to_string(),
+            scan_policy: manifest.scan_policy.clone(),
             failure_count: 0,
             failures,
             evidence: LintEvidenceReport {
@@ -142,6 +143,7 @@ fn try_run(args: &LintArgs) -> std::result::Result<LintReport, CommandFailure> {
         exit_code: EXIT_LINT_FAILED,
         manifest_path: args.manifest.display().to_string(),
         root: args.root.display().to_string(),
+        scan_policy: manifest.scan_policy.clone(),
         failure_count: failures.len(),
         failures,
         evidence: LintEvidenceReport {
@@ -237,9 +239,25 @@ fn render_lint_report(
                     println!("- {failure}");
                 }
             }
+            render_scan_policy(&report.scan_policy);
             Ok(())
         }
         OutputFormat::Json => emit_json(report),
+    }
+}
+
+fn render_scan_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) {
+    if !scan_policy.public_api_roots.is_empty() {
+        println!(
+            "- Public API roots: {}",
+            scan_policy.public_api_roots.join(", ")
+        );
+    }
+    if !scan_policy.exclude_paths.is_empty() {
+        println!(
+            "- Excluded scan paths: {}",
+            scan_policy.exclude_paths.join(", ")
+        );
     }
 }
 
@@ -250,6 +268,7 @@ struct LintReport {
     exit_code: i32,
     manifest_path: String,
     root: String,
+    scan_policy: crate::mvs::manifest::ScanPolicy,
     failure_count: usize,
     failures: Vec<String>,
     evidence: LintEvidenceReport,

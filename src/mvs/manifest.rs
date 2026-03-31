@@ -28,6 +28,9 @@ pub struct Manifest {
     #[serde(default)]
     pub environment: Environment,
 
+    #[serde(default, skip_serializing_if = "ScanPolicy::is_empty")]
+    pub scan_policy: ScanPolicy,
+
     #[serde(default)]
     pub evidence: Evidence,
 
@@ -86,6 +89,14 @@ pub struct Environment {
     pub profiles: Vec<String>,
     #[serde(default)]
     pub runtime_constraints: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ScanPolicy {
+    #[serde(default)]
+    pub exclude_paths: Vec<String>,
+    #[serde(default)]
+    pub public_api_roots: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -170,6 +181,7 @@ impl Manifest {
             capabilities: BTreeMap::new(),
             ai_contract: AiContract::default(),
             environment: Environment::default(),
+            scan_policy: ScanPolicy::default(),
             evidence: Evidence::default(),
             history: Vec::new(),
         };
@@ -242,6 +254,7 @@ impl Manifest {
             "compatibility.extension_range",
             &self.compatibility.extension_range,
         )?;
+        self.scan_policy.validate()?;
 
         Ok(())
     }
@@ -276,6 +289,32 @@ impl Manifest {
                 .cloned()
                 .or_else(|| entry.reasons.first().cloned())
         })
+    }
+}
+
+impl ScanPolicy {
+    pub fn is_empty(&self) -> bool {
+        self.exclude_paths.is_empty() && self.public_api_roots.is_empty()
+    }
+
+    pub fn is_excluded(&self, relative_path: &str) -> bool {
+        self.exclude_paths
+            .iter()
+            .any(|pattern| path_matches(relative_path, pattern))
+    }
+
+    pub fn includes_public_api(&self, relative_path: &str) -> bool {
+        self.public_api_roots.is_empty()
+            || self
+                .public_api_roots
+                .iter()
+                .any(|pattern| path_matches(relative_path, pattern))
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_policy_paths("scan_policy.exclude_paths", &self.exclude_paths)?;
+        validate_policy_paths("scan_policy.public_api_roots", &self.public_api_roots)?;
+        Ok(())
     }
 }
 
@@ -347,6 +386,34 @@ fn diff_public_api(
     }
 }
 
+fn validate_policy_paths(label: &str, paths: &[String]) -> Result<()> {
+    for path in paths {
+        if Path::new(path.trim()).is_absolute() {
+            bail!("{label} entries must be relative paths, found `{path}`");
+        }
+        let normalized = normalize_policy_path(path);
+        if normalized.is_empty() {
+            bail!("{label} contains an empty path entry");
+        }
+    }
+
+    Ok(())
+}
+
+fn normalize_policy_path(path: &str) -> String {
+    let normalized = path.trim().replace('\\', "/");
+    let normalized = normalized.trim_start_matches("./").trim_matches('/');
+    normalized.to_string()
+}
+
+fn path_matches(relative_path: &str, pattern: &str) -> bool {
+    let normalized_path = normalize_policy_path(relative_path);
+    let normalized_pattern = normalize_policy_path(pattern);
+
+    normalized_path == normalized_pattern
+        || normalized_path.starts_with(&(normalized_pattern + "/"))
+}
+
 fn validate_range(label: &str, range: &ProtocolRange) -> Result<()> {
     if range.min_prot > range.max_prot {
         bail!(
@@ -369,7 +436,7 @@ fn current_unix_timestamp() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Evidence, Manifest, ProtocolRange, PublicApiSnapshot};
+    use super::{Evidence, Manifest, ProtocolRange, PublicApiSnapshot, ScanPolicy};
 
     #[test]
     fn default_manifest_has_valid_identity() {
@@ -443,5 +510,27 @@ mod tests {
         assert_eq!(diff.protocols.removed, Vec::<String>::new());
         assert_eq!(diff.public_api.added.len(), 1);
         assert_eq!(diff.public_api.removed.len(), 1);
+    }
+
+    #[test]
+    fn scan_policy_matches_relative_paths_and_prefixes() {
+        let policy = ScanPolicy {
+            exclude_paths: vec!["src/generated".to_string()],
+            public_api_roots: vec!["src/cli.rs".to_string(), "src/facade".to_string()],
+        };
+
+        assert!(policy.is_excluded("src/generated/client.rs"));
+        assert!(!policy.is_excluded("src/cli.rs"));
+        assert!(policy.includes_public_api("src/cli.rs"));
+        assert!(policy.includes_public_api("src/facade/mod.rs"));
+        assert!(!policy.includes_public_api("src/internal/mod.rs"));
+    }
+
+    #[test]
+    fn validation_rejects_absolute_scan_policy_paths() {
+        let mut manifest = Manifest::default_for_context("cli");
+        manifest.scan_policy.exclude_paths = vec!["/tmp/generated".to_string()];
+
+        assert!(manifest.validate().is_err());
     }
 }

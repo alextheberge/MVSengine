@@ -11,6 +11,8 @@ use regex::Regex;
 use syn::{ImplItem, Item, TraitItem, Visibility};
 use walkdir::{DirEntry, WalkDir};
 
+use crate::mvs::manifest::ScanPolicy;
+
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TagOccurrence {
     pub name: String,
@@ -140,7 +142,7 @@ impl SourceLanguage {
     }
 }
 
-pub fn crawl_codebase(root: &Path) -> Result<CrawlReport> {
+pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlReport> {
     let feature_re = Regex::new(
         r#"@mvs-feature\s*(?:\(\s*["'](?P<name>[^"']+)["'](?:\s*,\s*(?P<meta>[^)]*))?\)|:\s*(?P<name2>[A-Za-z0-9._-]+))"#,
     )
@@ -166,14 +168,16 @@ pub fn crawl_codebase(root: &Path) -> Result<CrawlReport> {
         let Some(language) = SourceLanguage::from_path(path) else {
             continue;
         };
+        let rel = relative_display_path(root, path);
+        if scan_policy.is_excluded(&rel) {
+            continue;
+        }
 
         let source = match fs::read_to_string(path) {
             Ok(content) => content,
             Err(_) => continue,
         };
         let lexed = lex_source(&source, language);
-
-        let rel = relative_display_path(root, path);
 
         for tag in extract_named_tags(&lexed.comments, &feature_re, "name", "name2") {
             report.feature_tags.insert(tag.clone());
@@ -191,12 +195,14 @@ pub fn crawl_codebase(root: &Path) -> Result<CrawlReport> {
             });
         }
 
-        let signatures = extract_public_api(language, &source, &lexed.masked_code, &api_pack);
-        for signature in signatures {
-            report.public_api.push(ApiSignature {
-                file: rel.clone(),
-                signature,
-            });
+        if scan_policy.includes_public_api(&rel) {
+            let signatures = extract_public_api(language, &source, &lexed.masked_code, &api_pack);
+            for signature in signatures {
+                report.public_api.push(ApiSignature {
+                    file: rel.clone(),
+                    signature,
+                });
+            }
         }
     }
 
@@ -880,6 +886,8 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    use crate::mvs::manifest::ScanPolicy;
+
     use super::crawl_codebase;
 
     struct TempWorkspace {
@@ -936,7 +944,8 @@ mod tests {
         )
         .expect("failed to write ts fixture");
 
-        let report = crawl_codebase(workspace.path()).expect("crawler failed");
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
 
         assert!(report.feature_tags.contains("offline_storage"));
         assert!(report.protocol_tags.contains("auth-api-v1"));
@@ -969,7 +978,8 @@ mod tests {
         )
         .expect("failed to write rust fixture");
 
-        let report = crawl_codebase(workspace.path()).expect("crawler failed");
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
 
         assert!(report
             .public_api
@@ -996,7 +1006,8 @@ mod tests {
         )
         .expect("failed to write tests file");
 
-        let report = crawl_codebase(workspace.path()).expect("crawler failed");
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
 
         assert!(report.feature_tags.is_empty());
         assert!(report.public_api.is_empty());
@@ -1023,7 +1034,8 @@ mod tests {
         )
         .expect("failed to write rust fixture");
 
-        let report = crawl_codebase(workspace.path()).expect("crawler failed");
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
 
         assert!(report.feature_tags.contains("real_feature"));
         assert!(report.protocol_tags.contains("real_protocol"));
@@ -1051,10 +1063,96 @@ mod tests {
         )
         .expect("failed to write ts fixture");
 
-        let report = crawl_codebase(workspace.path()).expect("crawler failed");
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
 
         assert!(report.feature_tags.contains("billing"));
         assert!(report.protocol_tags.contains("billing-api-v1"));
+    }
+
+    #[test]
+    fn public_api_roots_scope_api_inventory_without_hiding_tags() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("api.ts"),
+            r#"
+            // @mvs-feature("auth")
+            // @mvs-protocol("auth-api")
+            export function login(username: string): Promise<string> {
+              return Promise.resolve(username)
+            }
+        "#,
+        )
+        .expect("failed to write api fixture");
+
+        fs::write(
+            src.join("internal.ts"),
+            r#"
+            // @mvs-feature("background_jobs")
+            // @mvs-protocol("jobs-api")
+            export function runJob(name: string): string {
+              return name
+            }
+        "#,
+        )
+        .expect("failed to write internal fixture");
+
+        let report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["src/api.ts".to_string()],
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(report.feature_tags.contains("auth"));
+        assert!(report.feature_tags.contains("background_jobs"));
+        assert!(report.protocol_tags.contains("auth-api"));
+        assert!(report.protocol_tags.contains("jobs-api"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("login")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("runJob")));
+    }
+
+    #[test]
+    fn exclude_paths_skip_tag_and_api_scans() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(src.join("generated")).expect("failed to create generated dir");
+
+        fs::write(
+            src.join("generated/client.ts"),
+            r#"
+            // @mvs-feature("generated_api")
+            // @mvs-protocol("generated-api")
+            export function request(path: string): string {
+              return path
+            }
+        "#,
+        )
+        .expect("failed to write generated fixture");
+
+        let report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: vec!["src/generated".to_string()],
+                public_api_roots: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(report.feature_tags.is_empty());
+        assert!(report.protocol_tags.is_empty());
+        assert!(report.public_api.is_empty());
     }
 
     #[test]
@@ -1079,7 +1177,8 @@ mod tests {
         )
         .expect("failed to write ts fixture");
 
-        let report = crawl_codebase(workspace.path()).expect("crawler failed");
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
 
         assert!(report
             .public_api

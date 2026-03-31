@@ -52,6 +52,8 @@ Work instructions:
    - Keep `identity.cont` aligned with the chosen runtime context.
    - Update `capabilities` to reflect required/provided runtime features that other manifests may validate against.
    - Update `environment.profiles` and `environment.runtime_constraints` when runtime context or platform constraints matter.
+   - Use `scan_policy.public_api_roots` to define the real external API boundary when the repo has a facade layer.
+   - Use `scan_policy.exclude_paths` to skip generated or non-contract code under the scan root.
    - If this project exposes an AI tool schema, set `ai_contract` fields and use:
      `mvs-manager generate --root . --manifest mvs.json --context <context> --ai-schema <path>`
    - Do not hand-edit `evidence` hashes unless there is no other option; prefer regenerating.

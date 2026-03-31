@@ -12,6 +12,18 @@ Machine-readable output:
 mvs-manager generate --root . --manifest mvs.json --context cli --format json
 ```
 
+Persist an explicit API boundary:
+
+```bash
+mvs-manager generate --root . --manifest mvs.json --context cli --public-api-root src/cli.rs
+```
+
+Skip generated or vendor-like paths under the scan root:
+
+```bash
+mvs-manager generate --root . --manifest mvs.json --context cli --exclude-path src/generated
+```
+
 Use `--arch-break` for explicit data/schema breaks:
 
 ```bash
@@ -107,6 +119,21 @@ Decorator extraction is comment-aware:
 - string literals and embedded source examples do not count
 
 Regex-based API extraction also runs against string/comment-masked code for non-Rust languages, which avoids false positives from template literals and fixture blobs.
+
+## Scan Policy
+
+`mvs.json.scan_policy` lets you narrow API evidence to real contract boundaries:
+
+- `public_api_roots`: relative file or directory prefixes that define the public API surface
+- `exclude_paths`: relative file or directory prefixes skipped by both tag and API scans
+
+This is especially useful when:
+
+- a CLI project exposes one facade file but keeps many internal `pub` helpers
+- a library has an explicit `public/` or `index.ts` export layer
+- generated code sits under the normal source root
+
+Flags passed to `generate` persist into `mvs.json.scan_policy`, so later `lint` runs use the same boundary automatically.
 
 ## Exit Codes
 
