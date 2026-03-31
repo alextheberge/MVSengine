@@ -93,10 +93,14 @@ pub struct Environment {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ScanPolicy {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude_paths: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub public_api_roots: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub public_api_includes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub public_api_excludes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -294,7 +298,10 @@ impl Manifest {
 
 impl ScanPolicy {
     pub fn is_empty(&self) -> bool {
-        self.exclude_paths.is_empty() && self.public_api_roots.is_empty()
+        self.exclude_paths.is_empty()
+            && self.public_api_roots.is_empty()
+            && self.public_api_includes.is_empty()
+            && self.public_api_excludes.is_empty()
     }
 
     pub fn is_excluded(&self, relative_path: &str) -> bool {
@@ -311,9 +318,27 @@ impl ScanPolicy {
                 .any(|pattern| path_matches(relative_path, pattern))
     }
 
+    pub fn includes_public_api_item(&self, relative_path: &str, signature: &str) -> bool {
+        if self
+            .public_api_excludes
+            .iter()
+            .any(|pattern| public_api_rule_matches(pattern, relative_path, signature))
+        {
+            return false;
+        }
+
+        self.public_api_includes.is_empty()
+            || self
+                .public_api_includes
+                .iter()
+                .any(|pattern| public_api_rule_matches(pattern, relative_path, signature))
+    }
+
     pub fn validate(&self) -> Result<()> {
         validate_policy_paths("scan_policy.exclude_paths", &self.exclude_paths)?;
         validate_policy_paths("scan_policy.public_api_roots", &self.public_api_roots)?;
+        validate_policy_patterns("scan_policy.public_api_includes", &self.public_api_includes)?;
+        validate_policy_patterns("scan_policy.public_api_excludes", &self.public_api_excludes)?;
         Ok(())
     }
 }
@@ -400,6 +425,25 @@ fn validate_policy_paths(label: &str, paths: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn validate_policy_patterns(label: &str, patterns: &[String]) -> Result<()> {
+    for pattern in patterns {
+        let trimmed = pattern.trim();
+        if trimmed.is_empty() {
+            bail!("{label} contains an empty pattern entry");
+        }
+
+        if let Some((path_pattern, signature_pattern)) = trimmed.split_once('|') {
+            if path_pattern.trim().is_empty() || signature_pattern.trim().is_empty() {
+                bail!(
+                    "{label} selector patterns must be `relative/path|signature-pattern`, found `{pattern}`"
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn normalize_policy_path(path: &str) -> String {
     let normalized = path.trim().replace('\\', "/");
     let normalized = normalized.trim_start_matches("./").trim_matches('/');
@@ -412,6 +456,55 @@ fn path_matches(relative_path: &str, pattern: &str) -> bool {
 
     normalized_path == normalized_pattern
         || normalized_path.starts_with(&(normalized_pattern + "/"))
+}
+
+fn public_api_rule_matches(pattern: &str, relative_path: &str, signature: &str) -> bool {
+    let trimmed = pattern.trim();
+    let normalized_path = normalize_policy_path(relative_path);
+    if let Some((path_pattern, signature_pattern)) = trimmed.split_once('|') {
+        wildcard_matches(&normalize_policy_path(path_pattern), &normalized_path)
+            && wildcard_matches(signature_pattern.trim(), signature)
+    } else {
+        wildcard_matches(trimmed, signature)
+    }
+}
+
+fn wildcard_matches(pattern: &str, candidate: &str) -> bool {
+    let pattern = pattern.as_bytes();
+    let candidate = candidate.as_bytes();
+
+    let mut pattern_index = 0usize;
+    let mut candidate_index = 0usize;
+    let mut star_index = None;
+    let mut match_index = 0usize;
+
+    while candidate_index < candidate.len() {
+        if pattern_index < pattern.len()
+            && (pattern[pattern_index] == b'*'
+                || pattern[pattern_index] == candidate[candidate_index])
+        {
+            if pattern[pattern_index] == b'*' {
+                star_index = Some(pattern_index);
+                match_index = candidate_index;
+                pattern_index += 1;
+            } else {
+                pattern_index += 1;
+                candidate_index += 1;
+            }
+        } else if let Some(star) = star_index {
+            pattern_index = star + 1;
+            match_index += 1;
+            candidate_index = match_index;
+        } else {
+            return false;
+        }
+    }
+
+    while pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
+        pattern_index += 1;
+    }
+
+    pattern_index == pattern.len()
 }
 
 fn validate_range(label: &str, range: &ProtocolRange) -> Result<()> {
@@ -517,6 +610,8 @@ mod tests {
         let policy = ScanPolicy {
             exclude_paths: vec!["src/generated".to_string()],
             public_api_roots: vec!["src/cli.rs".to_string(), "src/facade".to_string()],
+            public_api_includes: Vec::new(),
+            public_api_excludes: Vec::new(),
         };
 
         assert!(policy.is_excluded("src/generated/client.rs"));
@@ -530,6 +625,35 @@ mod tests {
     fn validation_rejects_absolute_scan_policy_paths() {
         let mut manifest = Manifest::default_for_context("cli");
         manifest.scan_policy.exclude_paths = vec!["/tmp/generated".to_string()];
+
+        assert!(manifest.validate().is_err());
+    }
+
+    #[test]
+    fn scan_policy_filters_public_api_signatures_by_signature_or_selector() {
+        let policy = ScanPolicy {
+            exclude_paths: Vec::new(),
+            public_api_roots: vec!["src/cli.rs".to_string()],
+            public_api_includes: vec![
+                "rust:fn *".to_string(),
+                "src/cli.rs|rust:enum OutputFormat".to_string(),
+            ],
+            public_api_excludes: vec!["rust:fn fn internal_*".to_string()],
+        };
+
+        assert!(policy.includes_public_api_item("src/cli.rs", "rust:fn fn run() -> i32"));
+        assert!(policy.includes_public_api_item("src/cli.rs", "rust:enum OutputFormat"));
+        assert!(
+            !policy.includes_public_api_item("src/cli.rs", "rust:fn fn internal_probe() -> i32")
+        );
+        assert!(!policy.includes_public_api_item("src/cli.rs", "rust:struct GenerateArgs"));
+        assert!(!policy.includes_public_api_item("src/internal.rs", "rust:enum OutputFormat"));
+    }
+
+    #[test]
+    fn validation_rejects_empty_public_api_selector_patterns() {
+        let mut manifest = Manifest::default_for_context("cli");
+        manifest.scan_policy.public_api_excludes = vec!["src/cli.rs|".to_string()];
 
         assert!(manifest.validate().is_err());
     }

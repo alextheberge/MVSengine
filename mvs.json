@@ -1,20 +1,20 @@
 {
   "$schema": "https://mvs.dev/schema/v1",
   "identity": {
-    "mvs": "0.3.6-cli",
+    "mvs": "0.3.7-cli",
     "arch": 0,
     "feat": 3,
-    "prot": 6,
+    "prot": 7,
     "cont": "cli"
   },
   "compatibility": {
     "host_range": {
       "min_prot": 0,
-      "max_prot": 6
+      "max_prot": 7
     },
     "extension_range": {
       "min_prot": 0,
-      "max_prot": 6
+      "max_prot": 7
     },
     "legacy_shims": []
   },
@@ -42,15 +42,19 @@
     }
   },
   "scan_policy": {
-    "exclude_paths": [],
     "public_api_roots": [
       "src/cli.rs"
+    ],
+    "public_api_excludes": [
+      "rust:const EXIT_*",
+      "rust:enum OutputFormat",
+      "rust:struct *Args"
     ]
   },
   "evidence": {
     "feature_hash": "20a854fe0033b2a4deb245a49f2fa2f59da2fa8a4f2184ac7c2446d5f2e98426",
     "protocol_hash": "1ecfef2dac4e737bfb78404171e3d8b15cf67a2d47802696507d0ae492e39306",
-    "public_api_hash": "f6d63edb7b97f4936d99fb57ea7b848d4423914b6f5a4a1ea73277354bbb8a70",
+    "public_api_hash": "ba48146a451684e63e7e735377b4462cac783ed6e628d3dd26be52028ee987c5",
     "feature_inventory": [
       "manifest_compatibility_validation",
       "manifest_generation",
@@ -64,51 +68,7 @@
     "public_api_inventory": [
       {
         "file": "src/cli.rs",
-        "signature": "rust:const EXIT_GENERATE_ERROR:i32"
-      },
-      {
-        "file": "src/cli.rs",
-        "signature": "rust:const EXIT_LINT_ERROR:i32"
-      },
-      {
-        "file": "src/cli.rs",
-        "signature": "rust:const EXIT_LINT_FAILED:i32"
-      },
-      {
-        "file": "src/cli.rs",
-        "signature": "rust:const EXIT_MANIFEST_ERROR:i32"
-      },
-      {
-        "file": "src/cli.rs",
-        "signature": "rust:const EXIT_OUTPUT_ERROR:i32"
-      },
-      {
-        "file": "src/cli.rs",
-        "signature": "rust:const EXIT_SUCCESS:i32"
-      },
-      {
-        "file": "src/cli.rs",
-        "signature": "rust:const EXIT_VALIDATE_INCOMPATIBLE:i32"
-      },
-      {
-        "file": "src/cli.rs",
-        "signature": "rust:enum OutputFormat"
-      },
-      {
-        "file": "src/cli.rs",
         "signature": "rust:fn fn run() -> i32"
-      },
-      {
-        "file": "src/cli.rs",
-        "signature": "rust:struct GenerateArgs"
-      },
-      {
-        "file": "src/cli.rs",
-        "signature": "rust:struct LintArgs"
-      },
-      {
-        "file": "src/cli.rs",
-        "signature": "rust:struct ValidateArgs"
       }
     ]
   },
@@ -157,6 +117,17 @@
         "Protocol incremented due to public API signature drift (example source: src/cli.rs)."
       ],
       "changed_at_unix": 1774996019
+    },
+    {
+      "mvs": "0.3.7-cli",
+      "arch": 0,
+      "feat": 3,
+      "prot": 7,
+      "cont": "cli",
+      "reasons": [
+        "Protocol incremented due to public API signature drift (example source: src/cli.rs)."
+      ],
+      "changed_at_unix": 1774996752
     }
   ]
 }

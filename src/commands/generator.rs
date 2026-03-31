@@ -318,6 +318,16 @@ fn apply_scan_policy_overrides(manifest: &mut Manifest, args: &GenerateArgs) {
     if !args.public_api_roots.is_empty() {
         manifest.scan_policy.public_api_roots = normalize_policy_paths(&args.public_api_roots);
     }
+
+    if !args.public_api_includes.is_empty() {
+        manifest.scan_policy.public_api_includes =
+            normalize_policy_patterns(&args.public_api_includes);
+    }
+
+    if !args.public_api_excludes.is_empty() {
+        manifest.scan_policy.public_api_excludes =
+            normalize_policy_patterns(&args.public_api_excludes);
+    }
 }
 
 fn normalize_policy_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
@@ -332,6 +342,17 @@ fn normalize_policy_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
                 Some(value)
             }
         })
+        .collect();
+    normalized.sort();
+    normalized.dedup();
+    normalized
+}
+
+fn normalize_policy_patterns(patterns: &[String]) -> Vec<String> {
+    let mut normalized: Vec<String> = patterns
+        .iter()
+        .map(|pattern| pattern.trim().to_string())
+        .filter(|pattern| !pattern.is_empty())
         .collect();
     normalized.sort();
     normalized.dedup();
@@ -379,6 +400,18 @@ fn render_scan_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) {
         println!(
             "- Public API roots: {}",
             scan_policy.public_api_roots.join(", ")
+        );
+    }
+    if !scan_policy.public_api_includes.is_empty() {
+        println!(
+            "- Public API includes: {}",
+            scan_policy.public_api_includes.join(", ")
+        );
+    }
+    if !scan_policy.public_api_excludes.is_empty() {
+        println!(
+            "- Public API excludes: {}",
+            scan_policy.public_api_excludes.join(", ")
         );
     }
     if !scan_policy.exclude_paths.is_empty() {
@@ -647,6 +680,8 @@ mod tests {
             dry_run: false,
             exclude_paths: Vec::new(),
             public_api_roots: Vec::new(),
+            public_api_includes: Vec::new(),
+            public_api_excludes: Vec::new(),
             format: OutputFormat::Text,
         };
 

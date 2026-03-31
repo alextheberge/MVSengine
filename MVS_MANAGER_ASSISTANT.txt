@@ -53,6 +53,8 @@ Work instructions:
    - Update `capabilities` to reflect required/provided runtime features that other manifests may validate against.
    - Update `environment.profiles` and `environment.runtime_constraints` when runtime context or platform constraints matter.
    - Use `scan_policy.public_api_roots` to define the real external API boundary when the repo has a facade layer.
+   - Use `scan_policy.public_api_includes` to keep only the declarations that define the supported contract.
+   - Use `scan_policy.public_api_excludes` to drop public constants, helper structs, or other declarations that should not drive `PROT`.
    - Use `scan_policy.exclude_paths` to skip generated or non-contract code under the scan root.
    - If this project exposes an AI tool schema, set `ai_contract` fields and use:
      `mvs-manager generate --root . --manifest mvs.json --context <context> --ai-schema <path>`
@@ -95,7 +97,14 @@ Work instructions:
     - If the runtime must satisfy model capabilities:
       `mvs-manager lint --root . --manifest mvs.json --available-model-capabilities tool_calling,json_schema,reasoning-v1`
 
-11. Deliverable requirements.
+11. API filter pattern guidance.
+    - `public_api_includes` and `public_api_excludes` use `*` wildcards.
+    - A plain pattern like `rust:struct *Args` matches signatures only.
+    - A selector like `src/cli.rs|rust:fn *` matches both the relative file path and signature.
+    - If both include and exclude rules match, exclude wins.
+    - Copy patterns from `mvs.json.evidence.public_api_inventory` when you need exact selectors.
+
+12. Deliverable requirements.
     - Modify code only where needed to expose/tag real public or contract surfaces.
     - Prefer small, precise edits.
     - At the end, report:

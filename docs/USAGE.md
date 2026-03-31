@@ -18,6 +18,18 @@ Persist an explicit API boundary:
 mvs-manager generate --root . --manifest mvs.json --context cli --public-api-root src/cli.rs
 ```
 
+Keep only specific declarations from that boundary:
+
+```bash
+mvs-manager generate --root . --manifest mvs.json --context cli --public-api-root src/cli.rs --public-api-include 'src/cli.rs|rust:fn *'
+```
+
+Drop public-but-non-contract declarations from that boundary:
+
+```bash
+mvs-manager generate --root . --manifest mvs.json --context cli --public-api-root src/cli.rs --public-api-exclude 'rust:const EXIT_*'
+```
+
 Skip generated or vendor-like paths under the scan root:
 
 ```bash
@@ -125,15 +137,25 @@ Regex-based API extraction also runs against string/comment-masked code for non-
 `mvs.json.scan_policy` lets you narrow API evidence to real contract boundaries:
 
 - `public_api_roots`: relative file or directory prefixes that define the public API surface
+- `public_api_includes`: wildcard rules for declarations that count as public API
+- `public_api_excludes`: wildcard rules for declarations that should be ignored
 - `exclude_paths`: relative file or directory prefixes skipped by both tag and API scans
 
 This is especially useful when:
 
 - a CLI project exposes one facade file but keeps many internal `pub` helpers
+- that facade file still contains public constants or argument structs that are not real consumer contract
 - a library has an explicit `public/` or `index.ts` export layer
 - generated code sits under the normal source root
 
 Flags passed to `generate` persist into `mvs.json.scan_policy`, so later `lint` runs use the same boundary automatically.
+
+Pattern matching rules:
+
+- `*` matches zero or more characters
+- `rust:struct *Args` matches signatures only
+- `src/cli.rs|rust:fn *` matches a relative file path and a signature together
+- exclude rules win over include rules when both match the same declaration
 
 ## Exit Codes
 

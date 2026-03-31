@@ -253,6 +253,18 @@ fn render_scan_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) {
             scan_policy.public_api_roots.join(", ")
         );
     }
+    if !scan_policy.public_api_includes.is_empty() {
+        println!(
+            "- Public API includes: {}",
+            scan_policy.public_api_includes.join(", ")
+        );
+    }
+    if !scan_policy.public_api_excludes.is_empty() {
+        println!(
+            "- Public API excludes: {}",
+            scan_policy.public_api_excludes.join(", ")
+        );
+    }
     if !scan_policy.exclude_paths.is_empty() {
         println!(
             "- Excluded scan paths: {}",

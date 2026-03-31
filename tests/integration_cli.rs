@@ -394,3 +394,71 @@ fn scoped_public_api_root_ignores_internal_public_api_drift() {
     .success()
     .stdout(contains("Lint passed"));
 }
+
+#[test]
+fn public_api_include_filters_persist_and_ignore_non_contract_drift() {
+    let temp = TempWorkspace::new();
+    let fixture_project = fixtures_root().join("generator_project");
+    let project_root = temp.path().join("project");
+    copy_dir_recursive(&fixture_project, &project_root);
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "src/api.ts",
+            "--public-api-include",
+            "ts/js:function login*",
+        ])
+        .assert()
+        .success();
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+    assert_eq!(
+        generated["scan_policy"]["public_api_includes"][0],
+        "ts/js:function login*"
+    );
+    let inventory = generated["evidence"]["public_api_inventory"]
+        .as_array()
+        .expect("public api inventory should be an array");
+    assert_eq!(inventory.len(), 1);
+    assert!(inventory[0]["signature"]
+        .as_str()
+        .expect("signature should be a string")
+        .starts_with("ts/js:function login("));
+
+    let api_file = project_root.join("src/api.ts");
+    let updated = fs::read_to_string(&api_file)
+        .expect("failed to read api file")
+        .replace(
+            "export interface Session",
+            "export interface SessionPayload",
+        )
+        .replace("export const buildSession", "export const buildSessionV2");
+    fs::write(&api_file, updated).expect("failed to write non-contract drift");
+
+    let mut lint = binary_cmd();
+    lint.args([
+        "lint",
+        "--root",
+        project_root.to_str().expect("non-utf8 path"),
+        "--manifest",
+        manifest_path.to_str().expect("non-utf8 path"),
+    ])
+    .assert()
+    .success()
+    .stdout(contains("Lint passed"))
+    .stdout(contains("Public API includes"));
+}

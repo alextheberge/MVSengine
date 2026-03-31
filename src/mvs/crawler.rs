@@ -198,6 +198,9 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
         if scan_policy.includes_public_api(&rel) {
             let signatures = extract_public_api(language, &source, &lexed.masked_code, &api_pack);
             for signature in signatures {
+                if !scan_policy.includes_public_api_item(&rel, &signature) {
+                    continue;
+                }
                 report.public_api.push(ApiSignature {
                     file: rel.clone(),
                     signature,
@@ -1105,6 +1108,8 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: vec!["src/api.ts".to_string()],
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
             },
         )
         .expect("crawler failed");
@@ -1146,6 +1151,8 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: vec!["src/generated".to_string()],
                 public_api_roots: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
             },
         )
         .expect("crawler failed");
@@ -1188,5 +1195,57 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("fakeLogin")));
+    }
+
+    #[test]
+    fn public_api_item_filters_scope_signatures_within_selected_root() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("api.ts"),
+            r#"
+            // @mvs-feature("auth")
+            // @mvs-protocol("auth-api")
+            export function login(username: string, password: string): Promise<string> {
+              return Promise.resolve(`${username}:${password}`)
+            }
+
+            export interface Session {
+              token: string
+            }
+
+            export const buildSession = (token: string): Session => ({ token })
+        "#,
+        )
+        .expect("failed to write api fixture");
+
+        let report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["src/api.ts".to_string()],
+                public_api_includes: vec!["ts/js:function login*".to_string()],
+                public_api_excludes: vec!["ts/js:const buildSession".to_string()],
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(report.feature_tags.contains("auth"));
+        assert!(report.protocol_tags.contains("auth-api"));
+        assert_eq!(report.public_api.len(), 1);
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.starts_with("ts/js:function login")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("Session")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("buildSession")));
     }
 }

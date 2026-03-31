@@ -170,6 +170,8 @@ You can persist scan policy in `mvs.json` so public API evidence reflects the co
 The `scan_policy` block supports:
 
 - `public_api_roots`: relative file or directory roots that define the public API boundary
+- `public_api_includes`: wildcard patterns for declarations that should count as public API
+- `public_api_excludes`: wildcard patterns for declarations that should not count as public API
 - `exclude_paths`: relative file or directory prefixes to skip entirely during tag and API scanning
 
 Example:
@@ -179,6 +181,11 @@ Example:
   "scan_policy": {
     "public_api_roots": [
       "src/cli.rs"
+    ],
+    "public_api_excludes": [
+      "rust:const EXIT_*",
+      "rust:struct *Args",
+      "rust:enum OutputFormat"
     ],
     "exclude_paths": [
       "src/generated"
@@ -192,6 +199,8 @@ You can set these during generation:
 ```bash
 mvs-manager generate --root . --manifest mvs.json --context cli --public-api-root src/cli.rs
 mvs-manager generate --root . --manifest mvs.json --context cli --exclude-path src/generated
+mvs-manager generate --root . --manifest mvs.json --context cli --public-api-exclude 'rust:const EXIT_*'
+mvs-manager generate --root . --manifest mvs.json --context cli --public-api-include 'src/cli.rs|rust:fn *'
 ```
 
 Practical guidance:
@@ -199,8 +208,18 @@ Practical guidance:
 - CLI-first projects: point `public_api_roots` at the CLI facade such as `src/cli.rs`
 - SDKs and libraries: point `public_api_roots` at exported facades such as `src/lib.rs`, `src/index.ts`, or `src/public/`
 - Generated or vendor-like code under the root: add it to `exclude_paths`
+- Use `public_api_excludes` when a facade file still contains public constants, argument structs, or helper exports that are not real compatibility surface
+- Use `public_api_includes` when you want to pin the contract to a small explicit subset of declarations
 
 This policy only scopes public API evidence. Feature and protocol tags are still gathered across the scanned codebase unless a path is explicitly excluded.
+
+Pattern rules:
+
+- `*` matches zero or more characters
+- A plain pattern such as `rust:struct *Args` matches only the normalized signature
+- A selector pattern such as `src/cli.rs|rust:fn *` matches both the relative file path and the signature
+- If both include and exclude rules match the same declaration, the exclude rule wins
+- The easiest way to author patterns is to copy a signature from `mvs.json.evidence.public_api_inventory` or `lint --format json`
 
 ## Machine-Readable Output
 
