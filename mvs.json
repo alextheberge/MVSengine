@@ -1,20 +1,20 @@
 {
   "$schema": "https://mvs.dev/schema/v1",
   "identity": {
-    "mvs": "0.2.3-cli",
+    "mvs": "0.2.4-cli",
     "arch": 0,
     "feat": 2,
-    "prot": 3,
+    "prot": 4,
     "cont": "cli"
   },
   "compatibility": {
     "host_range": {
       "min_prot": 0,
-      "max_prot": 3
+      "max_prot": 4
     },
     "extension_range": {
       "min_prot": 0,
-      "max_prot": 3
+      "max_prot": 4
     },
     "legacy_shims": []
   },
@@ -44,7 +44,279 @@
   "evidence": {
     "feature_hash": "1f6ce081de26f86c580ec65258ba0d39d2877a34f384af92578e6fdb07718e20",
     "protocol_hash": "481fb0a06a4081f5cc57f0be22e468b1dc35f53ae3d938c1608a748c78a29469",
-    "public_api_hash": "370e5c8912bbd016e82ff31a57cf82c462c9ec3dbe1099cfb79421fa68824f5f"
+    "public_api_hash": "7d6526cf54ff78d7ed5dc167ecdc81d2a687b6341a7c80597cb8da417d32474f",
+    "feature_inventory": [
+      "core_runtime",
+      "manifest_compatibility_validation",
+      "manifest_generation",
+      "manifest_linting",
+      "offline_storage"
+    ],
+    "protocol_inventory": [
+      "auth-api-v1",
+      "cli_generate_command",
+      "cli_lint_command",
+      "cli_validate_command",
+      "rust_host_surface"
+    ],
+    "public_api_inventory": [
+      {
+        "file": "src/cli.rs",
+        "signature": "rust:const EXIT_GENERATE_ERROR:i32"
+      },
+      {
+        "file": "src/cli.rs",
+        "signature": "rust:const EXIT_LINT_ERROR:i32"
+      },
+      {
+        "file": "src/cli.rs",
+        "signature": "rust:const EXIT_LINT_FAILED:i32"
+      },
+      {
+        "file": "src/cli.rs",
+        "signature": "rust:const EXIT_MANIFEST_ERROR:i32"
+      },
+      {
+        "file": "src/cli.rs",
+        "signature": "rust:const EXIT_OUTPUT_ERROR:i32"
+      },
+      {
+        "file": "src/cli.rs",
+        "signature": "rust:const EXIT_SUCCESS:i32"
+      },
+      {
+        "file": "src/cli.rs",
+        "signature": "rust:const EXIT_VALIDATE_INCOMPATIBLE:i32"
+      },
+      {
+        "file": "src/cli.rs",
+        "signature": "rust:enum OutputFormat"
+      },
+      {
+        "file": "src/cli.rs",
+        "signature": "rust:fn fn run() -> i32"
+      },
+      {
+        "file": "src/cli.rs",
+        "signature": "rust:struct GenerateArgs"
+      },
+      {
+        "file": "src/cli.rs",
+        "signature": "rust:struct LintArgs"
+      },
+      {
+        "file": "src/cli.rs",
+        "signature": "rust:struct ValidateArgs"
+      },
+      {
+        "file": "src/commands/generator.rs",
+        "signature": "rust:fn fn run(args: GenerateArgs) -> i32"
+      },
+      {
+        "file": "src/commands/linter.rs",
+        "signature": "rust:fn fn run(args: LintArgs) -> i32"
+      },
+      {
+        "file": "src/commands/mod.rs",
+        "signature": "rust:mod generator"
+      },
+      {
+        "file": "src/commands/mod.rs",
+        "signature": "rust:mod linter"
+      },
+      {
+        "file": "src/commands/mod.rs",
+        "signature": "rust:mod reader"
+      },
+      {
+        "file": "src/commands/output.rs",
+        "signature": "rust:fn fn emit_error(command:&str, format: OutputFormat, exit_code: i32, message:&str) -> i32"
+      },
+      {
+        "file": "src/commands/output.rs",
+        "signature": "rust:fn fn emit_json<T: Serialize>(value:&T) -> Result <(), CommandFailure>"
+      },
+      {
+        "file": "src/commands/output.rs",
+        "signature": "rust:impl-fn CommandFailure::fn new(exit_code: i32, message: impl Into<String>) -> Self"
+      },
+      {
+        "file": "src/commands/output.rs",
+        "signature": "rust:struct CommandFailure"
+      },
+      {
+        "file": "src/commands/reader.rs",
+        "signature": "rust:fn fn run(args: ValidateArgs) -> i32"
+      },
+      {
+        "file": "src/lib.rs",
+        "signature": "rust:mod cli"
+      },
+      {
+        "file": "src/lib.rs",
+        "signature": "rust:mod commands"
+      },
+      {
+        "file": "src/lib.rs",
+        "signature": "rust:mod mvs"
+      },
+      {
+        "file": "src/mvs/crawler.rs",
+        "signature": "rust:fn fn crawl_codebase(root:&Path) -> Result<CrawlReport>"
+      },
+      {
+        "file": "src/mvs/crawler.rs",
+        "signature": "rust:struct ApiSignature"
+      },
+      {
+        "file": "src/mvs/crawler.rs",
+        "signature": "rust:struct CrawlReport"
+      },
+      {
+        "file": "src/mvs/crawler.rs",
+        "signature": "rust:struct TagOccurrence"
+      },
+      {
+        "file": "src/mvs/hashing.rs",
+        "signature": "rust:fn fn hash_file(path:&Path) -> Result<String>"
+      },
+      {
+        "file": "src/mvs/hashing.rs",
+        "signature": "rust:fn fn hash_items<I, S>(items: I) -> String where I: IntoIterator<Item=S>, S: AsRef<str>,"
+      },
+      {
+        "file": "src/mvs/hashing.rs",
+        "signature": "rust:fn fn sha256_hex(bytes:&[u8]) -> String"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:impl-fn Evidence::fn semantic_diff(& self, feature_inventory:&[String], protocol_inventory:&[String], public_api_inventory:&[PublicApiSnapshot],) -> InventoryDiff"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:impl-fn InventoryDiff::fn is_empty(& self) -> bool"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:impl-fn Manifest::fn append_history_entry(& mut self, reasons: Vec<String>)"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:impl-fn Manifest::fn default_for_context(context:&str) -> Self"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:impl-fn Manifest::fn latest_protocol_reason(& self, prot: u64) -> Option<String>"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:impl-fn Manifest::fn load(path:&Path) -> Result<Self>"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:impl-fn Manifest::fn load_if_exists(path:&Path, context:&str) -> Result<Self>"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:impl-fn Manifest::fn sync_identity_string(& mut self)"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:impl-fn Manifest::fn validate(& self) -> Result <()>"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:impl-fn Manifest::fn write(& self, path:&Path) -> Result <()>"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:impl-fn ProtocolRange::fn contains(& self, prot: u64) -> bool"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:impl-fn PublicApiInventoryDiff::fn is_empty(& self) -> bool"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:impl-fn StringInventoryDiff::fn is_empty(& self) -> bool"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:struct AiContract"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:struct Compatibility"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:struct Environment"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:struct Evidence"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:struct HistoryEntry"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:struct Identity"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:struct InventoryDiff"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:struct LegacyShim"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:struct Manifest"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:struct ProtocolRange"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:struct PublicApiInventoryDiff"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:struct PublicApiSnapshot"
+      },
+      {
+        "file": "src/mvs/manifest.rs",
+        "signature": "rust:struct StringInventoryDiff"
+      },
+      {
+        "file": "src/mvs/mod.rs",
+        "signature": "rust:mod crawler"
+      },
+      {
+        "file": "src/mvs/mod.rs",
+        "signature": "rust:mod hashing"
+      },
+      {
+        "file": "src/mvs/mod.rs",
+        "signature": "rust:mod manifest"
+      },
+      {
+        "file": "src/mvs/mod.rs",
+        "signature": "rust:mod reader"
+      },
+      {
+        "file": "src/mvs/reader.rs",
+        "signature": "rust:fn fn validate_host_extension(host:&Manifest, extension:&Manifest, context: Option<& str>, allow_shims: bool, host_model_capabilities_override: Option<& [String]>,) -> ValidationResult"
+      },
+      {
+        "file": "src/mvs/reader.rs",
+        "signature": "rust:struct ValidationResult"
+      }
+    ]
   },
   "history": [
     {
@@ -57,6 +329,17 @@
         "Protocol incremented due to public API signature drift (example source: src/cli.rs)."
       ],
       "changed_at_unix": 1772656819
+    },
+    {
+      "mvs": "0.2.4-cli",
+      "arch": 0,
+      "feat": 2,
+      "prot": 4,
+      "cont": "cli",
+      "reasons": [
+        "Protocol incremented due to public API signature drift (example source: src/cli.rs)."
+      ],
+      "changed_at_unix": 1774994227
     }
   ]
 }

@@ -6,6 +6,12 @@
 mvs-manager generate --root . --manifest mvs.json --context cli
 ```
 
+Machine-readable output:
+
+```bash
+mvs-manager generate --root . --manifest mvs.json --context cli --format json
+```
+
 Use `--arch-break` for explicit data/schema breaks:
 
 ```bash
@@ -30,6 +36,12 @@ Every increment rationale is persisted to `mvs.json.history`.
 mvs-manager lint --root . --manifest mvs.json
 ```
 
+Machine-readable output:
+
+```bash
+mvs-manager lint --root . --manifest mvs.json --format json
+```
+
 Optional AI schema drift checks:
 
 ```bash
@@ -46,6 +58,12 @@ mvs-manager lint --root . --manifest mvs.json --available-model-capabilities too
 
 ```bash
 mvs-manager validate --host-manifest host.json --extension-manifest extension.json --allow-shims true
+```
+
+Machine-readable output:
+
+```bash
+mvs-manager validate --host-manifest host.json --extension-manifest extension.json --format json
 ```
 
 Context hierarchies are supported. Example: `edge` extensions can run on `edge.mobile` hosts when ranges and capabilities pass.
@@ -71,6 +89,26 @@ make build-release
 ```
 
 `make install-hooks` sets `core.hooksPath` to `.githooks` and enables a pre-commit gate that runs `make lint-manifest`.
+
+## Semantic Evidence
+
+`generate` writes both hashes and semantic inventories into `mvs.json.evidence`:
+
+- `feature_inventory`
+- `protocol_inventory`
+- `public_api_inventory`
+
+`lint` checks these snapshots in addition to the hashes. If your manifest was created before inventories existed, regenerate once to bring it forward.
+
+## Exit Codes
+
+- `0`: success
+- `10`: `generate` execution failure
+- `20`: `lint` detected drift
+- `21`: `lint` execution failure
+- `30`: `validate` incompatibility
+- `40`: manifest read/parse/write/validation failure
+- `70`: output rendering failure
 
 ## Troubleshooting
 

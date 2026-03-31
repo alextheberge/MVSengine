@@ -95,13 +95,105 @@ make build-release
 ```bash
 mvs-manager generate --root . --manifest mvs.json --context cli
 mvs-manager generate --root . --manifest mvs.json --context edge.mobile --backwards-compatible 3
+mvs-manager generate --root . --manifest mvs.json --context cli --format json
 mvs-manager lint --root . --manifest mvs.json
+mvs-manager lint --root . --manifest mvs.json --format json
 mvs-manager lint --root . --manifest mvs.json --available-model-capabilities tool_calling,json_schema,reasoning-v1
 mvs-manager validate --host-manifest host.json --extension-manifest extension.json
+mvs-manager validate --host-manifest host.json --extension-manifest extension.json --format json
 mvs-manager validate --host-manifest host.json --extension-manifest extension.json --host-model-capabilities tool_calling,reasoning-v1
 ```
 
 `mvs.json` persists version-change rationale in `history`, enabling compatibility reports to explain protocol breaks (for example, auth-flow changes tied to a specific `PROT`).
+
+## Semantic Evidence Snapshots
+
+`mvs-manager` now stores the semantic surfaces it reasons about, not just their hashes. The `evidence` block in `mvs.json` includes:
+
+- `feature_inventory`: sorted unique `@mvs-feature(...)` tag names
+- `protocol_inventory`: sorted unique `@mvs-protocol(...)` tag names
+- `public_api_inventory`: sorted `file + signature` entries for detected public API surfaces
+
+This gives you two things:
+
+- deterministic hashing for version-axis decisions
+- machine-readable diffs explaining exactly what changed between manifest generations
+
+Typical `evidence` shape:
+
+```json
+{
+  "evidence": {
+    "feature_hash": "…",
+    "protocol_hash": "…",
+    "public_api_hash": "…",
+    "feature_inventory": [
+      "manifest_generation",
+      "manifest_linting"
+    ],
+    "protocol_inventory": [
+      "cli_generate_command",
+      "cli_lint_command"
+    ],
+    "public_api_inventory": [
+      {
+        "file": "src/cli.rs",
+        "signature": "rust:enum Command"
+      }
+    ]
+  }
+}
+```
+
+If an older manifest predates these inventory snapshots, `lint` will fail until you regenerate once. That is intentional: it brings the manifest up to the current evidence model.
+
+## Machine-Readable Output
+
+All commands support `--format text|json` and default to `text`.
+
+Examples:
+
+```bash
+mvs-manager generate --root . --manifest mvs.json --context cli --format json
+mvs-manager lint --root . --manifest mvs.json --format json
+mvs-manager validate --host-manifest host.json --extension-manifest extension.json --format json
+```
+
+JSON responses are designed for CI, bots, editor tooling, and release automation. They include:
+
+- `command`
+- `status`
+- `exit_code`
+- semantic diff details where relevant
+- command-specific metadata such as identity changes, inventory counts, or compatibility reasons
+
+Example `lint --format json` failure shape:
+
+```json
+{
+  "command": "lint",
+  "status": "failed",
+  "exit_code": 20,
+  "failure_count": 1,
+  "failures": [
+    "Public API signature drift detected. Added: src/api.ts|ts/js:function rotateToken(token:string): string Build must fail until PROT is incremented and manifest is regenerated."
+  ]
+}
+```
+
+## Stable Exit Codes
+
+`mvs-manager` now uses command-stable nonzero exit codes so automation can distinguish drift from execution failures.
+
+- `0`: success
+- `10`: `generate` execution failure
+- `20`: `lint` detected manifest/code drift or policy failure
+- `21`: `lint` execution failure
+- `30`: `validate` found incompatibility
+- `40`: manifest read/parse/write/validation failure
+- `70`: output rendering failure
+
+This means CI can treat `20` as “manifest must be regenerated” and `30` as “host/extension contract is incompatible” without scraping human text.
 
 ## Release + Verification
 

@@ -1,19 +1,53 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-use anyhow::{Context, Result};
+use anyhow::Context;
+use serde::Serialize;
 
-use crate::cli::GenerateArgs;
+use crate::cli::{
+    GenerateArgs, OutputFormat, EXIT_GENERATE_ERROR, EXIT_MANIFEST_ERROR, EXIT_SUCCESS,
+};
+use crate::commands::output::{emit_error, emit_json, CommandFailure};
 use crate::mvs::crawler::{crawl_codebase, ApiSignature, CrawlReport};
 use crate::mvs::hashing::{hash_file, hash_items};
-use crate::mvs::manifest::{LegacyShim, Manifest, ProtocolRange};
+use crate::mvs::manifest::{InventoryDiff, LegacyShim, Manifest, ProtocolRange, PublicApiSnapshot};
 
 /// @mvs-feature("manifest_generation")
 /// @mvs-protocol("cli_generate_command")
-pub fn run(args: GenerateArgs) -> Result<()> {
+pub fn run(args: GenerateArgs) -> i32 {
+    match try_run(&args) {
+        Ok(report) => match render_generate_report(&report, args.format) {
+            Ok(()) => report.exit_code,
+            Err(error) => emit_error("generate", args.format, error.exit_code, &error.message),
+        },
+        Err(error) => emit_error("generate", args.format, error.exit_code, &error.message),
+    }
+}
+
+fn try_run(args: &GenerateArgs) -> std::result::Result<GenerateReport, CommandFailure> {
     let context = args.context.as_deref().unwrap_or("cli");
-    let mut manifest = Manifest::load_if_exists(&args.manifest, context)?;
+    let mut manifest = Manifest::load_if_exists(&args.manifest, context).map_err(|error| {
+        CommandFailure::new(
+            EXIT_MANIFEST_ERROR,
+            format!(
+                "failed to load manifest `{}`: {error:#}",
+                args.manifest.display()
+            ),
+        )
+    })?;
+    let previous_identity = manifest.identity.mvs.clone();
+    let previous_evidence = manifest.evidence.clone();
 
     let crawl = crawl_codebase(&args.root)
-        .with_context(|| format!("failed to crawl source root: {}", args.root.display()))?;
+        .with_context(|| format!("failed to crawl source root: {}", args.root.display()))
+        .map_err(|error| CommandFailure::new(EXIT_GENERATE_ERROR, format!("{error:#}")))?;
+
+    let feature_inventory: Vec<String> = crawl.feature_tags.iter().cloned().collect();
+    let protocol_inventory: Vec<String> = crawl.protocol_tags.iter().cloned().collect();
+    let public_api_inventory = build_public_api_inventory(&crawl.public_api);
+    let inventory_diff = previous_evidence.semantic_diff(
+        &feature_inventory,
+        &protocol_inventory,
+        &public_api_inventory,
+    );
 
     let feature_hash = hash_items(crawl.feature_tags.iter().map(String::as_str));
     let protocol_hash = hash_items(crawl.protocol_tags.iter().map(String::as_str));
@@ -21,7 +55,8 @@ pub fn run(args: GenerateArgs) -> Result<()> {
 
     let ai_schema_hash = if let Some(schema_path) = args.ai_schema.as_ref() {
         hash_file(schema_path)
-            .with_context(|| format!("failed to hash AI schema file: {}", schema_path.display()))?
+            .with_context(|| format!("failed to hash AI schema file: {}", schema_path.display()))
+            .map_err(|error| CommandFailure::new(EXIT_GENERATE_ERROR, format!("{error:#}")))?
     } else {
         manifest.ai_contract.tool_schema_hash.clone()
     };
@@ -36,7 +71,7 @@ pub fn run(args: GenerateArgs) -> Result<()> {
         arch_break: args.arch_break,
         arch_reason: args.arch_reason.as_deref(),
     });
-    let range_strategy = resolve_range_strategy(&args);
+    let range_strategy = resolve_range_strategy(args);
 
     manifest.identity.arch += decision.arch_increment;
     manifest.identity.feat += decision.feat_increment;
@@ -47,6 +82,9 @@ pub fn run(args: GenerateArgs) -> Result<()> {
     manifest.evidence.feature_hash = feature_hash;
     manifest.evidence.protocol_hash = protocol_hash;
     manifest.evidence.public_api_hash = public_api_hash;
+    manifest.evidence.feature_inventory = feature_inventory;
+    manifest.evidence.protocol_inventory = protocol_inventory;
+    manifest.evidence.public_api_inventory = public_api_inventory;
 
     if !ai_schema_hash.is_empty() {
         manifest.ai_contract.tool_schema_hash = ai_schema_hash;
@@ -67,23 +105,46 @@ pub fn run(args: GenerateArgs) -> Result<()> {
     }
     manifest.append_history_entry(reasons_to_persist.clone());
 
-    println!("MVS identity: {}", manifest.identity.mvs);
-    if reasons_to_persist.is_empty() {
-        println!("No axis increments required; evidence was refreshed.");
-    } else {
-        for reason in &reasons_to_persist {
-            println!("- {reason}");
-        }
+    if !args.dry_run {
+        manifest.write(&args.manifest).map_err(|error| {
+            CommandFailure::new(
+                EXIT_MANIFEST_ERROR,
+                format!(
+                    "failed to write manifest `{}`: {error:#}",
+                    args.manifest.display()
+                ),
+            )
+        })?;
     }
 
-    if args.dry_run {
-        println!("Dry run enabled; manifest not written.");
-    } else {
-        manifest.write(&args.manifest)?;
-        println!("Manifest written to {}", args.manifest.display());
-    }
-
-    Ok(())
+    Ok(GenerateReport {
+        command: "generate",
+        status: "ok",
+        exit_code: EXIT_SUCCESS,
+        manifest_path: args.manifest.display().to_string(),
+        root: args.root.display().to_string(),
+        context: context.to_string(),
+        dry_run: args.dry_run,
+        manifest_written: !args.dry_run,
+        range_strategy: range_strategy.label().to_string(),
+        identity: GenerateIdentityReport {
+            previous: previous_identity,
+            current: manifest.identity.mvs.clone(),
+            arch_increment: decision.arch_increment,
+            feat_increment: decision.feat_increment,
+            prot_increment: decision.prot_increment,
+        },
+        reasons: reasons_to_persist,
+        evidence: GenerateEvidenceReport {
+            feature_hash: manifest.evidence.feature_hash.clone(),
+            protocol_hash: manifest.evidence.protocol_hash.clone(),
+            public_api_hash: manifest.evidence.public_api_hash.clone(),
+            feature_inventory_count: manifest.evidence.feature_inventory.len(),
+            protocol_inventory_count: manifest.evidence.protocol_inventory.len(),
+            public_api_inventory_count: manifest.evidence.public_api_inventory.len(),
+            diff: inventory_diff,
+        },
+    })
 }
 
 #[derive(Debug, Default)]
@@ -110,6 +171,52 @@ enum RangeStrategy {
     Normalize,
     LockStep,
     BackwardsCompatible(u64),
+}
+
+impl RangeStrategy {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Normalize => "normalize",
+            Self::LockStep => "lock-step",
+            Self::BackwardsCompatible(_) => "backwards-compatible",
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct GenerateReport {
+    command: &'static str,
+    status: &'static str,
+    exit_code: i32,
+    manifest_path: String,
+    root: String,
+    context: String,
+    dry_run: bool,
+    manifest_written: bool,
+    range_strategy: String,
+    identity: GenerateIdentityReport,
+    reasons: Vec<String>,
+    evidence: GenerateEvidenceReport,
+}
+
+#[derive(Debug, Serialize)]
+struct GenerateIdentityReport {
+    previous: String,
+    current: String,
+    arch_increment: u64,
+    feat_increment: u64,
+    prot_increment: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct GenerateEvidenceReport {
+    feature_hash: String,
+    protocol_hash: String,
+    public_api_hash: String,
+    feature_inventory_count: usize,
+    protocol_inventory_count: usize,
+    public_api_inventory_count: usize,
+    diff: InventoryDiff,
 }
 
 fn derive_axis_decision(inputs: AxisInputs<'_>) -> AxisDecision {
@@ -184,6 +291,101 @@ fn hash_public_api(signatures: &[ApiSignature]) -> String {
             .iter()
             .map(|item| format!("{}|{}", item.file, item.signature)),
     )
+}
+
+fn build_public_api_inventory(signatures: &[ApiSignature]) -> Vec<PublicApiSnapshot> {
+    let mut inventory: Vec<PublicApiSnapshot> = signatures
+        .iter()
+        .map(|item| PublicApiSnapshot {
+            file: item.file.clone(),
+            signature: item.signature.clone(),
+        })
+        .collect();
+    inventory.sort();
+    inventory.dedup();
+    inventory
+}
+
+fn render_generate_report(
+    report: &GenerateReport,
+    format: OutputFormat,
+) -> std::result::Result<(), CommandFailure> {
+    match format {
+        OutputFormat::Text => {
+            println!("MVS identity: {}", report.identity.current);
+            if report.reasons.is_empty() {
+                println!("No axis increments required; evidence was refreshed.");
+            } else {
+                for reason in &report.reasons {
+                    println!("- {reason}");
+                }
+            }
+
+            render_inventory_diff(&report.evidence.diff);
+            println!(
+                "Semantic evidence snapshots: {} features, {} protocols, {} public API signatures.",
+                report.evidence.feature_inventory_count,
+                report.evidence.protocol_inventory_count,
+                report.evidence.public_api_inventory_count
+            );
+
+            if report.manifest_written {
+                println!("Manifest written to {}", report.manifest_path);
+            } else {
+                println!("Dry run enabled; manifest not written.");
+            }
+
+            Ok(())
+        }
+        OutputFormat::Json => emit_json(report),
+    }
+}
+
+fn render_inventory_diff(diff: &InventoryDiff) {
+    if diff.is_empty() {
+        return;
+    }
+
+    if !diff.features.added.is_empty() {
+        println!("- Feature tags added: {}", diff.features.added.join(", "));
+    }
+    if !diff.features.removed.is_empty() {
+        println!(
+            "- Feature tags removed: {}",
+            diff.features.removed.join(", ")
+        );
+    }
+    if !diff.protocols.added.is_empty() {
+        println!("- Protocol tags added: {}", diff.protocols.added.join(", "));
+    }
+    if !diff.protocols.removed.is_empty() {
+        println!(
+            "- Protocol tags removed: {}",
+            diff.protocols.removed.join(", ")
+        );
+    }
+    if !diff.public_api.added.is_empty() {
+        println!(
+            "- Public API signatures added: {}",
+            diff.public_api
+                .added
+                .iter()
+                .map(|item| format!("{}|{}", item.file, item.signature))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    if !diff.public_api.removed.is_empty() {
+        println!(
+            "- Public API signatures removed: {}",
+            diff.public_api
+                .removed
+                .iter()
+                .map(|item| format!("{}|{}", item.file, item.signature))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
 }
 
 fn normalize_range(range: &mut ProtocolRange, current_prot: u64) {
@@ -280,7 +482,7 @@ fn generate_auto_shims(manifest: &mut Manifest, min_prot: u64, current_prot: u64
 mod tests {
     use std::path::PathBuf;
 
-    use crate::cli::GenerateArgs;
+    use crate::cli::{GenerateArgs, OutputFormat};
     use crate::mvs::crawler::{ApiSignature, CrawlReport, TagOccurrence};
     use crate::mvs::manifest::{LegacyShim, Manifest};
 
@@ -395,6 +597,7 @@ mod tests {
             lock_step: false,
             backwards_compatible: Some(2),
             dry_run: false,
+            format: OutputFormat::Text,
         };
 
         match resolve_range_strategy(&args) {

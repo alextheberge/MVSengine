@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 use std::path::PathBuf;
 
-use anyhow::Result;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::commands;
+
+pub const EXIT_SUCCESS: i32 = 0;
+pub const EXIT_GENERATE_ERROR: i32 = 10;
+pub const EXIT_LINT_FAILED: i32 = 20;
+pub const EXIT_LINT_ERROR: i32 = 21;
+pub const EXIT_VALIDATE_INCOMPATIBLE: i32 = 30;
+pub const EXIT_MANIFEST_ERROR: i32 = 40;
+pub const EXIT_OUTPUT_ERROR: i32 = 70;
 
 #[derive(Debug, Parser)]
 #[command(name = "mvs-manager", version, about = "MVS Engine manager CLI")]
@@ -18,6 +25,12 @@ enum Command {
     Generate(GenerateArgs),
     Lint(LintArgs),
     Validate(ValidateArgs),
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum)]
+pub enum OutputFormat {
+    Text,
+    Json,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -48,6 +61,9 @@ pub struct GenerateArgs {
 
     #[arg(long, default_value_t = false)]
     pub dry_run: bool,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -63,6 +79,9 @@ pub struct LintArgs {
 
     #[arg(long, value_delimiter = ',')]
     pub available_model_capabilities: Vec<String>,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -81,9 +100,12 @@ pub struct ValidateArgs {
 
     #[arg(long, value_delimiter = ',')]
     pub host_model_capabilities: Vec<String>,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
 }
 
-pub fn run() -> Result<()> {
+pub fn run() -> i32 {
     let cli = Cli::parse();
 
     match cli.command {

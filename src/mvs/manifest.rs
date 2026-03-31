@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
@@ -93,6 +93,12 @@ pub struct Evidence {
     pub feature_hash: String,
     pub protocol_hash: String,
     pub public_api_hash: String,
+    #[serde(default)]
+    pub feature_inventory: Vec<String>,
+    #[serde(default)]
+    pub protocol_inventory: Vec<String>,
+    #[serde(default)]
+    pub public_api_inventory: Vec<PublicApiSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +110,31 @@ pub struct HistoryEntry {
     pub cont: String,
     pub reasons: Vec<String>,
     pub changed_at_unix: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, Eq, PartialEq, Ord, PartialOrd)]
+pub struct PublicApiSnapshot {
+    pub file: String,
+    pub signature: String,
+}
+
+#[derive(Debug, Clone, Serialize, Default, Eq, PartialEq)]
+pub struct InventoryDiff {
+    pub features: StringInventoryDiff,
+    pub protocols: StringInventoryDiff,
+    pub public_api: PublicApiInventoryDiff,
+}
+
+#[derive(Debug, Clone, Serialize, Default, Eq, PartialEq)]
+pub struct StringInventoryDiff {
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Default, Eq, PartialEq)]
+pub struct PublicApiInventoryDiff {
+    pub added: Vec<PublicApiSnapshot>,
+    pub removed: Vec<PublicApiSnapshot>,
 }
 
 impl ProtocolRange {
@@ -248,6 +279,74 @@ impl Manifest {
     }
 }
 
+impl Evidence {
+    pub fn semantic_diff(
+        &self,
+        feature_inventory: &[String],
+        protocol_inventory: &[String],
+        public_api_inventory: &[PublicApiSnapshot],
+    ) -> InventoryDiff {
+        InventoryDiff {
+            features: diff_strings(&self.feature_inventory, feature_inventory),
+            protocols: diff_strings(&self.protocol_inventory, protocol_inventory),
+            public_api: diff_public_api(&self.public_api_inventory, public_api_inventory),
+        }
+    }
+}
+
+impl InventoryDiff {
+    pub fn is_empty(&self) -> bool {
+        self.features.is_empty() && self.protocols.is_empty() && self.public_api.is_empty()
+    }
+}
+
+impl StringInventoryDiff {
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty()
+    }
+}
+
+impl PublicApiInventoryDiff {
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty()
+    }
+}
+
+fn diff_strings(previous: &[String], current: &[String]) -> StringInventoryDiff {
+    let previous_set: BTreeSet<&str> = previous.iter().map(String::as_str).collect();
+    let current_set: BTreeSet<&str> = current.iter().map(String::as_str).collect();
+
+    StringInventoryDiff {
+        added: current_set
+            .difference(&previous_set)
+            .map(|item| (*item).to_string())
+            .collect(),
+        removed: previous_set
+            .difference(&current_set)
+            .map(|item| (*item).to_string())
+            .collect(),
+    }
+}
+
+fn diff_public_api(
+    previous: &[PublicApiSnapshot],
+    current: &[PublicApiSnapshot],
+) -> PublicApiInventoryDiff {
+    let previous_set: BTreeSet<&PublicApiSnapshot> = previous.iter().collect();
+    let current_set: BTreeSet<&PublicApiSnapshot> = current.iter().collect();
+
+    PublicApiInventoryDiff {
+        added: current_set
+            .difference(&previous_set)
+            .map(|item| (*item).clone())
+            .collect(),
+        removed: previous_set
+            .difference(&current_set)
+            .map(|item| (*item).clone())
+            .collect(),
+    }
+}
+
 fn validate_range(label: &str, range: &ProtocolRange) -> Result<()> {
     if range.min_prot > range.max_prot {
         bail!(
@@ -270,7 +369,7 @@ fn current_unix_timestamp() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Manifest, ProtocolRange};
+    use super::{Evidence, Manifest, ProtocolRange, PublicApiSnapshot};
 
     #[test]
     fn default_manifest_has_valid_identity() {
@@ -310,5 +409,39 @@ mod tests {
         let reason = manifest.latest_protocol_reason(12);
         assert!(reason.is_some());
         assert!(reason.unwrap_or_default().contains("Auth Flow break"));
+    }
+
+    #[test]
+    fn semantic_diff_reports_added_and_removed_inventory_items() {
+        let evidence = Evidence {
+            feature_hash: "f".to_string(),
+            protocol_hash: "p".to_string(),
+            public_api_hash: "a".to_string(),
+            feature_inventory: vec!["offline_storage".to_string()],
+            protocol_inventory: vec!["cli_generate_command".to_string()],
+            public_api_inventory: vec![PublicApiSnapshot {
+                file: "src/lib.rs".to_string(),
+                signature: "rust:fn login(user:String)".to_string(),
+            }],
+        };
+
+        let diff = evidence.semantic_diff(
+            &["sync".to_string()],
+            &[
+                "cli_generate_command".to_string(),
+                "cli_lint_command".to_string(),
+            ],
+            &[PublicApiSnapshot {
+                file: "src/lib.rs".to_string(),
+                signature: "rust:fn rotate_token(token:String)".to_string(),
+            }],
+        );
+
+        assert_eq!(diff.features.added, vec!["sync".to_string()]);
+        assert_eq!(diff.features.removed, vec!["offline_storage".to_string()]);
+        assert_eq!(diff.protocols.added, vec!["cli_lint_command".to_string()]);
+        assert_eq!(diff.protocols.removed, Vec::<String>::new());
+        assert_eq!(diff.public_api.added.len(), 1);
+        assert_eq!(diff.public_api.removed.len(), 1);
     }
 }

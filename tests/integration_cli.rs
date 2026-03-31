@@ -205,3 +205,138 @@ fn validate_fails_when_protocol_out_of_range_and_no_shim() {
         .failure()
         .stdout(contains("Compatibility: INCOMPATIBLE"));
 }
+
+#[test]
+fn generate_json_reports_semantic_evidence_snapshot_counts() {
+    let temp = TempWorkspace::new();
+    let fixture_project = fixtures_root().join("generator_project");
+    let project_root = temp.path().join("project");
+    copy_dir_recursive(&fixture_project, &project_root);
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    let assert = generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())
+        .expect("generate output should be valid utf8");
+    let payload: Value = serde_json::from_str(&stdout).expect("generate json output should parse");
+
+    assert_eq!(payload["command"], "generate");
+    assert_eq!(payload["status"], "ok");
+    assert_eq!(payload["exit_code"], 0);
+    assert!(
+        payload["evidence"]["feature_inventory_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= 1
+    );
+    assert!(
+        payload["evidence"]["protocol_inventory_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= 1
+    );
+    assert!(
+        payload["evidence"]["public_api_inventory_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= 1
+    );
+}
+
+#[test]
+fn lint_json_failure_uses_stable_exit_code() {
+    let temp = TempWorkspace::new();
+    let fixture_project = fixtures_root().join("generator_project");
+    let project_root = temp.path().join("project");
+    copy_dir_recursive(&fixture_project, &project_root);
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+        ])
+        .assert()
+        .success();
+
+    let api_file = project_root.join("src/api.ts");
+    let updated = format!(
+        "{}\nexport function rotateToken(token: string): string {{ return token; }}\n",
+        fs::read_to_string(&api_file).expect("failed to read API file")
+    );
+    fs::write(&api_file, updated).expect("failed to write API file drift");
+
+    let mut lint = binary_cmd();
+    let assert = lint
+        .args([
+            "lint",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .code(20);
+
+    let stdout =
+        String::from_utf8(assert.get_output().stdout.clone()).expect("lint output should be utf8");
+    let payload: Value = serde_json::from_str(&stdout).expect("lint json output should parse");
+
+    assert_eq!(payload["command"], "lint");
+    assert_eq!(payload["status"], "failed");
+    assert_eq!(payload["exit_code"], 20);
+    assert!(payload["failure_count"].as_u64().unwrap_or_default() >= 1);
+}
+
+#[test]
+fn validate_json_failure_uses_stable_exit_code() {
+    let host = fixtures_root().join("manifests/host_no_shim.json");
+    let extension = fixtures_root().join("manifests/extension_out_of_range.json");
+
+    let mut validate = binary_cmd();
+    let assert = validate
+        .args([
+            "validate",
+            "--host-manifest",
+            host.to_str().expect("non-utf8 path"),
+            "--extension-manifest",
+            extension.to_str().expect("non-utf8 path"),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .code(30);
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())
+        .expect("validate output should be valid utf8");
+    let payload: Value = serde_json::from_str(&stdout).expect("validate json output should parse");
+
+    assert_eq!(payload["command"], "validate");
+    assert_eq!(payload["status"], "incompatible");
+    assert_eq!(payload["exit_code"], 30);
+    assert_eq!(payload["compatible"], false);
+}
