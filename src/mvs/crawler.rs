@@ -32,6 +32,26 @@ pub struct CrawlReport {
     pub public_api: Vec<ApiSignature>,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum SourceLanguage {
+    Rust,
+    TypeScript,
+    Tsx,
+    JavaScript,
+    Jsx,
+    Go,
+    Python,
+    Java,
+    Kotlin,
+    Csharp,
+}
+
+#[derive(Debug, Clone)]
+struct LexedSource {
+    comments: Vec<String>,
+    masked_code: String,
+}
+
 struct ApiRegexPack {
     ts_export_decl: Regex,
     ts_export_const: Regex,
@@ -87,6 +107,39 @@ impl ApiRegexPack {
     }
 }
 
+impl SourceLanguage {
+    fn from_path(path: &Path) -> Option<Self> {
+        match path.extension().and_then(|ext| ext.to_str()) {
+            Some("rs") => Some(Self::Rust),
+            Some("ts") => Some(Self::TypeScript),
+            Some("tsx") => Some(Self::Tsx),
+            Some("js") => Some(Self::JavaScript),
+            Some("jsx") => Some(Self::Jsx),
+            Some("go") => Some(Self::Go),
+            Some("py") => Some(Self::Python),
+            Some("java") => Some(Self::Java),
+            Some("kt") => Some(Self::Kotlin),
+            Some("cs") => Some(Self::Csharp),
+            _ => None,
+        }
+    }
+
+    fn extension_label(self) -> &'static str {
+        match self {
+            Self::Rust => "rs",
+            Self::TypeScript => "ts",
+            Self::Tsx => "tsx",
+            Self::JavaScript => "js",
+            Self::Jsx => "jsx",
+            Self::Go => "go",
+            Self::Python => "py",
+            Self::Java => "java",
+            Self::Kotlin => "kt",
+            Self::Csharp => "cs",
+        }
+    }
+}
+
 pub fn crawl_codebase(root: &Path) -> Result<CrawlReport> {
     let feature_re = Regex::new(
         r#"@mvs-feature\s*(?:\(\s*["'](?P<name>[^"']+)["'](?:\s*,\s*(?P<meta>[^)]*))?\)|:\s*(?P<name2>[A-Za-z0-9._-]+))"#,
@@ -110,18 +163,19 @@ pub fn crawl_codebase(root: &Path) -> Result<CrawlReport> {
         }
 
         let path = entry.path();
-        if !is_supported_source(path) {
+        let Some(language) = SourceLanguage::from_path(path) else {
             continue;
-        }
+        };
 
         let source = match fs::read_to_string(path) {
             Ok(content) => content,
             Err(_) => continue,
         };
+        let lexed = lex_source(&source, language);
 
         let rel = relative_display_path(root, path);
 
-        for tag in extract_named_tags(&source, &feature_re, "name", "name2") {
+        for tag in extract_named_tags(&lexed.comments, &feature_re, "name", "name2") {
             report.feature_tags.insert(tag.clone());
             report.feature_occurrences.push(TagOccurrence {
                 name: tag,
@@ -129,7 +183,7 @@ pub fn crawl_codebase(root: &Path) -> Result<CrawlReport> {
             });
         }
 
-        for tag in extract_named_tags(&source, &protocol_re, "surface", "surface2") {
+        for tag in extract_named_tags(&lexed.comments, &protocol_re, "surface", "surface2") {
             report.protocol_tags.insert(tag.clone());
             report.protocol_occurrences.push(TagOccurrence {
                 name: tag,
@@ -137,7 +191,7 @@ pub fn crawl_codebase(root: &Path) -> Result<CrawlReport> {
             });
         }
 
-        let signatures = extract_public_api(path, &source, &api_pack);
+        let signatures = extract_public_api(language, &source, &lexed.masked_code, &api_pack);
         for signature in signatures {
             report.public_api.push(ApiSignature {
                 file: rel.clone(),
@@ -155,30 +209,37 @@ pub fn crawl_codebase(root: &Path) -> Result<CrawlReport> {
 }
 
 fn extract_named_tags(
-    source: &str,
+    comments: &[String],
     regex: &Regex,
     primary_group: &str,
     fallback_group: &str,
 ) -> Vec<String> {
     let mut values = Vec::new();
 
-    for capture in regex.captures_iter(source) {
-        let tag = capture
-            .name(primary_group)
-            .or_else(|| capture.name(fallback_group))
-            .map(|value| value.as_str().trim().to_string())
-            .unwrap_or_default();
+    for comment in comments {
+        for capture in regex.captures_iter(comment) {
+            let tag = capture
+                .name(primary_group)
+                .or_else(|| capture.name(fallback_group))
+                .map(|value| value.as_str().trim().to_string())
+                .unwrap_or_default();
 
-        if !tag.is_empty() {
-            values.push(tag);
+            if !tag.is_empty() {
+                values.push(tag);
+            }
         }
     }
 
     values
 }
 
-fn extract_public_api(path: &Path, source: &str, regex: &ApiRegexPack) -> Vec<String> {
-    if matches!(path.extension().and_then(|ext| ext.to_str()), Some("rs")) {
+fn extract_public_api(
+    language: SourceLanguage,
+    source: &str,
+    masked_code: &str,
+    regex: &ApiRegexPack,
+) -> Vec<String> {
+    if language == SourceLanguage::Rust {
         if let Some(ast_signatures) = extract_rust_public_api(source) {
             if !ast_signatures.is_empty() {
                 return ast_signatures;
@@ -186,24 +247,27 @@ fn extract_public_api(path: &Path, source: &str, regex: &ApiRegexPack) -> Vec<St
         }
     }
 
-    extract_regex_public_api(path, source, regex)
+    extract_regex_public_api(language, masked_code, regex)
 }
 
-fn extract_regex_public_api(path: &Path, source: &str, regex: &ApiRegexPack) -> Vec<String> {
-    let extension = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or_default();
+fn extract_regex_public_api(
+    language: SourceLanguage,
+    source: &str,
+    regex: &ApiRegexPack,
+) -> Vec<String> {
     let mut signatures = Vec::new();
 
     for line in source.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || is_comment_line(trimmed, extension) {
+        if trimmed.is_empty() || is_comment_line(trimmed, language.extension_label()) {
             continue;
         }
 
-        match extension {
-            "ts" | "tsx" | "js" | "jsx" => {
+        match language {
+            SourceLanguage::TypeScript
+            | SourceLanguage::Tsx
+            | SourceLanguage::JavaScript
+            | SourceLanguage::Jsx => {
                 if let Some(capture) = regex.ts_export_decl.captures(trimmed) {
                     let kind = capture
                         .name("kind")
@@ -231,7 +295,7 @@ fn extract_regex_public_api(path: &Path, source: &str, regex: &ApiRegexPack) -> 
                     }
                 }
             }
-            "go" => {
+            SourceLanguage::Go => {
                 if let Some(capture) = regex.go_func.captures(trimmed) {
                     let recv = capture
                         .name("recv")
@@ -251,7 +315,7 @@ fn extract_regex_public_api(path: &Path, source: &str, regex: &ApiRegexPack) -> 
                     }
                 }
             }
-            "py" => {
+            SourceLanguage::Python => {
                 if let Some(capture) = regex.py_def.captures(trimmed) {
                     let name = capture
                         .name("name")
@@ -270,7 +334,7 @@ fn extract_regex_public_api(path: &Path, source: &str, regex: &ApiRegexPack) -> 
                     }
                 }
             }
-            "java" => {
+            SourceLanguage::Java => {
                 if let Some(capture) = regex.java_type.captures(trimmed) {
                     if let Some(name) = capture.name("name") {
                         signatures.push(format!("java:type {}", name.as_str()));
@@ -288,7 +352,7 @@ fn extract_regex_public_api(path: &Path, source: &str, regex: &ApiRegexPack) -> 
                     signatures.push(format!("java:method {}{}", name, normalize_signature(sig)));
                 }
             }
-            "kt" => {
+            SourceLanguage::Kotlin => {
                 if let Some(capture) = regex.kt_decl.captures(trimmed) {
                     let kind = capture
                         .name("kind")
@@ -308,7 +372,7 @@ fn extract_regex_public_api(path: &Path, source: &str, regex: &ApiRegexPack) -> 
                     }
                 }
             }
-            "cs" => {
+            SourceLanguage::Csharp => {
                 if let Some(capture) = regex.cs_type.captures(trimmed) {
                     if let Some(name) = capture.name("name") {
                         signatures.push(format!("csharp:type {}", name.as_str()));
@@ -330,13 +394,324 @@ fn extract_regex_public_api(path: &Path, source: &str, regex: &ApiRegexPack) -> 
                     ));
                 }
             }
-            _ => {}
+            SourceLanguage::Rust => {}
         }
     }
 
     signatures.sort();
     signatures.dedup();
     signatures
+}
+
+fn lex_source(source: &str, language: SourceLanguage) -> LexedSource {
+    match language {
+        SourceLanguage::Python => lex_python_source(source),
+        _ => lex_c_style_source(source, language),
+    }
+}
+
+fn lex_c_style_source(source: &str, language: SourceLanguage) -> LexedSource {
+    let bytes = source.as_bytes();
+    let mut masked = bytes.to_vec();
+    let mut comments = Vec::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if language == SourceLanguage::Rust {
+            if let Some(end) = skip_rust_raw_string(bytes, i) {
+                mask_range(&mut masked, bytes, i, end);
+                i = end;
+                continue;
+            }
+        }
+
+        if uses_backtick_strings(language) && bytes[i] == b'`' {
+            let end = skip_backtick_string(bytes, i);
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        if uses_single_quote_strings(language) && bytes[i] == b'\'' {
+            let end = skip_quoted_string(bytes, i, b'\'');
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        if is_csharp_verbatim_string_start(bytes, i) {
+            let end = skip_csharp_verbatim_string(bytes, i);
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        if bytes[i] == b'"' {
+            let end = skip_quoted_string(bytes, i, b'"');
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        if bytes[i] == b'/' && i + 1 < bytes.len() {
+            if bytes[i + 1] == b'/' {
+                let end = skip_line_comment(bytes, i);
+                comments.push(source[i + 2..end].to_string());
+                mask_range(&mut masked, bytes, i, end);
+                i = end;
+                continue;
+            }
+
+            if bytes[i + 1] == b'*' {
+                let end = skip_block_comment(bytes, i, language == SourceLanguage::Rust);
+                let content_end = if end >= i + 4 { end - 2 } else { end };
+                comments.push(source[i + 2..content_end].to_string());
+                mask_range(&mut masked, bytes, i, end);
+                i = end;
+                continue;
+            }
+        }
+
+        i += 1;
+    }
+
+    LexedSource {
+        comments,
+        masked_code: String::from_utf8(masked).unwrap_or_else(|_| source.to_string()),
+    }
+}
+
+fn lex_python_source(source: &str) -> LexedSource {
+    let bytes = source.as_bytes();
+    let mut masked = bytes.to_vec();
+    let mut comments = Vec::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if let Some(end) = skip_python_triple_quoted_string(bytes, i) {
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        if bytes[i] == b'\'' || bytes[i] == b'"' {
+            let end = skip_quoted_string(bytes, i, bytes[i]);
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        if bytes[i] == b'#' {
+            let end = skip_line_comment(bytes, i);
+            comments.push(source[i + 1..end].to_string());
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        i += 1;
+    }
+
+    LexedSource {
+        comments,
+        masked_code: String::from_utf8(masked).unwrap_or_else(|_| source.to_string()),
+    }
+}
+
+fn uses_backtick_strings(language: SourceLanguage) -> bool {
+    matches!(
+        language,
+        SourceLanguage::TypeScript
+            | SourceLanguage::Tsx
+            | SourceLanguage::JavaScript
+            | SourceLanguage::Jsx
+            | SourceLanguage::Go
+    )
+}
+
+fn uses_single_quote_strings(language: SourceLanguage) -> bool {
+    !matches!(language, SourceLanguage::Rust)
+}
+
+fn mask_range(masked: &mut [u8], original: &[u8], start: usize, end: usize) {
+    for index in start..end.min(masked.len()) {
+        masked[index] = match original[index] {
+            b'\n' | b'\r' | b'\t' | b' ' => original[index],
+            _ => b' ',
+        };
+    }
+}
+
+fn skip_line_comment(bytes: &[u8], start: usize) -> usize {
+    let mut index = start;
+    while index < bytes.len() && bytes[index] != b'\n' {
+        index += 1;
+    }
+    index
+}
+
+fn skip_block_comment(bytes: &[u8], start: usize, allow_nested: bool) -> usize {
+    let mut index = start + 2;
+    let mut depth = 1usize;
+
+    while index + 1 < bytes.len() {
+        if allow_nested && bytes[index] == b'/' && bytes[index + 1] == b'*' {
+            depth += 1;
+            index += 2;
+            continue;
+        }
+
+        if bytes[index] == b'*' && bytes[index + 1] == b'/' {
+            depth -= 1;
+            index += 2;
+            if depth == 0 {
+                return index;
+            }
+            continue;
+        }
+
+        index += 1;
+    }
+
+    bytes.len()
+}
+
+fn skip_quoted_string(bytes: &[u8], start: usize, quote: u8) -> usize {
+    let mut index = start + 1;
+
+    while index < bytes.len() {
+        if bytes[index] == b'\\' {
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+
+        if bytes[index] == quote {
+            return index + 1;
+        }
+
+        index += 1;
+    }
+
+    bytes.len()
+}
+
+fn skip_backtick_string(bytes: &[u8], start: usize) -> usize {
+    let mut index = start + 1;
+
+    while index < bytes.len() {
+        if bytes[index] == b'`' {
+            return index + 1;
+        }
+        index += 1;
+    }
+
+    bytes.len()
+}
+
+fn skip_python_triple_quoted_string(bytes: &[u8], start: usize) -> Option<usize> {
+    if start + 2 >= bytes.len() {
+        return None;
+    }
+
+    let quote = bytes[start];
+    if (quote == b'\'' || quote == b'"') && bytes[start + 1] == quote && bytes[start + 2] == quote {
+        let mut index = start + 3;
+        while index + 2 < bytes.len() {
+            if bytes[index] == quote && bytes[index + 1] == quote && bytes[index + 2] == quote {
+                return Some(index + 3);
+            }
+            index += 1;
+        }
+        return Some(bytes.len());
+    }
+
+    None
+}
+
+fn skip_rust_raw_string(bytes: &[u8], start: usize) -> Option<usize> {
+    if !matches!(bytes[start], b'r' | b'b') {
+        return None;
+    }
+
+    if start > 0 && is_identifier_continue(bytes[start - 1]) {
+        return None;
+    }
+
+    let mut index = start;
+    if bytes[index] == b'b' {
+        index += 1;
+        if index >= bytes.len() || bytes[index] != b'r' {
+            return None;
+        }
+    }
+
+    if bytes[index] != b'r' {
+        return None;
+    }
+    index += 1;
+
+    let mut hashes = 0usize;
+    while index < bytes.len() && bytes[index] == b'#' {
+        hashes += 1;
+        index += 1;
+    }
+
+    if index >= bytes.len() || bytes[index] != b'"' {
+        return None;
+    }
+    index += 1;
+
+    while index < bytes.len() {
+        if bytes[index] == b'"' {
+            let mut matched = true;
+            for offset in 0..hashes {
+                if index + 1 + offset >= bytes.len() || bytes[index + 1 + offset] != b'#' {
+                    matched = false;
+                    break;
+                }
+            }
+            if matched {
+                return Some((index + 1 + hashes).min(bytes.len()));
+            }
+        }
+        index += 1;
+    }
+
+    Some(bytes.len())
+}
+
+fn is_csharp_verbatim_string_start(bytes: &[u8], start: usize) -> bool {
+    matches!(
+        bytes.get(start..start + 2),
+        Some(prefix) if prefix == b"@\""
+    ) || matches!(bytes.get(start..start + 3), Some(prefix) if prefix == b"$@\"" || prefix == b"@$\"")
+}
+
+fn skip_csharp_verbatim_string(bytes: &[u8], start: usize) -> usize {
+    let quote_start = if matches!(bytes.get(start..start + 3), Some(prefix) if prefix == b"$@\"" || prefix == b"@$\"")
+    {
+        start + 3
+    } else {
+        start + 2
+    };
+
+    let mut index = quote_start;
+    while index < bytes.len() {
+        if bytes[index] == b'"' {
+            if index + 1 < bytes.len() && bytes[index + 1] == b'"' {
+                index += 2;
+                continue;
+            }
+            return index + 1;
+        }
+        index += 1;
+    }
+
+    bytes.len()
+}
+
+fn is_identifier_continue(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
 fn extract_rust_public_api(source: &str) -> Option<Vec<String>> {
@@ -484,13 +859,6 @@ fn is_excluded(entry: &DirEntry) -> bool {
     )
 }
 
-fn is_supported_source(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|ext| ext.to_str()),
-        Some("rs" | "ts" | "tsx" | "js" | "jsx" | "go" | "py" | "java" | "kt" | "cs")
-    )
-}
-
 fn relative_display_path(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
@@ -632,5 +1000,94 @@ mod tests {
 
         assert!(report.feature_tags.is_empty());
         assert!(report.public_api.is_empty());
+    }
+
+    #[test]
+    fn ignores_tags_inside_rust_raw_strings() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("lib.rs"),
+            r##"
+            const EXAMPLE: &str = r#"
+            // @mvs-feature("fake_feature")
+            // @mvs-protocol("fake_protocol")
+            "#;
+
+            /// @mvs-feature("real_feature")
+            /// @mvs-protocol("real_protocol")
+            pub fn handshake(version: u32) -> bool { version > 0 }
+        "##,
+        )
+        .expect("failed to write rust fixture");
+
+        let report = crawl_codebase(workspace.path()).expect("crawler failed");
+
+        assert!(report.feature_tags.contains("real_feature"));
+        assert!(report.protocol_tags.contains("real_protocol"));
+        assert!(!report.feature_tags.contains("fake_feature"));
+        assert!(!report.protocol_tags.contains("fake_protocol"));
+    }
+
+    #[test]
+    fn captures_tags_from_block_comments() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("billing.ts"),
+            r#"
+            /*
+             * @mvs-feature("billing")
+             * @mvs-protocol("billing-api-v1")
+             */
+            export function checkout(amount: number): number {
+              return amount
+            }
+        "#,
+        )
+        .expect("failed to write ts fixture");
+
+        let report = crawl_codebase(workspace.path()).expect("crawler failed");
+
+        assert!(report.feature_tags.contains("billing"));
+        assert!(report.protocol_tags.contains("billing-api-v1"));
+    }
+
+    #[test]
+    fn ignores_exports_inside_template_strings() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("api.ts"),
+            r#"
+            const fixture = `
+            export function fakeLogin(username: string): Promise<string> {
+              return Promise.resolve(username)
+            }
+            `;
+
+            export function realLogin(username: string): Promise<string> {
+              return Promise.resolve(username)
+            }
+        "#,
+        )
+        .expect("failed to write ts fixture");
+
+        let report = crawl_codebase(workspace.path()).expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("realLogin")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("fakeLogin")));
     }
 }

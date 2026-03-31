@@ -1,20 +1,20 @@
 {
   "$schema": "https://mvs.dev/schema/v1",
   "identity": {
-    "mvs": "0.2.4-cli",
+    "mvs": "0.3.5-cli",
     "arch": 0,
-    "feat": 2,
-    "prot": 4,
+    "feat": 3,
+    "prot": 5,
     "cont": "cli"
   },
   "compatibility": {
     "host_range": {
       "min_prot": 0,
-      "max_prot": 4
+      "max_prot": 5
     },
     "extension_range": {
       "min_prot": 0,
-      "max_prot": 4
+      "max_prot": 5
     },
     "legacy_shims": []
   },
@@ -42,22 +42,18 @@
     }
   },
   "evidence": {
-    "feature_hash": "1f6ce081de26f86c580ec65258ba0d39d2877a34f384af92578e6fdb07718e20",
-    "protocol_hash": "481fb0a06a4081f5cc57f0be22e468b1dc35f53ae3d938c1608a748c78a29469",
+    "feature_hash": "20a854fe0033b2a4deb245a49f2fa2f59da2fa8a4f2184ac7c2446d5f2e98426",
+    "protocol_hash": "1ecfef2dac4e737bfb78404171e3d8b15cf67a2d47802696507d0ae492e39306",
     "public_api_hash": "7d6526cf54ff78d7ed5dc167ecdc81d2a687b6341a7c80597cb8da417d32474f",
     "feature_inventory": [
-      "core_runtime",
       "manifest_compatibility_validation",
       "manifest_generation",
-      "manifest_linting",
-      "offline_storage"
+      "manifest_linting"
     ],
     "protocol_inventory": [
-      "auth-api-v1",
       "cli_generate_command",
       "cli_lint_command",
-      "cli_validate_command",
-      "rust_host_surface"
+      "cli_validate_command"
     ],
     "public_api_inventory": [
       {
@@ -340,6 +336,18 @@
         "Protocol incremented due to public API signature drift (example source: src/cli.rs)."
       ],
       "changed_at_unix": 1774994227
+    },
+    {
+      "mvs": "0.3.5-cli",
+      "arch": 0,
+      "feat": 3,
+      "prot": 5,
+      "cont": "cli",
+      "reasons": [
+        "Feature incremented due to @mvs-feature set drift (example source: src/commands/reader.rs).",
+        "Protocol incremented due to @mvs-protocol surface drift (example source: src/commands/generator.rs)."
+      ],
+      "changed_at_unix": 1774995229
     }
   ]
 }

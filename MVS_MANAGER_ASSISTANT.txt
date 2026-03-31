@@ -19,6 +19,7 @@ Work instructions:
    - It ignores these directories:
      `.git`, `node_modules`, `dist`, `build`, `target`, `vendor`, `.next`, `tests`, `examples`, `benches`
    - Add comment markers immediately above the relevant public/exported declaration or integration boundary.
+   - Put decorators in actual comments. Decorator-like text inside string literals, fixture blobs, or prompt templates will not be counted.
    - Accepted decorator forms:
      `@mvs-feature("name")`
      `@mvs-feature:name`

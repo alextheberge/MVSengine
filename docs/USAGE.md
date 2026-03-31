@@ -100,6 +100,14 @@ make build-release
 
 `lint` checks these snapshots in addition to the hashes. If your manifest was created before inventories existed, regenerate once to bring it forward.
 
+Decorator extraction is comment-aware:
+
+- real comments count
+- block comments count
+- string literals and embedded source examples do not count
+
+Regex-based API extraction also runs against string/comment-masked code for non-Rust languages, which avoids false positives from template literals and fixture blobs.
+
 ## Exit Codes
 
 - `0`: success

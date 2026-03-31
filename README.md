@@ -45,6 +45,8 @@ pub fn handshake(version: u32) -> bool {
 }
 ```
 
+Only actual source comments are scanned. Examples embedded in string literals, test fixtures, or documentation blobs inside source files do not count as decorators.
+
 ### 4) Run the initialize/verify/reconcile loop
 ```bash
 # verify current code matches mvs.json
@@ -118,6 +120,7 @@ This gives you two things:
 
 - deterministic hashing for version-axis decisions
 - machine-readable diffs explaining exactly what changed between manifest generations
+- scanner precision that ignores decorator-like examples inside source string literals
 
 Typical `evidence` shape:
 
@@ -146,6 +149,17 @@ Typical `evidence` shape:
 ```
 
 If an older manifest predates these inventory snapshots, `lint` will fail until you regenerate once. That is intentional: it brings the manifest up to the current evidence model.
+
+## Scanner Precision
+
+The crawler now tokenizes source before matching decorators or regex-based public API patterns.
+
+- `@mvs-feature(...)` and `@mvs-protocol(...)` are counted only when they appear in real comments
+- block comments such as `/* ... */` are supported for decorator extraction
+- string literals and embedded fixture blobs are ignored during decorator extraction
+- regex-based API scanners operate on comment/string-masked code so multiline template examples do not create fake exports
+
+This matters for repositories that keep code examples, fixture payloads, or prompt templates alongside real source. Those examples no longer pollute `mvs.json.evidence`.
 
 ## Machine-Readable Output
 
