@@ -4064,6 +4064,104 @@ mod tests {
     }
 
     #[test]
+    fn ts_export_following_workspace_only_resolves_monorepo_package_self_references() {
+        let workspace = TempWorkspace::new();
+        let package_src = workspace.path().join("packages/sdk/src");
+        fs::create_dir_all(&package_src).expect("failed to create packages/sdk/src");
+
+        fs::write(
+            workspace.path().join("package.json"),
+            r#"
+            {
+              "private": true,
+              "workspaces": ["packages/*"]
+            }
+        "#,
+        )
+        .expect("failed to write monorepo package.json");
+
+        fs::write(
+            workspace.path().join("packages/sdk/package.json"),
+            r#"
+            {
+              "name": "@demo/sdk",
+              "exports": {
+                "./auth": "./src/auth.ts"
+              }
+            }
+        "#,
+        )
+        .expect("failed to write package fixture");
+
+        fs::write(
+            package_src.join("auth.ts"),
+            r#"
+            export function login(username: string): string {
+              return username;
+            }
+        "#,
+        )
+        .expect("failed to write auth fixture");
+
+        fs::write(
+            package_src.join("index.ts"),
+            r#"
+            export { login as authenticate } from "@demo/sdk/auth";
+        "#,
+        )
+        .expect("failed to write index fixture");
+
+        let default_report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["packages/sdk/src/index.ts".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::RelativeOnly,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(default_report.public_api.iter().any(|entry| {
+            entry.signature == "ts/js:export { login as authenticate } from \"@demo/sdk/auth\""
+        }));
+
+        let workspace_report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["packages/sdk/src/index.ts".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::WorkspaceOnly,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(workspace_report.public_api.iter().any(
+            |entry| entry.signature == "ts/js:function authenticate(username: string): string"
+        ));
+        assert!(!workspace_report.public_api.iter().any(|entry| {
+            entry.signature == "ts/js:export { login as authenticate } from \"@demo/sdk/auth\""
+        }));
+    }
+
+    #[test]
     fn go_export_following_package_only_expands_file_roots_to_same_package_siblings() {
         let workspace = TempWorkspace::new();
         let src = workspace.path().join("src");

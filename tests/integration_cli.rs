@@ -919,6 +919,116 @@ fn ts_export_following_workspace_only_resolves_package_imports_maps() {
 }
 
 #[test]
+fn ts_export_following_workspace_only_resolves_monorepo_package_self_references() {
+    let temp = TempWorkspace::new();
+    let project_root = temp.path().join("project");
+    fs::create_dir_all(project_root.join("packages/sdk/src"))
+        .expect("failed to create packages/sdk/src");
+
+    fs::write(
+        project_root.join("package.json"),
+        r#"
+        {
+          "private": true,
+          "workspaces": ["packages/*"]
+        }
+    "#,
+    )
+    .expect("failed to write monorepo package.json");
+
+    fs::write(
+        project_root.join("packages/sdk/package.json"),
+        r#"
+        {
+          "name": "@demo/sdk",
+          "exports": {
+            "./auth": "./src/auth.ts"
+          }
+        }
+    "#,
+    )
+    .expect("failed to write package fixture");
+
+    fs::write(
+        project_root.join("packages/sdk/src/auth.ts"),
+        r#"
+        export function login(username: string): string {
+          return username;
+        }
+    "#,
+    )
+    .expect("failed to write auth fixture");
+
+    fs::write(
+        project_root.join("packages/sdk/src/index.ts"),
+        r#"
+        export { login as authenticate } from "@demo/sdk/auth";
+    "#,
+    )
+    .expect("failed to write index fixture");
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "packages/sdk/src/index.ts",
+            "--ts-export-following",
+            "workspace-only",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("TS/JS export following"));
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+    assert_eq!(
+        generated["scan_policy"]["ts_export_following"],
+        "workspace_only"
+    );
+
+    let inventory = generated["evidence"]["public_api_inventory"]
+        .as_array()
+        .expect("public api inventory should be an array");
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "packages/sdk/src/index.ts"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "ts/js:function authenticate(username: string): string"
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ts/js:export { login as authenticate } from \"@demo/sdk/auth\""
+    }));
+
+    let mut lint = binary_cmd();
+    lint.args([
+        "lint",
+        "--root",
+        project_root.to_str().expect("non-utf8 path"),
+        "--manifest",
+        manifest_path.to_str().expect("non-utf8 path"),
+    ])
+    .assert()
+    .success()
+    .stdout(contains("TS/JS export following"))
+    .stdout(contains("Lint passed"));
+}
+
+#[test]
 fn go_export_following_package_only_persists_and_expands_package_siblings() {
     let temp = TempWorkspace::new();
     let project_root = temp.path().join("project");

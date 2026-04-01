@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::{Component, Path, PathBuf},
+};
 
 use serde_json::Value;
 use tree_sitter::{Node, Parser};
@@ -69,7 +73,7 @@ pub(super) fn build_module_index(
         return TsModuleIndex::default();
     }
 
-    let workspace_config = load_ts_workspace_config(root, export_following);
+    let workspace_config = load_ts_workspace_config(root, files, export_following);
     let mut index = TsModuleIndex::with_workspace_config(&workspace_config, export_following);
 
     for _ in 0..6 {
@@ -110,7 +114,11 @@ pub(super) fn build_module_index(
     index
 }
 
-fn load_ts_workspace_config(root: &Path, export_following: TsExportFollowing) -> TsWorkspaceConfig {
+fn load_ts_workspace_config(
+    root: &Path,
+    files: &[TsModuleSource<'_>],
+    export_following: TsExportFollowing,
+) -> TsWorkspaceConfig {
     if export_following != TsExportFollowing::WorkspaceOnly {
         return TsWorkspaceConfig::default();
     }
@@ -118,7 +126,7 @@ fn load_ts_workspace_config(root: &Path, export_following: TsExportFollowing) ->
     let mut workspace_config = TsWorkspaceConfig::default();
 
     load_tsconfig_workspace_config(root, &mut workspace_config);
-    load_package_json_workspace_config(root, &mut workspace_config);
+    load_package_json_workspace_config(root, files, &mut workspace_config);
 
     workspace_config
 }
@@ -166,9 +174,53 @@ fn load_tsconfig_workspace_config(root: &Path, workspace_config: &mut TsWorkspac
     }
 }
 
-fn load_package_json_workspace_config(root: &Path, workspace_config: &mut TsWorkspaceConfig) {
-    let package_path = root.join("package.json");
-    let Ok(raw) = fs::read_to_string(package_path) else {
+fn load_package_json_workspace_config(
+    root: &Path,
+    files: &[TsModuleSource<'_>],
+    workspace_config: &mut TsWorkspaceConfig,
+) {
+    let mut package_paths = BTreeSet::new();
+    for file in files {
+        collect_package_json_candidates(root, file.rel_path, &mut package_paths);
+    }
+
+    for package_rel_path in package_paths {
+        load_package_json_workspace_config_file(root, &package_rel_path, workspace_config);
+    }
+}
+
+fn collect_package_json_candidates(
+    root: &Path,
+    rel_path: &str,
+    package_paths: &mut BTreeSet<String>,
+) {
+    let mut directory = root.join(rel_path);
+    if !directory.pop() {
+        return;
+    }
+
+    loop {
+        let package_path = directory.join("package.json");
+        if package_path.is_file() {
+            let relative = package_path
+                .strip_prefix(root)
+                .unwrap_or(&package_path)
+                .to_path_buf();
+            package_paths.insert(normalize_workspace_path(&relative));
+        }
+        if directory == root || !directory.pop() {
+            break;
+        }
+    }
+}
+
+fn load_package_json_workspace_config_file(
+    root: &Path,
+    package_rel_path: &str,
+    workspace_config: &mut TsWorkspaceConfig,
+) {
+    let package_path = root.join(package_rel_path);
+    let Ok(raw) = fs::read_to_string(&package_path) else {
         return;
     };
     let Ok(parsed) = serde_json::from_str::<Value>(&raw) else {
@@ -177,16 +229,22 @@ fn load_package_json_workspace_config(root: &Path, workspace_config: &mut TsWork
     let Some(package_name) = parsed.get("name").and_then(Value::as_str) else {
         return;
     };
+    let package_dir = package_path
+        .parent()
+        .and_then(|path| path.strip_prefix(root).ok())
+        .map(normalize_workspace_path)
+        .unwrap_or_default();
     if let Some(exports) = parsed.get("exports") {
-        collect_package_export_rules(package_name, None, exports, workspace_config);
+        collect_package_export_rules(package_name, &package_dir, None, exports, workspace_config);
     }
     if let Some(imports) = parsed.get("imports") {
-        collect_package_import_rules(None, imports, workspace_config);
+        collect_package_import_rules(&package_dir, None, imports, workspace_config);
     }
 }
 
 fn collect_package_export_rules(
     package_name: &str,
+    package_dir: &str,
     export_key: Option<&str>,
     value: &Value,
     workspace_config: &mut TsWorkspaceConfig,
@@ -201,12 +259,18 @@ fn collect_package_export_rules(
             register_workspace_specifier(
                 workspace_config,
                 &specifier,
-                &normalize_workspace_target(target),
+                &normalize_package_json_target(target, package_dir),
             );
         }
         Value::Array(values) => {
             for value in values {
-                collect_package_export_rules(package_name, export_key, value, workspace_config);
+                collect_package_export_rules(
+                    package_name,
+                    package_dir,
+                    export_key,
+                    value,
+                    workspace_config,
+                );
             }
         }
         Value::Object(map) => {
@@ -223,6 +287,7 @@ fn collect_package_export_rules(
                     };
                     collect_package_export_rules(
                         package_name,
+                        package_dir,
                         Some(nested_key),
                         nested_value,
                         workspace_config,
@@ -235,6 +300,7 @@ fn collect_package_export_rules(
 
             collect_package_condition_rules(
                 package_name,
+                package_dir,
                 export_key.or(Some(".")),
                 map,
                 &subpath_keys,
@@ -247,6 +313,7 @@ fn collect_package_export_rules(
 
 fn collect_package_condition_rules(
     package_name: &str,
+    package_dir: &str,
     export_key: Option<&str>,
     map: &serde_json::Map<String, Value>,
     subpath_keys: &[&str],
@@ -256,7 +323,13 @@ fn collect_package_condition_rules(
         let Some(value) = map.get(*condition) else {
             continue;
         };
-        collect_package_export_rules(package_name, export_key, value, workspace_config);
+        collect_package_export_rules(
+            package_name,
+            package_dir,
+            export_key,
+            value,
+            workspace_config,
+        );
     }
 
     let mut remaining_keys: Vec<&str> = map
@@ -270,11 +343,18 @@ fn collect_package_condition_rules(
         let Some(value) = map.get(key) else {
             continue;
         };
-        collect_package_export_rules(package_name, export_key, value, workspace_config);
+        collect_package_export_rules(
+            package_name,
+            package_dir,
+            export_key,
+            value,
+            workspace_config,
+        );
     }
 }
 
 fn collect_package_import_rules(
+    package_dir: &str,
     import_key: Option<&str>,
     value: &Value,
     workspace_config: &mut TsWorkspaceConfig,
@@ -287,12 +367,12 @@ fn collect_package_import_rules(
             register_workspace_specifier(
                 workspace_config,
                 specifier,
-                &normalize_workspace_target(target),
+                &normalize_package_json_target(target, package_dir),
             );
         }
         Value::Array(values) => {
             for value in values {
-                collect_package_import_rules(import_key, value, workspace_config);
+                collect_package_import_rules(package_dir, import_key, value, workspace_config);
             }
         }
         Value::Object(map) => {
@@ -307,20 +387,32 @@ fn collect_package_import_rules(
                     let Some(nested_value) = map.get(*nested_key) else {
                         continue;
                     };
-                    collect_package_import_rules(Some(nested_key), nested_value, workspace_config);
+                    collect_package_import_rules(
+                        package_dir,
+                        Some(nested_key),
+                        nested_value,
+                        workspace_config,
+                    );
                 }
                 if import_keys.len() == map.len() {
                     return;
                 }
             }
 
-            collect_package_import_condition_rules(import_key, map, &import_keys, workspace_config);
+            collect_package_import_condition_rules(
+                package_dir,
+                import_key,
+                map,
+                &import_keys,
+                workspace_config,
+            );
         }
         _ => {}
     }
 }
 
 fn collect_package_import_condition_rules(
+    package_dir: &str,
     import_key: Option<&str>,
     map: &serde_json::Map<String, Value>,
     import_keys: &[&str],
@@ -330,7 +422,7 @@ fn collect_package_import_condition_rules(
         let Some(value) = map.get(*condition) else {
             continue;
         };
-        collect_package_import_rules(import_key, value, workspace_config);
+        collect_package_import_rules(package_dir, import_key, value, workspace_config);
     }
 
     let mut remaining_keys: Vec<&str> = map
@@ -344,7 +436,7 @@ fn collect_package_import_condition_rules(
         let Some(value) = map.get(key) else {
             continue;
         };
-        collect_package_import_rules(import_key, value, workspace_config);
+        collect_package_import_rules(package_dir, import_key, value, workspace_config);
     }
 }
 
@@ -414,12 +506,36 @@ fn normalize_tsconfig_path_target(target: &str, base_url: Option<&str>) -> Strin
 }
 
 fn normalize_workspace_target(target: &str) -> String {
-    target
-        .trim()
-        .replace('\\', "/")
-        .trim_start_matches("./")
-        .trim_matches('/')
-        .to_string()
+    normalize_workspace_path_str(target)
+}
+
+fn normalize_package_json_target(target: &str, package_dir: &str) -> String {
+    let normalized_target = normalize_workspace_target(target);
+    if package_dir.is_empty() {
+        return normalized_target;
+    }
+    normalize_workspace_path(&PathBuf::from(package_dir).join(normalized_target))
+}
+
+fn normalize_workspace_path_str(target: &str) -> String {
+    normalize_workspace_path(Path::new(
+        target.trim().replace('\\', "/").trim_matches('/'),
+    ))
+}
+
+fn normalize_workspace_path(path: &Path) -> String {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                parts.pop();
+            }
+            Component::Normal(part) => parts.push(part.to_string_lossy().to_string()),
+            Component::Prefix(_) | Component::RootDir => {}
+        }
+    }
+    parts.join("/")
 }
 
 pub(super) fn extract(
