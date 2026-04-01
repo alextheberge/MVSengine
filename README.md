@@ -162,12 +162,13 @@ This reduces formatting noise in `public_api_inventory` and makes policy pattern
 
 ## Scanner Precision
 
-The crawler now tokenizes source before matching decorators or regex-based public API patterns.
+The crawler now tokenizes source before matching decorators, uses AST extraction for Rust, and uses a parser-backed adapter for TypeScript/JavaScript public API surfaces.
 
 - `@mvs-feature(...)` and `@mvs-protocol(...)` are counted only when they appear in real comments
 - block comments such as `/* ... */` are supported for decorator extraction
 - string literals and embedded fixture blobs are ignored during decorator extraction
-- regex-based API scanners operate on comment/string-masked code so multiline template examples do not create fake exports
+- TypeScript/JavaScript public API extraction now handles multiline exports, named export clauses, re-exports, and default exports without depending on line-based regex matching
+- regex-based API scanners still operate on comment/string-masked code for the remaining non-Rust languages so multiline template examples do not create fake exports
 
 This matters for repositories that keep code examples, fixture payloads, or prompt templates alongside real source. Those examples no longer pollute `mvs.json.evidence`.
 

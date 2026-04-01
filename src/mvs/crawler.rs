@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use quote::ToTokens;
 use regex::Regex;
 use syn::{FnArg, ImplItem, Item, ReturnType, Signature, TraitItem, Visibility};
+use tree_sitter::{Language as TreeSitterLanguage, Node, Parser as TreeSitterParser};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::mvs::manifest::ScanPolicy;
@@ -55,8 +56,6 @@ struct LexedSource {
 }
 
 struct ApiRegexPack {
-    ts_export_decl: Regex,
-    ts_export_const: Regex,
     go_func: Regex,
     py_def: Regex,
     java_type: Regex,
@@ -69,14 +68,6 @@ struct ApiRegexPack {
 impl ApiRegexPack {
     fn new() -> Result<Self> {
         Ok(Self {
-            ts_export_decl: Regex::new(
-                r"^\s*export\s+(?:async\s+)?(?P<kind>function|class|interface|type|enum)\s+(?P<rest>.+)$",
-            )
-            .context("failed to compile TS/JS API regex (decl)")?,
-            ts_export_const: Regex::new(
-                r"^\s*export\s+const\s+(?P<rest>[A-Za-z0-9_]+(?:\s*:\s*[^=]+)?)\s*=",
-            )
-            .context("failed to compile TS/JS API regex (const)")?,
             go_func: Regex::new(
                 r"^\s*func\s*(?P<recv>\([^)]*\)\s*)?(?P<name>[A-Z][A-Za-z0-9_]*)\s*(?P<sig>\([^)]*\)\s*[^\{]*)",
             )
@@ -256,7 +247,204 @@ fn extract_public_api(
         }
     }
 
+    if let Some(tree_sitter_signatures) = extract_tree_sitter_public_api(language, source) {
+        return tree_sitter_signatures;
+    }
+
     extract_regex_public_api(language, masked_code, regex)
+}
+
+fn extract_tree_sitter_public_api(language: SourceLanguage, source: &str) -> Option<Vec<String>> {
+    let grammar = tree_sitter_language(language)?;
+    let mut parser = TreeSitterParser::new();
+    parser.set_language(&grammar).ok()?;
+    let tree = parser.parse(source, None)?;
+    let root = tree.root_node();
+
+    let mut signatures = Vec::new();
+    for index in 0..root.named_child_count() {
+        let Some(child) = root.named_child(index) else {
+            continue;
+        };
+        if child.kind() != "export_statement" {
+            continue;
+        }
+
+        signatures.extend(extract_tree_sitter_export_statement(child, source));
+    }
+
+    signatures.sort();
+    signatures.dedup();
+    Some(signatures)
+}
+
+fn tree_sitter_language(language: SourceLanguage) -> Option<TreeSitterLanguage> {
+    match language {
+        SourceLanguage::TypeScript => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+        SourceLanguage::Tsx => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+        SourceLanguage::JavaScript | SourceLanguage::Jsx => {
+            Some(tree_sitter_javascript::LANGUAGE.into())
+        }
+        _ => None,
+    }
+}
+
+fn extract_tree_sitter_export_statement(node: Node<'_>, source: &str) -> Vec<String> {
+    let is_default_export = node_text(node, source)
+        .map(|text| text.trim_start().starts_with("export default"))
+        .unwrap_or(false);
+
+    if let Some(declaration) = node.child_by_field_name("declaration") {
+        let signatures = extract_tree_sitter_export_declaration(declaration, source);
+        if !signatures.is_empty() {
+            return signatures
+                .into_iter()
+                .map(|signature| {
+                    if is_default_export {
+                        format!("ts/js:export default {signature}")
+                    } else {
+                        format!("ts/js:{signature}")
+                    }
+                })
+                .collect();
+        }
+    }
+
+    if let Some(value) = node.child_by_field_name("value") {
+        if let Some(signature) = extract_tree_sitter_default_export_value(value, source) {
+            return vec![format!("ts/js:export default {signature}")];
+        }
+    }
+
+    node_text(node, source)
+        .map(normalize_export_statement_signature)
+        .filter(|signature| !signature.is_empty())
+        .map(|signature| vec![format!("ts/js:{signature}")])
+        .unwrap_or_default()
+}
+
+fn extract_tree_sitter_export_declaration(node: Node<'_>, source: &str) -> Vec<String> {
+    match node.kind() {
+        "function_declaration" | "generator_function_declaration" => {
+            extract_tree_sitter_function_signature(node, source)
+                .into_iter()
+                .collect()
+        }
+        "class_declaration" => extract_tree_sitter_prefix_signature(node, source, "body")
+            .into_iter()
+            .collect(),
+        "interface_declaration" => extract_tree_sitter_prefix_signature(node, source, "body")
+            .into_iter()
+            .collect(),
+        "enum_declaration" => extract_tree_sitter_prefix_signature(node, source, "body")
+            .into_iter()
+            .collect(),
+        "type_alias_declaration" => node_text(node, source)
+            .map(normalize_export_statement_signature)
+            .filter(|signature| !signature.is_empty())
+            .into_iter()
+            .collect(),
+        "lexical_declaration" => extract_tree_sitter_variable_signatures(node, source),
+        "variable_declaration" => extract_tree_sitter_variable_signatures(node, source),
+        _ => Vec::new(),
+    }
+}
+
+fn extract_tree_sitter_default_export_value(node: Node<'_>, source: &str) -> Option<String> {
+    match node.kind() {
+        "function" | "function_expression" | "generator_function" => {
+            extract_tree_sitter_function_signature(node, source)
+        }
+        "class" => extract_tree_sitter_prefix_signature(node, source, "body"),
+        _ => None,
+    }
+}
+
+fn extract_tree_sitter_function_signature(node: Node<'_>, source: &str) -> Option<String> {
+    let body = node.child_by_field_name("body")?;
+    node_text_range(source, node.start_byte(), body.start_byte())
+        .map(normalize_export_statement_signature)
+        .filter(|signature| !signature.is_empty())
+}
+
+fn extract_tree_sitter_prefix_signature(
+    node: Node<'_>,
+    source: &str,
+    field_name: &str,
+) -> Option<String> {
+    let end = node
+        .child_by_field_name(field_name)
+        .map(|field| field.start_byte())
+        .unwrap_or_else(|| node.end_byte());
+    node_text_range(source, node.start_byte(), end)
+        .map(normalize_export_statement_signature)
+        .filter(|signature| !signature.is_empty())
+}
+
+fn extract_tree_sitter_variable_signatures(node: Node<'_>, source: &str) -> Vec<String> {
+    let kind = node
+        .child_by_field_name("kind")
+        .and_then(|child| node_text(child, source))
+        .map(str::trim)
+        .unwrap_or("var");
+
+    let mut signatures = Vec::new();
+    for index in 0..node.named_child_count() {
+        let Some(child) = node.named_child(index) else {
+            continue;
+        };
+        if child.kind() != "variable_declarator" {
+            continue;
+        }
+
+        let Some(name) = child.child_by_field_name("name") else {
+            continue;
+        };
+        if name.kind() != "identifier" {
+            continue;
+        }
+
+        let Some(name_text) = node_text(name, source).map(str::trim) else {
+            continue;
+        };
+        if name_text.is_empty() {
+            continue;
+        }
+
+        let mut signature = format!("{kind} {name_text}");
+        if let Some(type_annotation) = child
+            .child_by_field_name("type")
+            .and_then(|annotation| node_text(annotation, source))
+            .map(str::trim)
+        {
+            if !type_annotation.is_empty() {
+                signature.push_str(type_annotation);
+            }
+        }
+
+        let normalized = normalize_signature(&signature);
+        if !normalized.is_empty() {
+            signatures.push(normalized);
+        }
+    }
+
+    signatures
+}
+
+fn normalize_export_statement_signature(raw: &str) -> String {
+    let mut normalized = normalize_signature(raw.trim().trim_end_matches(';'));
+    for (from, to) in [(",)", ")"), (", }", " }"), (",]", "]")] {
+        normalized = normalized.replace(from, to);
+    }
+    normalized
+}
+
+fn node_text<'a>(node: Node<'_>, source: &'a str) -> Option<&'a str> {
+    node_text_range(source, node.start_byte(), node.end_byte())
+}
+
+fn node_text_range(source: &str, start: usize, end: usize) -> Option<&str> {
+    source.get(start..end)
 }
 
 fn extract_regex_public_api(
@@ -276,34 +464,7 @@ fn extract_regex_public_api(
             SourceLanguage::TypeScript
             | SourceLanguage::Tsx
             | SourceLanguage::JavaScript
-            | SourceLanguage::Jsx => {
-                if let Some(capture) = regex.ts_export_decl.captures(trimmed) {
-                    let kind = capture
-                        .name("kind")
-                        .map(|value| value.as_str())
-                        .unwrap_or_default();
-                    let rest = capture
-                        .name("rest")
-                        .map(|value| value.as_str())
-                        .unwrap_or_default();
-                    let rest = rest.split('{').next().unwrap_or(rest).trim();
-                    let signature = normalize_signature(&format!("{kind} {rest}"));
-                    if !signature.is_empty() {
-                        signatures.push(format!("ts/js:{signature}"));
-                    }
-                }
-
-                if let Some(capture) = regex.ts_export_const.captures(trimmed) {
-                    let rest = capture
-                        .name("rest")
-                        .map(|value| value.as_str())
-                        .unwrap_or_default();
-                    let signature = normalize_signature(&format!("const {rest}"));
-                    if !signature.is_empty() {
-                        signatures.push(format!("ts/js:{signature}"));
-                    }
-                }
-            }
+            | SourceLanguage::Jsx => {}
             SourceLanguage::Go => {
                 if let Some(capture) = regex.go_func.captures(trimmed) {
                     let recv = capture
@@ -1206,6 +1367,77 @@ mod tests {
 
         assert!(report.feature_tags.contains("billing"));
         assert!(report.protocol_tags.contains("billing-api-v1"));
+    }
+
+    #[test]
+    fn tree_sitter_captures_named_exports_and_reexports() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("api.ts"),
+            r#"
+            const login = (username: string): string => username;
+            function logout(): void {}
+
+            export {
+              login,
+              logout as signOut,
+            };
+
+            export { login as authenticate } from "./auth";
+            export * as authApi from "./auth";
+        "#,
+        )
+        .expect("failed to write ts fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| { entry.signature == "ts/js:export { login, logout as signOut }" }));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature == "ts/js:export { login as authenticate } from \"./auth\""
+        }));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ts/js:export * as authApi from \"./auth\""));
+    }
+
+    #[test]
+    fn tree_sitter_captures_default_export_without_body_noise() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("api.ts"),
+            r#"
+            export default function login(
+              username: string,
+              password: string,
+            ): Promise<string> {
+              return Promise.resolve(`${username}:${password}`);
+            }
+        "#,
+        )
+        .expect("failed to write ts fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature
+                == "ts/js:export default function login(username: string, password: string): Promise<string>"
+        }));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("Promise.resolve")));
     }
 
     #[test]

@@ -130,7 +130,14 @@ Decorator extraction is comment-aware:
 - block comments count
 - string literals and embedded source examples do not count
 
-Regex-based API extraction also runs against string/comment-masked code for non-Rust languages, which avoids false positives from template literals and fixture blobs.
+TypeScript/JavaScript public API extraction is parser-backed, so it can reliably capture:
+
+- multiline exported declarations
+- named export clauses such as `export { login, logout as signOut }`
+- re-exports such as `export { login } from "./auth"` and `export * as authApi from "./auth"`
+- default exports without pulling function or class bodies into the signature
+
+Regex-based API extraction still runs against string/comment-masked code for the remaining non-Rust languages, which avoids false positives from template literals and fixture blobs.
 
 Rust API signatures are AST-normalized before they are persisted. Typical entries look like:
 

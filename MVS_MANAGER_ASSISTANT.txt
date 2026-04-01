@@ -41,6 +41,7 @@ Work instructions:
 5. Make sure the public API is visible to the scanner.
    - `mvs-manager` also hashes public/exported API signatures.
    - Rust signatures are canonicalized from the AST, so inventories and filters use forms like `rust:fn run() -> i32` or `rust:impl-fn HostAdapter::connect(&self, target: &str) -> bool`.
+   - TypeScript/JavaScript scanning is parser-backed, so named exports, re-exports, multiline exports, and default exports are part of the contract surface even when line-based regexes would miss them.
    - Ensure externally consumed surfaces are actually public/exported in the language’s normal way.
    - Examples:
      - TypeScript/JavaScript: `export function`, `export class`, `export interface`, `export type`, `export enum`, `export const`
