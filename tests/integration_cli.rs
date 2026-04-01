@@ -465,6 +465,82 @@ fn public_api_include_filters_persist_and_ignore_non_contract_drift() {
 }
 
 #[test]
+fn python_module_roots_persist_and_enable_cross_module_python_exports() {
+    let temp = TempWorkspace::new();
+    let project_root = temp.path().join("project");
+    fs::create_dir_all(project_root.join("app/pkg")).expect("failed to create python package");
+
+    fs::write(
+        project_root.join("app/pkg/core.py"),
+        r#"
+        __all__ = ("login",)
+
+        def login(username: str) -> str:
+            return username
+    "#,
+    )
+    .expect("failed to write python core fixture");
+
+    fs::write(
+        project_root.join("app/api.py"),
+        r#"
+        from pkg.core import __all__ as CORE_EXPORTS
+        from pkg.core import *
+
+        __all__ = CORE_EXPORTS
+    "#,
+    )
+    .expect("failed to write python facade fixture");
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--python-module-root",
+            "app",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Python module roots"));
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+    assert_eq!(generated["scan_policy"]["python_module_roots"][0], "app");
+    let inventory = generated["evidence"]["public_api_inventory"]
+        .as_array()
+        .expect("public api inventory should be an array");
+    assert!(inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "python:from pkg.core import login"
+    }));
+
+    let mut lint = binary_cmd();
+    lint.args([
+        "lint",
+        "--root",
+        project_root.to_str().expect("non-utf8 path"),
+        "--manifest",
+        manifest_path.to_str().expect("non-utf8 path"),
+    ])
+    .assert()
+    .success()
+    .stdout(contains("Python module roots"))
+    .stdout(contains("Lint passed"));
+}
+
+#[test]
 fn lint_accepts_legacy_rust_signature_format_and_generate_rewrites_it() {
     let temp = TempWorkspace::new();
     let fixture_project = fixtures_root().join("generator_project");

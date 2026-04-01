@@ -38,7 +38,10 @@ struct PythonWildcardImport {
     exports: BTreeSet<String>,
 }
 
-pub(super) fn build_module_index(files: &[PythonModuleSource<'_>]) -> PythonModuleIndex {
+pub(super) fn build_module_index(
+    files: &[PythonModuleSource<'_>],
+    module_roots: &[String],
+) -> PythonModuleIndex {
     let mut index = PythonModuleIndex::default();
 
     for _ in 0..4 {
@@ -48,7 +51,7 @@ pub(super) fn build_module_index(files: &[PythonModuleSource<'_>]) -> PythonModu
             let Some(exports) = summarize_python_module_exports(file.source, &index) else {
                 continue;
             };
-            for module_name in python_module_name_candidates(file.rel_path) {
+            for module_name in python_module_name_candidates(file.rel_path, module_roots) {
                 next.exports_by_module
                     .entry(module_name)
                     .or_default()
@@ -820,26 +823,53 @@ fn summarize_python_module_exports(
     Some(extract_python_export_names_from_signatures(&signatures))
 }
 
-fn python_module_name_candidates(rel_path: &str) -> Vec<String> {
+fn python_module_name_candidates(rel_path: &str, module_roots: &[String]) -> Vec<String> {
     let normalized = rel_path.replace('\\', "/");
     let Some(stripped) = normalized.strip_suffix(".py") else {
         return Vec::new();
     };
 
-    let mut parts: Vec<&str> = stripped
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .collect();
-    if parts.last() == Some(&"__init__") {
-        parts.pop();
-    }
-    if parts.is_empty() {
-        return Vec::new();
-    }
+    let mut candidates = Vec::new();
 
-    let mut candidates = vec![parts.join(".")];
-    if matches!(parts.first().copied(), Some("src" | "lib" | "python")) && parts.len() > 1 {
-        candidates.push(parts[1..].join("."));
+    if module_roots.is_empty() {
+        let mut parts: Vec<&str> = stripped
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .collect();
+        if parts.last() == Some(&"__init__") {
+            parts.pop();
+        }
+        if parts.is_empty() {
+            return Vec::new();
+        }
+
+        candidates.push(parts.join("."));
+        if matches!(parts.first().copied(), Some("src" | "lib" | "python")) && parts.len() > 1 {
+            candidates.push(parts[1..].join("."));
+        }
+    } else {
+        for root in module_roots {
+            let normalized_root = root.trim_matches('/').replace('\\', "/");
+            let Some(remainder) = stripped
+                .strip_prefix(&normalized_root)
+                .and_then(|value| value.strip_prefix('/').or(Some(value)))
+            else {
+                continue;
+            };
+
+            let mut parts: Vec<&str> = remainder
+                .split('/')
+                .filter(|part| !part.is_empty())
+                .collect();
+            if parts.last() == Some(&"__init__") {
+                parts.pop();
+            }
+            if parts.is_empty() {
+                continue;
+            }
+
+            candidates.push(parts.join("."));
+        }
     }
     candidates.sort();
     candidates.dedup();

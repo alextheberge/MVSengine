@@ -18,8 +18,11 @@ use super::language::SourceLanguage;
 
 pub(super) use python::{PythonModuleIndex, PythonModuleSource};
 
-pub(super) fn build_python_module_index(files: &[PythonModuleSource<'_>]) -> PythonModuleIndex {
-    python::build_module_index(files)
+pub(super) fn build_python_module_index(
+    files: &[PythonModuleSource<'_>],
+    module_roots: &[String],
+) -> PythonModuleIndex {
+    python::build_module_index(files, module_roots)
 }
 
 pub(super) fn extract_tree_sitter_public_api(

@@ -173,7 +173,7 @@ Member signatures inside class-like scopes are now owner-qualified, and Java/C#/
 - string literals and embedded fixture blobs are ignored during decorator extraction
 - TypeScript/JavaScript public API extraction handles multiline exports, named export clauses, re-exports, and default exports without depending on line-based regex matching
 - Go public API extraction tracks exported `func` declarations, exported methods, exported named types, exported struct fields, exported embedded struct fields, exported interface methods, embedded interface type elements, exported constants, and exported package `var` declarations from syntax trees
-- Python public API extraction tracks public `class` and non-underscore `def` declarations, public `type` aliases, module-level constants such as `API_VERSION` or `__all__`, and public class-level constants such as `Worker.STATUS`, without promoting nested local helpers or private class bodies into the API inventory; when a parseable `__all__` is present it becomes the top-level export boundary, including common alias, unpacking, and `+=` composition patterns built from parseable literals, and explicit import re-exports are stored in canonical forms such as `python:from auth.core import login as authorize`; for same-workspace Python modules, imported `__all__` aliases and `from ... import *` re-exports also resolve when the source module export graph is static and parseable
+- Python public API extraction tracks public `class` and non-underscore `def` declarations, public `type` aliases, module-level constants such as `API_VERSION` or `__all__`, and public class-level constants such as `Worker.STATUS`, without promoting nested local helpers or private class bodies into the API inventory; when a parseable `__all__` is present it becomes the top-level export boundary, including common alias, unpacking, and `+=` composition patterns built from parseable literals, and explicit import re-exports are stored in canonical forms such as `python:from auth.core import login as authorize`; for same-workspace Python modules, imported `__all__` aliases and `from ... import *` re-exports also resolve when the source module export graph is static and parseable, and `scan_policy.python_module_roots` or `--python-module-root` can pin module resolution to nonstandard repository roots
 - Java public API extraction tracks public types, public fields, interface constants, and public or interface methods while stripping leading annotations out of the stored signature; declared package plus nesting context is preserved in canonical forms such as `java:type public class demo.AuthApi`, `java:field public String demo.AuthApi.status`, `java:const public static final String demo.AuthApi.Contract.STATE`, and `java:method public String demo.AuthApi.login(...)`
 - C# public API extraction tracks public types, public fields, public constants, public properties, and public or interface methods while stripping leading attributes out of the stored signature; declared namespace plus nesting context is preserved in canonical forms such as `csharp:type public class Demo.AuthApi`, `csharp:field public static readonly string Demo.AuthApi.Version`, `csharp:const public string Demo.AuthApi.STATUS_READY`, `csharp:property public string Demo.AuthApi.DisplayName { get }`, and `csharp:method public static string Demo.AuthApi.Login(...)`
 - Kotlin public API extraction tracks public or default-visible `class`, `interface`, `object`, `fun`, `val`, `var`, and top-level `const val` declarations, preserving modifiers such as `data` and `suspend` while skipping `private`, `protected`, and `internal`; declared package plus nesting context is preserved in canonical forms such as `kotlin:public class demo.auth.AuthApi`, `kotlin:const val demo.auth.API_VERSION: String`, `kotlin:fun demo.auth.AuthApi.login(...)`, and `kotlin:val demo.auth.AuthApi.token: String`
@@ -196,6 +196,7 @@ The `scan_policy` block supports:
 - `public_api_roots`: relative file or directory roots that define the public API boundary
 - `public_api_includes`: wildcard patterns for declarations that should count as public API
 - `public_api_excludes`: wildcard patterns for declarations that should not count as public API
+- `python_module_roots`: relative directory roots used to resolve same-workspace Python module names before following `__all__`, explicit re-exports, or `from ... import *` facades
 - `exclude_paths`: relative file or directory prefixes to skip entirely during tag and API scanning
 
 Example:
@@ -211,6 +212,9 @@ Example:
       "rust:struct *Args",
       "rust:enum OutputFormat"
     ],
+    "python_module_roots": [
+      "app"
+    ],
     "exclude_paths": [
       "src/generated"
     ]
@@ -225,6 +229,7 @@ mvs-manager generate --root . --manifest mvs.json --context cli --public-api-roo
 mvs-manager generate --root . --manifest mvs.json --context cli --exclude-path src/generated
 mvs-manager generate --root . --manifest mvs.json --context cli --public-api-exclude 'rust:const EXIT_*'
 mvs-manager generate --root . --manifest mvs.json --context cli --public-api-include 'src/cli.rs|rust:fn *'
+mvs-manager generate --root . --manifest mvs.json --context cli --python-module-root app
 ```
 
 Practical guidance:
@@ -234,6 +239,7 @@ Practical guidance:
 - Generated or vendor-like code under the root: add it to `exclude_paths`
 - Use `public_api_excludes` when a facade file still contains public constants, argument structs, or helper exports that are not real compatibility surface
 - Use `public_api_includes` when you want to pin the contract to a small explicit subset of declarations
+- Python repos with nonstandard package roots: set `python_module_roots` so cross-module `__all__`, re-export, and wildcard export resolution stops depending on layout heuristics
 
 This policy only scopes public API evidence. Feature and protocol tags are still gathered across the scanned codebase unless a path is explicitly excluded.
 

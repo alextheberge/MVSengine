@@ -100,6 +100,8 @@ pub struct ScanPolicy {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub public_api_roots: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub python_module_roots: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub public_api_includes: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub public_api_excludes: Vec<String>,
@@ -303,6 +305,7 @@ impl ScanPolicy {
     pub fn is_empty(&self) -> bool {
         self.exclude_paths.is_empty()
             && self.public_api_roots.is_empty()
+            && self.python_module_roots.is_empty()
             && self.public_api_includes.is_empty()
             && self.public_api_excludes.is_empty()
     }
@@ -340,6 +343,7 @@ impl ScanPolicy {
     pub fn validate(&self) -> Result<()> {
         validate_policy_paths("scan_policy.exclude_paths", &self.exclude_paths)?;
         validate_policy_paths("scan_policy.public_api_roots", &self.public_api_roots)?;
+        validate_policy_paths("scan_policy.python_module_roots", &self.python_module_roots)?;
         validate_policy_patterns("scan_policy.public_api_includes", &self.public_api_includes)?;
         validate_policy_patterns("scan_policy.public_api_excludes", &self.public_api_excludes)?;
         Ok(())
@@ -676,6 +680,7 @@ mod tests {
         let policy = ScanPolicy {
             exclude_paths: vec!["src/generated".to_string()],
             public_api_roots: vec!["src/cli.rs".to_string(), "src/facade".to_string()],
+            python_module_roots: vec!["src/python".to_string()],
             public_api_includes: Vec::new(),
             public_api_excludes: Vec::new(),
         };
@@ -700,6 +705,7 @@ mod tests {
         let policy = ScanPolicy {
             exclude_paths: Vec::new(),
             public_api_roots: vec!["src/cli.rs".to_string()],
+            python_module_roots: Vec::new(),
             public_api_includes: vec![
                 "rust:fn *".to_string(),
                 "src/cli.rs|rust:enum OutputFormat".to_string(),

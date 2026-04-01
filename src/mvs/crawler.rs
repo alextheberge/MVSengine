@@ -152,7 +152,10 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
             source: &file.source,
         })
         .collect();
-    let python_module_index = adapters::build_python_module_index(&python_module_sources);
+    let python_module_index = adapters::build_python_module_index(
+        &python_module_sources,
+        &scan_policy.python_module_roots,
+    );
 
     for file in source_files {
         for tag in extract_named_tags(&file.lexed.comments, &feature_re, "name", "name2") {
@@ -2532,6 +2535,59 @@ mod tests {
     }
 
     #[test]
+    fn python_module_roots_enable_nonstandard_workspace_package_resolution() {
+        let workspace = TempWorkspace::new();
+        let pkg = workspace.path().join("app/pkg");
+        fs::create_dir_all(&pkg).expect("failed to create python package");
+
+        fs::write(
+            pkg.join("core.py"),
+            r#"
+            __all__ = ("login",)
+
+            def login(username: str) -> str:
+                return username
+        "#,
+        )
+        .expect("failed to write package core fixture");
+
+        fs::write(
+            workspace.path().join("app/api.py"),
+            r#"
+            from pkg.core import __all__ as CORE_EXPORTS
+            from pkg.core import *
+
+            __all__ = CORE_EXPORTS
+        "#,
+        )
+        .expect("failed to write python facade fixture");
+
+        let default_report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+        assert!(!default_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:from pkg.core import login"));
+
+        let rooted_report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: Vec::new(),
+                python_module_roots: vec!["app".to_string()],
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(rooted_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:from pkg.core import login"));
+    }
+
+    #[test]
     fn tree_sitter_python_falls_back_when_all_is_not_parseable() {
         let workspace = TempWorkspace::new();
         let src = workspace.path().join("src");
@@ -3851,6 +3907,7 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: vec!["src/api.ts".to_string()],
+                python_module_roots: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -3894,6 +3951,7 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: vec!["src/generated".to_string()],
                 public_api_roots: Vec::new(),
+                python_module_roots: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -3969,6 +4027,7 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: vec!["src/api.ts".to_string()],
+                python_module_roots: Vec::new(),
                 public_api_includes: vec!["ts/js:function login*".to_string()],
                 public_api_excludes: vec!["ts/js:const buildSession".to_string()],
             },

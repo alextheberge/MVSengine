@@ -68,6 +68,9 @@ pub struct GenerateArgs {
     #[arg(long = "public-api-root")]
     pub public_api_roots: Vec<PathBuf>,
 
+    #[arg(long = "python-module-root")]
+    pub python_module_roots: Vec<PathBuf>,
+
     #[arg(long = "public-api-include", value_name = "PATTERN")]
     pub public_api_includes: Vec<String>,
 
