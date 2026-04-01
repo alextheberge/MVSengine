@@ -2818,11 +2818,31 @@ mod tests {
               VERSION = "v1"
               SECRET = "hidden"
               private_constant :SECRET
+              public_constant :SECRET
+
+              module_function
+
+              def build(token)
+                token
+              end
+
+              extend self
+
+              def ping(target)
+                target
+              end
+
+              def status(label)
+                label
+              end
+
+              module_function :ping
 
               class AuthApi < BaseApi
                 TIMEOUT = 30
                 PRIVATE_TOKEN = "hidden"
                 private_constant :PRIVATE_TOKEN
+                public_constant :PRIVATE_TOKEN
 
                 attr_reader :token, :status
                 attr_accessor :mode
@@ -2831,10 +2851,8 @@ mod tests {
                   username
                 end
 
-                private
-
-                def hidden(secret)
-                  secret
+                def self.publish(target)
+                  target
                 end
 
                 class << self
@@ -2842,10 +2860,14 @@ mod tests {
                     target
                   end
                 end
-              end
 
-              def self.ping(target)
-                target
+                private_class_method :connect
+
+                private
+
+                def hidden(secret)
+                  secret
+                end
               end
             end
         "##,
@@ -2870,11 +2892,35 @@ mod tests {
         assert!(report
             .public_api
             .iter()
+            .any(|entry| entry.signature == "ruby:const Demo::SECRET"));
+        assert!(report
+            .public_api
+            .iter()
             .any(|entry| entry.signature == "ruby:class AuthApi < BaseApi"));
         assert!(report
             .public_api
             .iter()
             .any(|entry| entry.signature == "ruby:const Demo::AuthApi::TIMEOUT"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:const Demo::AuthApi::PRIVATE_TOKEN"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:def Demo.build(token)"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:def Demo.ping(target)"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:def Demo#status(label)"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:def Demo.status(label)"));
         assert!(report
             .public_api
             .iter()
@@ -2894,11 +2940,7 @@ mod tests {
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "ruby:def Demo::AuthApi.connect(target)"));
-        assert!(report
-            .public_api
-            .iter()
-            .any(|entry| entry.signature == "ruby:def Demo.ping(target)"));
+            .any(|entry| entry.signature == "ruby:def Demo::AuthApi.publish(target)"));
         assert!(!report
             .public_api
             .iter()
@@ -2906,11 +2948,15 @@ mod tests {
         assert!(!report
             .public_api
             .iter()
-            .any(|entry| entry.signature.contains("Demo::SECRET")));
+            .any(|entry| entry.signature == "ruby:def Demo#ping(target)"));
         assert!(!report
             .public_api
             .iter()
-            .any(|entry| entry.signature.contains("PRIVATE_TOKEN")));
+            .any(|entry| entry.signature == "ruby:def Demo::AuthApi.connect(target)"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("Demo::AuthApi#hidden")));
     }
 
     #[test]
@@ -3383,6 +3429,9 @@ mod tests {
                   VERSION = "v1"
                   SECRET = "hidden"
                   private_constant :SECRET
+                  public_constant :SECRET
+
+                  extend self
 
                   class AuthApi
                     attr_reader :token
@@ -3391,12 +3440,24 @@ mod tests {
                       username
                     end
 
+                    def self.publish(target)
+                      target
+                    end
+
+                    private_class_method :publish
+
                     private
 
                     def hidden(secret)
                       secret
                     end
                   end
+
+                  def ping(target)
+                    target
+                  end
+
+                  module_function :ping
                 end
             "##,
                 expected_feature: "ruby_bridge",
@@ -3404,11 +3465,13 @@ mod tests {
                 expected_public_api: &[
                     "ruby:module Demo",
                     "ruby:const Demo::VERSION",
+                    "ruby:const Demo::SECRET",
                     "ruby:class AuthApi",
                     "ruby:attr_reader Demo::AuthApi#token",
                     "ruby:def Demo::AuthApi#login(username)",
+                    "ruby:def Demo.ping(target)",
                 ],
-                rejected_public_api_fragments: &["hidden", "SECRET"],
+                rejected_public_api_fragments: &["hidden", "AuthApi.publish", "Demo#ping"],
             },
             ParserAdapterCase {
                 file_name: "Api.swift",
