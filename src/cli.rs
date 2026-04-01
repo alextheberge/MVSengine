@@ -186,6 +186,9 @@ pub struct GenerateArgs {
     #[arg(long = "python-module-root")]
     pub python_module_roots: Vec<PathBuf>,
 
+    #[arg(long = "rust-workspace-member")]
+    pub rust_workspace_members: Vec<PathBuf>,
+
     #[arg(long = "python-export-following", value_enum)]
     pub python_export_following: Option<PythonExportFollowingArg>,
 

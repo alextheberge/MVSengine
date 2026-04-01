@@ -6,7 +6,7 @@ This document tracks the work required to move `mvs-manager` from the current fe
 
 - The scanner is now parser-backed across Rust, TypeScript/JavaScript, Go, Python, Java, Kotlin, C#, PHP, Ruby, Swift, Lua, and Luau.
 - Manifests persist semantic evidence inventories, machine-readable command output, and per-language scan policy.
-- The main remaining work is no longer raw language coverage. It is contract stability, workspace-scale export policy, and release hardening.
+- The main remaining work is no longer raw language coverage. It is contract stability, final explicit-export edge cases, and release hardening.
 
 ## 1.0 Exit Criteria
 
@@ -24,13 +24,12 @@ This document tracks the work required to move `mvs-manager` from the current fe
   - Define which `scan_policy` options are stable in `1.x`.
   - Document compatibility guarantees for canonical signature inventories and JSON command output.
 - Finish the remaining explicit-export boundary gaps.
-  - Rust: multi-crate workspace policy so a crate facade can intentionally include or exclude workspace-member crates.
   - TypeScript/JavaScript: clarify whether monorepo self-references are in or out for `1.0`.
 - Tighten validation semantics.
   - Make `validate` return machine-usable failing axes, not only free-text reasons.
   - Publish a stable exit-code matrix for success, degraded compatibility, incompatibility, invalid manifest, and internal failure.
 - Add release-grade regression fixtures.
-  - Multi-crate Rust workspace fixtures.
+  - Broaden multi-crate Rust workspace fixtures beyond the current allowlisted member-reexport path.
   - TS/JS package-export and path-alias fixtures.
   - Python facade and `__all__` fixtures across multiple roots.
   - Convention-driven Ruby and Lua/Luau export-boundary fixtures.
@@ -62,7 +61,7 @@ This document tracks the work required to move `mvs-manager` from the current fe
 
 ### Rust
 
-- Workspace-member crate boundary policy.
+- Expand fixture coverage for allowlisted workspace-member reexports and deeper facade stacks.
 - Stronger handling for facade crates that reexport private internals through multiple layers.
 
 ### TypeScript / JavaScript
@@ -101,7 +100,7 @@ This document tracks the work required to move `mvs-manager` from the current fe
 
 ## Suggested Sequence
 
-1. Finish the remaining Rust and TS/JS export-boundary gaps.
+1. Finish the remaining TS/JS export-boundary gaps and deepen multi-workspace fixtures.
 2. Freeze and document JSON output, manifest schema, and scan-policy stability.
 3. Add release-grade multi-workspace fixtures and golden manifests.
 4. Tighten `validate` into a stronger machine-readable compatibility gate.

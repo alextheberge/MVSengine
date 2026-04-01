@@ -348,6 +348,11 @@ fn apply_scan_policy_overrides(manifest: &mut Manifest, args: &GenerateArgs) {
             normalize_policy_paths(&args.python_module_roots);
     }
 
+    if !args.rust_workspace_members.is_empty() {
+        manifest.scan_policy.rust_workspace_members =
+            normalize_policy_paths(&args.rust_workspace_members);
+    }
+
     if !args.public_api_includes.is_empty() {
         manifest.scan_policy.public_api_includes =
             normalize_policy_patterns(&args.public_api_includes);
@@ -477,6 +482,12 @@ fn render_scan_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) {
         println!(
             "- Python module roots: {}",
             scan_policy.python_module_roots.join(", ")
+        );
+    }
+    if !scan_policy.rust_workspace_members.is_empty() {
+        println!(
+            "- Rust workspace members: {}",
+            scan_policy.rust_workspace_members.join(", ")
         );
     }
     if !scan_policy.public_api_excludes.is_empty() {
@@ -758,6 +769,7 @@ mod tests {
             lua_export_following: None,
             python_export_following: None,
             python_module_roots: Vec::new(),
+            rust_workspace_members: Vec::new(),
             public_api_includes: Vec::new(),
             public_api_excludes: Vec::new(),
             format: OutputFormat::Text,

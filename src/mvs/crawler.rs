@@ -11,6 +11,7 @@ use std::{
 use anyhow::{Context, Result};
 use quote::ToTokens;
 use regex::Regex;
+use serde::Deserialize;
 use syn::{FnArg, ImplItem, Item, ReturnType, Signature, TraitItem, Type, UseTree, Visibility};
 use tree_sitter::{Node, Parser as TreeSitterParser};
 use walkdir::{DirEntry, WalkDir};
@@ -59,10 +60,40 @@ struct RustModuleIndex {
     reexported_signatures_by_file: BTreeMap<String, Vec<String>>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct RustWorkspaceCatalog {
+    descriptors: Vec<RustCrateDescriptor>,
+    crate_names: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+struct RustCrateDescriptor {
+    crate_name: String,
+    source_root_rel: String,
+    crate_root_rel: String,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 struct RustReexportedSymbol {
     symbol_path: String,
     signature: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoManifestToml {
+    package: Option<CargoPackageSection>,
+    lib: Option<CargoLibSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoPackageSection {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoLibSection {
+    name: Option<String>,
+    path: Option<String>,
 }
 
 impl RustModuleIndex {
@@ -78,6 +109,15 @@ impl RustModuleIndex {
             .get(rel_path)
             .map(Vec::as_slice)
             .unwrap_or(&[])
+    }
+}
+
+impl RustWorkspaceCatalog {
+    fn descriptor_for_file<'a>(&'a self, rel_path: &str) -> Option<&'a RustCrateDescriptor> {
+        self.descriptors
+            .iter()
+            .filter(|descriptor| path_has_prefix(rel_path, &descriptor.source_root_rel))
+            .max_by_key(|descriptor| descriptor.source_root_rel.len())
     }
 }
 
@@ -188,8 +228,7 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
             source: &file.source,
         })
         .collect();
-    let rust_module_index =
-        build_rust_module_index(&source_files, scan_policy.rust_export_following);
+    let rust_module_index = build_rust_module_index(root, &source_files, scan_policy);
     let go_package_sources: Vec<_> = source_files
         .iter()
         .filter(|file| file.language == SourceLanguage::Go)
@@ -335,10 +374,11 @@ fn includes_effective_public_api(
 }
 
 fn build_rust_module_index(
+    root: &Path,
     source_files: &[SourceFileInput],
-    export_following: RustExportFollowing,
+    scan_policy: &ScanPolicy,
 ) -> RustModuleIndex {
-    if export_following == RustExportFollowing::Off {
+    if scan_policy.rust_export_following == RustExportFollowing::Off {
         return RustModuleIndex::default();
     }
 
@@ -346,6 +386,7 @@ fn build_rust_module_index(
         .iter()
         .filter(|file| file.language == SourceLanguage::Rust)
         .collect();
+    let rust_workspace_catalog = build_rust_workspace_catalog(root, &rust_files, scan_policy);
     let known_rust_files: BTreeSet<String> =
         rust_files.iter().map(|file| file.rel.clone()).collect();
     let mut edges_by_file: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -355,11 +396,25 @@ fn build_rust_module_index(
         let Ok(parsed) = syn::parse_file(&file.source) else {
             continue;
         };
-        let module_dir = rust_module_directory(Path::new(&file.rel));
-        let module_path = rust_file_module_path(Path::new(&file.rel));
+        let crate_descriptor = rust_workspace_catalog.descriptor_for_file(&file.rel);
+        let module_dir = rust_module_directory(Path::new(&file.rel), crate_descriptor);
+        let module_path = rust_file_module_path(Path::new(&file.rel), crate_descriptor);
+        let crate_alias = crate_descriptor
+            .filter(|descriptor| {
+                rust_workspace_catalog
+                    .crate_names
+                    .contains(&descriptor.crate_name)
+            })
+            .map(|descriptor| descriptor.crate_name.as_str());
         let mut edges = BTreeSet::new();
         collect_rust_public_module_edges(&parsed.items, &module_dir, &known_rust_files, &mut edges);
-        collect_rust_symbol_signatures(&parsed.items, &module_path, &mut symbol_signatures_by_path);
+        collect_rust_symbol_signatures(
+            &parsed.items,
+            &module_path,
+            crate_alias,
+            &rust_workspace_catalog.crate_names,
+            &mut symbol_signatures_by_path,
+        );
         if !edges.is_empty() {
             edges_by_file.insert(file.rel.clone(), edges.into_iter().collect());
         }
@@ -371,11 +426,15 @@ fn build_rust_module_index(
             let Ok(parsed) = syn::parse_file(&file.source) else {
                 continue;
             };
-            let current_module = rust_file_module_path(Path::new(&file.rel));
+            let current_module = rust_file_module_path(
+                Path::new(&file.rel),
+                rust_workspace_catalog.descriptor_for_file(&file.rel),
+            );
             collect_rust_reexported_symbols(
                 &parsed.items,
                 &current_module,
                 true,
+                &rust_workspace_catalog.crate_names,
                 &symbol_signatures_by_path,
                 &mut pending,
             );
@@ -417,12 +476,16 @@ fn build_rust_module_index(
         let Ok(parsed) = syn::parse_file(&file.source) else {
             continue;
         };
-        let current_module = rust_file_module_path(Path::new(&file.rel));
+        let current_module = rust_file_module_path(
+            Path::new(&file.rel),
+            rust_workspace_catalog.descriptor_for_file(&file.rel),
+        );
         let mut signatures = BTreeSet::new();
         collect_rust_reexported_signatures(
             &parsed.items,
             &current_module,
             true,
+            &rust_workspace_catalog.crate_names,
             &symbol_signatures_by_path,
             &mut signatures,
         );
@@ -436,9 +499,122 @@ fn build_rust_module_index(
     index
 }
 
+fn build_rust_workspace_catalog(
+    root: &Path,
+    rust_files: &[&SourceFileInput],
+    scan_policy: &ScanPolicy,
+) -> RustWorkspaceCatalog {
+    let mut manifests: BTreeMap<String, bool> = BTreeMap::new();
+    for file in rust_files {
+        if let Some(manifest_rel) = find_nearest_cargo_manifest_rel(root, &root.join(&file.rel)) {
+            manifests.entry(manifest_rel).or_insert(false);
+        }
+    }
+
+    for member in &scan_policy.rust_workspace_members {
+        if let Some(manifest_rel) = resolve_rust_workspace_member_manifest_rel(root, member) {
+            manifests
+                .entry(manifest_rel)
+                .and_modify(|allow_external| *allow_external = true)
+                .or_insert(true);
+        }
+    }
+
+    let mut catalog = RustWorkspaceCatalog::default();
+    for (manifest_rel, allow_external) in manifests {
+        let Some(descriptor) = load_rust_crate_descriptor(root, &manifest_rel) else {
+            continue;
+        };
+        if allow_external {
+            catalog.crate_names.insert(descriptor.crate_name.clone());
+        }
+        catalog.descriptors.push(descriptor);
+    }
+    catalog
+}
+
+fn find_nearest_cargo_manifest_rel(root: &Path, source_path: &Path) -> Option<String> {
+    let mut directory = source_path.parent()?.to_path_buf();
+
+    loop {
+        let manifest_path = directory.join("Cargo.toml");
+        if manifest_path.is_file() {
+            return Some(normalize_relative_path(
+                manifest_path.strip_prefix(root).unwrap_or(&manifest_path),
+            ));
+        }
+        if directory == root || !directory.pop() {
+            break;
+        }
+    }
+
+    None
+}
+
+fn resolve_rust_workspace_member_manifest_rel(root: &Path, member: &str) -> Option<String> {
+    let candidate = root.join(member);
+    let manifest_path =
+        if candidate.file_name().and_then(|name| name.to_str()) == Some("Cargo.toml") {
+            candidate
+        } else {
+            candidate.join("Cargo.toml")
+        };
+    if !manifest_path.is_file() {
+        return None;
+    }
+
+    Some(normalize_relative_path(
+        manifest_path.strip_prefix(root).unwrap_or(&manifest_path),
+    ))
+}
+
+fn load_rust_crate_descriptor(root: &Path, manifest_rel: &str) -> Option<RustCrateDescriptor> {
+    let manifest_path = root.join(manifest_rel);
+    let manifest_dir = manifest_path.parent()?;
+    let manifest_source = fs::read_to_string(&manifest_path).ok()?;
+    let manifest: CargoManifestToml = toml::from_str(&manifest_source).ok()?;
+    let crate_name = manifest
+        .lib
+        .as_ref()
+        .and_then(|section| section.name.clone())
+        .or_else(|| {
+            manifest
+                .package
+                .as_ref()
+                .map(|section| section.name.clone())
+        })?
+        .replace('-', "_");
+    let crate_root_rel_path = manifest
+        .lib
+        .as_ref()
+        .and_then(|section| section.path.as_deref())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("src/lib.rs"));
+    let source_root_path = crate_root_rel_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let source_root_abs = manifest_dir.join(source_root_path);
+    let crate_root_abs = manifest_dir.join(&crate_root_rel_path);
+
+    Some(RustCrateDescriptor {
+        crate_name,
+        source_root_rel: normalize_relative_path(
+            source_root_abs
+                .strip_prefix(root)
+                .unwrap_or(&source_root_abs),
+        ),
+        crate_root_rel: normalize_relative_path(
+            crate_root_abs.strip_prefix(root).unwrap_or(&crate_root_abs),
+        ),
+    })
+}
+
 fn collect_rust_symbol_signatures(
     items: &[Item],
     module_path: &[String],
+    crate_alias: Option<&str>,
+    rust_crate_names: &BTreeSet<String>,
     symbol_signatures_by_path: &mut BTreeMap<String, Vec<String>>,
 ) {
     let module_prefix = rust_module_prefix(module_path);
@@ -451,7 +627,12 @@ fn collect_rust_symbol_signatures(
                     format_rust_signature(&item_fn.sig)
                 );
                 let symbol_path = join_module_path(module_path, &item_fn.sig.ident.to_string());
-                insert_rust_symbol_signature(symbol_signatures_by_path, &symbol_path, signature);
+                insert_rust_symbol_signature_variant(
+                    symbol_signatures_by_path,
+                    &symbol_path,
+                    signature,
+                    crate_alias,
+                );
             }
             Item::Struct(item_struct) if is_public(&item_struct.vis) => {
                 let signature = format!(
@@ -460,7 +641,12 @@ fn collect_rust_symbol_signatures(
                     normalize_signature(&item_struct.generics.to_token_stream().to_string())
                 );
                 let symbol_path = join_module_path(module_path, &item_struct.ident.to_string());
-                insert_rust_symbol_signature(symbol_signatures_by_path, &symbol_path, signature);
+                insert_rust_symbol_signature_variant(
+                    symbol_signatures_by_path,
+                    &symbol_path,
+                    signature,
+                    crate_alias,
+                );
             }
             Item::Enum(item_enum) if is_public(&item_enum.vis) => {
                 let signature = format!(
@@ -469,24 +655,31 @@ fn collect_rust_symbol_signatures(
                     normalize_signature(&item_enum.generics.to_token_stream().to_string())
                 );
                 let symbol_path = join_module_path(module_path, &item_enum.ident.to_string());
-                insert_rust_symbol_signature(symbol_signatures_by_path, &symbol_path, signature);
+                insert_rust_symbol_signature_variant(
+                    symbol_signatures_by_path,
+                    &symbol_path,
+                    signature,
+                    crate_alias,
+                );
             }
             Item::Trait(item_trait) if is_public(&item_trait.vis) => {
                 let symbol_path = join_module_path(module_path, &item_trait.ident.to_string());
-                insert_rust_symbol_signature(
+                insert_rust_symbol_signature_variant(
                     symbol_signatures_by_path,
                     &symbol_path,
                     format!("rust:trait {symbol_path}"),
+                    crate_alias,
                 );
                 for trait_item in &item_trait.items {
                     if let TraitItem::Fn(method) = trait_item {
-                        insert_rust_symbol_signature(
+                        insert_rust_symbol_signature_variant(
                             symbol_signatures_by_path,
                             &symbol_path,
                             format!(
                                 "rust:trait-fn {symbol_path}::{}",
                                 format_rust_signature(&method.sig)
                             ),
+                            crate_alias,
                         );
                     }
                 }
@@ -494,34 +687,39 @@ fn collect_rust_symbol_signatures(
             Item::Type(item_type) if is_public(&item_type.vis) => {
                 let symbol_path = join_module_path(module_path, &item_type.ident.to_string());
                 let ty = normalize_signature(&item_type.ty.to_token_stream().to_string());
-                insert_rust_symbol_signature(
+                insert_rust_symbol_signature_variant(
                     symbol_signatures_by_path,
                     &symbol_path,
                     format!("rust:type {symbol_path}={ty}"),
+                    crate_alias,
                 );
             }
             Item::Const(item_const) if is_public(&item_const.vis) => {
                 let symbol_path = join_module_path(module_path, &item_const.ident.to_string());
                 let ty = normalize_signature(&item_const.ty.to_token_stream().to_string());
-                insert_rust_symbol_signature(
+                insert_rust_symbol_signature_variant(
                     symbol_signatures_by_path,
                     &symbol_path,
                     format!("rust:const {symbol_path}:{ty}"),
+                    crate_alias,
                 );
             }
             Item::Static(item_static) if is_public(&item_static.vis) => {
                 let symbol_path = join_module_path(module_path, &item_static.ident.to_string());
                 let ty = normalize_signature(&item_static.ty.to_token_stream().to_string());
-                insert_rust_symbol_signature(
+                insert_rust_symbol_signature_variant(
                     symbol_signatures_by_path,
                     &symbol_path,
                     format!("rust:static {symbol_path}:{ty}"),
+                    crate_alias,
                 );
             }
             Item::Impl(item_impl) => {
-                let Some(symbol_path) =
-                    resolve_rust_type_symbol_path(module_path, &item_impl.self_ty)
-                else {
+                let Some(symbol_path) = resolve_rust_type_symbol_path(
+                    module_path,
+                    &item_impl.self_ty,
+                    rust_crate_names,
+                ) else {
                     continue;
                 };
                 for impl_item in &item_impl.items {
@@ -529,7 +727,7 @@ fn collect_rust_symbol_signatures(
                         if !is_public(&method.vis) {
                             continue;
                         }
-                        insert_rust_symbol_signature(
+                        insert_rust_symbol_signature_variant(
                             symbol_signatures_by_path,
                             &symbol_path,
                             format!(
@@ -537,6 +735,7 @@ fn collect_rust_symbol_signatures(
                                 render_rust_impl_scope(&symbol_path, &item_impl.self_ty),
                                 format_rust_signature(&method.sig)
                             ),
+                            crate_alias,
                         );
                     }
                 }
@@ -548,6 +747,8 @@ fn collect_rust_symbol_signatures(
                     collect_rust_symbol_signatures(
                         nested_items,
                         &nested_module,
+                        crate_alias,
+                        rust_crate_names,
                         symbol_signatures_by_path,
                     );
                 }
@@ -561,6 +762,7 @@ fn collect_rust_reexported_signatures(
     items: &[Item],
     current_module: &[String],
     current_module_public: bool,
+    rust_crate_names: &BTreeSet<String>,
     symbol_signatures_by_path: &BTreeMap<String, Vec<String>>,
     signatures: &mut BTreeSet<String>,
 ) {
@@ -571,6 +773,7 @@ fn collect_rust_reexported_signatures(
                     &item_use.tree,
                     &[],
                     current_module,
+                    rust_crate_names,
                     symbol_signatures_by_path,
                     signatures,
                 );
@@ -583,6 +786,7 @@ fn collect_rust_reexported_signatures(
                         nested_items,
                         &nested_module,
                         is_public(&item_mod.vis),
+                        rust_crate_names,
                         symbol_signatures_by_path,
                         signatures,
                     );
@@ -597,6 +801,7 @@ fn collect_rust_reexported_symbols(
     items: &[Item],
     current_module: &[String],
     current_module_public: bool,
+    rust_crate_names: &BTreeSet<String>,
     symbol_signatures_by_path: &BTreeMap<String, Vec<String>>,
     pending: &mut BTreeSet<RustReexportedSymbol>,
 ) {
@@ -607,6 +812,7 @@ fn collect_rust_reexported_symbols(
                     &item_use.tree,
                     &[],
                     current_module,
+                    rust_crate_names,
                     symbol_signatures_by_path,
                     pending,
                 );
@@ -619,6 +825,7 @@ fn collect_rust_reexported_symbols(
                         nested_items,
                         &nested_module,
                         is_public(&item_mod.vis),
+                        rust_crate_names,
                         symbol_signatures_by_path,
                         pending,
                     );
@@ -633,6 +840,7 @@ fn collect_rust_use_tree_signatures(
     tree: &UseTree,
     prefix: &[String],
     current_module: &[String],
+    rust_crate_names: &BTreeSet<String>,
     symbol_signatures_by_path: &BTreeMap<String, Vec<String>>,
     signatures: &mut BTreeSet<String>,
 ) {
@@ -644,6 +852,7 @@ fn collect_rust_use_tree_signatures(
                 &path.tree,
                 &next,
                 current_module,
+                rust_crate_names,
                 symbol_signatures_by_path,
                 signatures,
             );
@@ -659,6 +868,7 @@ fn collect_rust_use_tree_signatures(
                 None,
                 false,
                 current_module,
+                rust_crate_names,
                 symbol_signatures_by_path,
                 signatures,
             );
@@ -671,6 +881,7 @@ fn collect_rust_use_tree_signatures(
                 Some(rename.rename.to_string()),
                 false,
                 current_module,
+                rust_crate_names,
                 symbol_signatures_by_path,
                 signatures,
             );
@@ -681,6 +892,7 @@ fn collect_rust_use_tree_signatures(
                 None,
                 true,
                 current_module,
+                rust_crate_names,
                 symbol_signatures_by_path,
                 signatures,
             );
@@ -691,6 +903,7 @@ fn collect_rust_use_tree_signatures(
                     item,
                     prefix,
                     current_module,
+                    rust_crate_names,
                     symbol_signatures_by_path,
                     signatures,
                 );
@@ -703,6 +916,7 @@ fn collect_rust_use_tree_symbols(
     tree: &UseTree,
     prefix: &[String],
     current_module: &[String],
+    rust_crate_names: &BTreeSet<String>,
     symbol_signatures_by_path: &BTreeMap<String, Vec<String>>,
     pending: &mut BTreeSet<RustReexportedSymbol>,
 ) {
@@ -714,6 +928,7 @@ fn collect_rust_use_tree_symbols(
                 &path.tree,
                 &next,
                 current_module,
+                rust_crate_names,
                 symbol_signatures_by_path,
                 pending,
             );
@@ -729,6 +944,7 @@ fn collect_rust_use_tree_symbols(
                 None,
                 false,
                 current_module,
+                rust_crate_names,
                 symbol_signatures_by_path,
                 pending,
             );
@@ -741,6 +957,7 @@ fn collect_rust_use_tree_symbols(
                 Some(rename.rename.to_string()),
                 false,
                 current_module,
+                rust_crate_names,
                 symbol_signatures_by_path,
                 pending,
             );
@@ -751,6 +968,7 @@ fn collect_rust_use_tree_symbols(
                 None,
                 true,
                 current_module,
+                rust_crate_names,
                 symbol_signatures_by_path,
                 pending,
             );
@@ -761,6 +979,7 @@ fn collect_rust_use_tree_symbols(
                     item,
                     prefix,
                     current_module,
+                    rust_crate_names,
                     symbol_signatures_by_path,
                     pending,
                 );
@@ -774,10 +993,11 @@ fn resolve_rust_reexport_target(
     alias: Option<String>,
     is_glob: bool,
     current_module: &[String],
+    rust_crate_names: &BTreeSet<String>,
     symbol_signatures_by_path: &BTreeMap<String, Vec<String>>,
     signatures: &mut BTreeSet<String>,
 ) {
-    let Some(resolved_source) = resolve_rust_path(current_module, source) else {
+    let Some(resolved_source) = resolve_rust_path(current_module, source, rust_crate_names) else {
         return;
     };
     let source_path = resolved_source.join("::");
@@ -825,10 +1045,11 @@ fn resolve_rust_reexported_symbol(
     alias: Option<String>,
     is_glob: bool,
     current_module: &[String],
+    rust_crate_names: &BTreeSet<String>,
     symbol_signatures_by_path: &BTreeMap<String, Vec<String>>,
     pending: &mut BTreeSet<RustReexportedSymbol>,
 ) {
-    let Some(resolved_source) = resolve_rust_path(current_module, source) else {
+    let Some(resolved_source) = resolve_rust_path(current_module, source, rust_crate_names) else {
         return;
     };
     let source_path = resolved_source.join("::");
@@ -906,6 +1127,27 @@ fn insert_rust_symbol_signature(
     true
 }
 
+fn insert_rust_symbol_signature_variant(
+    symbol_signatures_by_path: &mut BTreeMap<String, Vec<String>>,
+    symbol_path: &str,
+    signature: String,
+    crate_alias: Option<&str>,
+) -> bool {
+    let mut changed =
+        insert_rust_symbol_signature(symbol_signatures_by_path, symbol_path, signature.clone());
+
+    if let Some(crate_alias) = crate_alias {
+        let qualified_symbol_path = format!("{crate_alias}::{symbol_path}");
+        changed |= insert_rust_symbol_signature(
+            symbol_signatures_by_path,
+            &qualified_symbol_path,
+            signature.replacen(symbol_path, &qualified_symbol_path, 1),
+        );
+    }
+
+    changed
+}
+
 fn collect_rust_public_module_edges(
     items: &[Item],
     module_dir: &str,
@@ -963,7 +1205,7 @@ fn resolve_rust_external_module_file(
     None
 }
 
-fn rust_module_directory(rel_path: &Path) -> String {
+fn rust_module_directory(rel_path: &Path, descriptor: Option<&RustCrateDescriptor>) -> String {
     let parent = rel_path.parent().unwrap_or_else(|| Path::new(""));
     let file_name = rel_path
         .file_name()
@@ -973,7 +1215,9 @@ fn rust_module_directory(rel_path: &Path) -> String {
         .file_stem()
         .and_then(|name| name.to_str())
         .unwrap_or("");
-    let module_dir = if matches!(file_name, "lib.rs" | "main.rs" | "mod.rs") {
+    let module_dir = if is_rust_module_root_file(rel_path, descriptor)
+        || matches!(file_name, "lib.rs" | "main.rs" | "mod.rs")
+    {
         parent.to_path_buf()
     } else {
         parent.join(stem)
@@ -981,8 +1225,8 @@ fn rust_module_directory(rel_path: &Path) -> String {
     normalize_relative_path(&module_dir)
 }
 
-fn rust_file_module_path(rel_path: &Path) -> Vec<String> {
-    let crate_relative = rust_path_after_source_root(rel_path);
+fn rust_file_module_path(rel_path: &Path, descriptor: Option<&RustCrateDescriptor>) -> Vec<String> {
+    let crate_relative = rust_path_after_source_root(rel_path, descriptor);
     let file_name = crate_relative
         .file_name()
         .and_then(|name| name.to_str())
@@ -994,7 +1238,9 @@ fn rust_file_module_path(rel_path: &Path) -> Vec<String> {
         .filter_map(|component| component.to_str().map(str::to_string))
         .collect();
 
-    if matches!(file_name, "lib.rs" | "main.rs" | "mod.rs") {
+    if is_rust_module_root_file(rel_path, descriptor)
+        || matches!(file_name, "lib.rs" | "main.rs" | "mod.rs")
+    {
         return parts;
     }
 
@@ -1004,7 +1250,17 @@ fn rust_file_module_path(rel_path: &Path) -> Vec<String> {
     parts
 }
 
-fn rust_path_after_source_root(rel_path: &Path) -> PathBuf {
+fn rust_path_after_source_root(
+    rel_path: &Path,
+    descriptor: Option<&RustCrateDescriptor>,
+) -> PathBuf {
+    if let Some(descriptor) = descriptor {
+        let source_root = Path::new(&descriptor.source_root_rel);
+        if let Ok(stripped) = rel_path.strip_prefix(source_root) {
+            return stripped.to_path_buf();
+        }
+    }
+
     let components: Vec<String> = rel_path
         .iter()
         .filter_map(|component| component.to_str().map(str::to_string))
@@ -1041,7 +1297,11 @@ fn join_module_path(module_path: &[String], name: &str) -> String {
     }
 }
 
-fn resolve_rust_type_symbol_path(module_path: &[String], ty: &Type) -> Option<String> {
+fn resolve_rust_type_symbol_path(
+    module_path: &[String],
+    ty: &Type,
+    rust_crate_names: &BTreeSet<String>,
+) -> Option<String> {
     let Type::Path(type_path) = ty else {
         return None;
     };
@@ -1055,11 +1315,22 @@ fn resolve_rust_type_symbol_path(module_path: &[String], ty: &Type) -> Option<St
         .iter()
         .map(|segment| segment.ident.to_string())
         .collect();
-    let resolved = resolve_rust_path(module_path, &segments)?;
+    let resolved = resolve_rust_path(module_path, &segments, rust_crate_names)?;
     Some(resolved.join("::"))
 }
 
-fn resolve_rust_path(current_module: &[String], source: &[String]) -> Option<Vec<String>> {
+fn resolve_rust_path(
+    current_module: &[String],
+    source: &[String],
+    rust_crate_names: &BTreeSet<String>,
+) -> Option<Vec<String>> {
+    if source
+        .first()
+        .is_some_and(|segment| rust_crate_names.contains(segment))
+    {
+        return Some(source.to_vec());
+    }
+
     let mut resolved = current_module.to_vec();
     let mut index = 0usize;
 
@@ -1095,6 +1366,19 @@ fn normalize_relative_path(path: &Path) -> String {
         .replace('\\', "/")
         .trim_matches('/')
         .to_string()
+}
+
+fn path_has_prefix(relative_path: &str, prefix: &str) -> bool {
+    prefix.is_empty()
+        || relative_path == prefix
+        || relative_path
+            .strip_prefix(prefix)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn is_rust_module_root_file(rel_path: &Path, descriptor: Option<&RustCrateDescriptor>) -> bool {
+    descriptor
+        .is_some_and(|descriptor| descriptor.crate_root_rel == normalize_relative_path(rel_path))
 }
 
 fn extract_named_tags(
@@ -2925,6 +3209,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -2956,6 +3241,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -3019,6 +3305,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -3100,6 +3387,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -3127,6 +3415,121 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("Hidden")));
+    }
+
+    #[test]
+    fn rust_export_following_public_modules_resolves_explicit_workspace_member_reexports() {
+        let workspace = TempWorkspace::new();
+        let app_src = workspace.path().join("app/src");
+        let shared_src = workspace.path().join("shared/src");
+        fs::create_dir_all(&app_src).expect("failed to create app/src");
+        fs::create_dir_all(&shared_src).expect("failed to create shared/src");
+
+        fs::write(
+            workspace.path().join("app/Cargo.toml"),
+            r#"
+            [package]
+            name = "app"
+        "#,
+        )
+        .expect("failed to write app Cargo.toml");
+
+        fs::write(
+            workspace.path().join("shared/Cargo.toml"),
+            r#"
+            [package]
+            name = "shared-contract"
+        "#,
+        )
+        .expect("failed to write shared Cargo.toml");
+
+        fs::write(
+            app_src.join("lib.rs"),
+            r#"
+            pub use shared_contract::{Hidden as Session, connect as open};
+        "#,
+        )
+        .expect("failed to write app rust root fixture");
+
+        fs::write(
+            shared_src.join("lib.rs"),
+            r#"
+            pub struct Hidden;
+
+            impl Hidden {
+                pub fn ping(&self) -> bool { true }
+            }
+
+            pub fn connect(target: u32) -> bool { target > 0 }
+        "#,
+        )
+        .expect("failed to write shared rust fixture");
+
+        let default_report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["app/src/lib.rs".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::PublicModules,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(!default_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "rust:struct Session"));
+        assert!(!default_report
+            .public_api
+            .iter()
+            .any(|entry| { entry.signature == "rust:impl-fn Session::ping(&self) -> bool" }));
+        assert!(!default_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "rust:fn open(target: u32) -> bool"));
+
+        let followed_report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["app/src/lib.rs".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::PublicModules,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                rust_workspace_members: vec!["shared".to_string()],
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(followed_report.public_api.iter().any(|entry| {
+            entry.file == "app/src/lib.rs" && entry.signature == "rust:struct Session"
+        }));
+        assert!(followed_report.public_api.iter().any(|entry| {
+            entry.file == "app/src/lib.rs"
+                && entry.signature == "rust:impl-fn Session::ping(&self) -> bool"
+        }));
+        assert!(followed_report.public_api.iter().any(|entry| {
+            entry.file == "app/src/lib.rs" && entry.signature == "rust:fn open(target: u32) -> bool"
+        }));
+        assert!(!followed_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("shared_contract::")));
     }
 
     #[test]
@@ -3284,6 +3687,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -3314,6 +3718,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -3420,6 +3825,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -3446,6 +3852,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -3537,6 +3944,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -3630,6 +4038,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -3706,6 +4115,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -3733,6 +4143,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -4271,6 +4682,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: vec!["app".to_string()],
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -4323,6 +4735,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Off,
                 python_module_roots: vec!["app".to_string()],
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -5081,6 +5494,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -5236,6 +5650,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Off,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -5416,6 +5831,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::ReturnedRootOnly,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -5854,6 +6270,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -5904,6 +6321,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
             },
@@ -5986,6 +6404,7 @@ mod tests {
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
+                rust_workspace_members: Vec::new(),
                 public_api_includes: vec!["ts/js:function login*".to_string()],
                 public_api_excludes: vec!["ts/js:const buildSession".to_string()],
             },

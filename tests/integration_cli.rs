@@ -1333,6 +1333,126 @@ fn rust_export_following_public_modules_resolves_chained_pub_use_facades() {
 }
 
 #[test]
+fn rust_workspace_members_persist_and_resolve_cross_crate_reexports() {
+    let temp = TempWorkspace::new();
+    let project_root = temp.path().join("project");
+    fs::create_dir_all(project_root.join("app/src")).expect("failed to create app/src");
+    fs::create_dir_all(project_root.join("shared/src")).expect("failed to create shared/src");
+
+    fs::write(
+        project_root.join("app/Cargo.toml"),
+        r#"
+        [package]
+        name = "app"
+    "#,
+    )
+    .expect("failed to write app Cargo.toml");
+
+    fs::write(
+        project_root.join("shared/Cargo.toml"),
+        r#"
+        [package]
+        name = "shared-contract"
+    "#,
+    )
+    .expect("failed to write shared Cargo.toml");
+
+    fs::write(
+        project_root.join("app/src/lib.rs"),
+        r#"
+        pub use shared_contract::{Hidden as Session, connect as open};
+    "#,
+    )
+    .expect("failed to write app rust root fixture");
+
+    fs::write(
+        project_root.join("shared/src/lib.rs"),
+        r#"
+        pub struct Hidden;
+
+        impl Hidden {
+            pub fn ping(&self) -> bool { true }
+        }
+
+        pub fn connect(target: u32) -> bool { target > 0 }
+    "#,
+    )
+    .expect("failed to write shared rust fixture");
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "app/src/lib.rs",
+            "--rust-export-following",
+            "public-modules",
+            "--rust-workspace-member",
+            "shared",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Rust export following"))
+        .stdout(contains("Rust workspace members"));
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+    assert_eq!(
+        generated["scan_policy"]["rust_workspace_members"][0],
+        "shared"
+    );
+
+    let inventory = generated["evidence"]["public_api_inventory"]
+        .as_array()
+        .expect("public api inventory should be an array");
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "app/src/lib.rs"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "rust:struct Session"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "app/src/lib.rs"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "rust:impl-fn Session::ping(&self) -> bool"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "app/src/lib.rs"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "rust:fn open(target: u32) -> bool"
+    }));
+
+    let mut lint = binary_cmd();
+    lint.args([
+        "lint",
+        "--root",
+        project_root.to_str().expect("non-utf8 path"),
+        "--manifest",
+        manifest_path.to_str().expect("non-utf8 path"),
+    ])
+    .assert()
+    .success()
+    .stdout(contains("Rust export following"))
+    .stdout(contains("Rust workspace members"))
+    .stdout(contains("Lint passed"));
+}
+
+#[test]
 fn python_module_roots_persist_and_enable_cross_module_python_exports() {
     let temp = TempWorkspace::new();
     let project_root = temp.path().join("project");

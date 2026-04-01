@@ -175,7 +175,7 @@ Member signatures inside class-like scopes are now owner-qualified, and Java/C#/
 - string literals and embedded fixture blobs are ignored during decorator extraction
 - TypeScript/JavaScript public API extraction handles multiline exports, named export clauses, re-exports, and default exports without depending on line-based regex matching; `scan_policy.ts_export_following` or `--ts-export-following` can follow same-workspace relative barrel re-exports, and `workspace_only` mode also follows same-workspace `package.json` export maps and `imports` maps, including wildcard subpaths and multi-condition entries, plus root `tsconfig.json` or `jsconfig.json` `baseUrl` and `paths` aliases so facade files contribute the concrete signatures they export instead of raw `export ... from` statements
 - Go public API extraction tracks exported `func` declarations, exported methods, exported named types, exported struct fields, exported embedded struct fields, exported interface methods, embedded interface type elements, exported constants, and exported package `var` declarations from syntax trees; `scan_policy.go_export_following` or `--go-export-following` can expand a rooted `.go` facade file to same-package sibling source files while skipping `_test.go` files
-- Rust public API extraction still uses AST-normalized signatures, and `scan_policy.rust_export_following` or `--rust-export-following` can expand a rooted Rust facade such as `src/lib.rs` across same-crate `pub mod` graphs, including nested inline public modules, without pulling in private-module files or `tests`/`examples`/`benches`; direct and chained same-crate `pub use` facades, including grouped and glob reexports that stay inside the crate, are also resolved onto the public alias names, including associated inherent methods
+- Rust public API extraction still uses AST-normalized signatures, and `scan_policy.rust_export_following` or `--rust-export-following` can expand a rooted Rust facade such as `src/lib.rs` across same-crate `pub mod` graphs, including nested inline public modules, without pulling in private-module files or `tests`/`examples`/`benches`; direct and chained same-crate `pub use` facades, including grouped and glob reexports that stay inside the crate, are also resolved onto the public alias names, including associated inherent methods, and `scan_policy.rust_workspace_members` or `--rust-workspace-member` can explicitly allow selected sibling crates when a facade intentionally reexports a workspace member such as `pub use shared_contract::Session`
 - Python public API extraction tracks public `class` and non-underscore `def` declarations, public `type` aliases, module-level constants such as `API_VERSION` or `__all__`, and public class-level constants such as `Worker.STATUS`, without promoting nested local helpers or private class bodies into the API inventory; when a parseable `__all__` is present it becomes the top-level export boundary, including common alias, unpacking, and `+=` composition patterns built from parseable literals, and explicit import re-exports are stored in canonical forms such as `python:from auth.core import login as authorize`; for same-workspace Python modules, imported `__all__` aliases and `from ... import *` re-exports also resolve when the source module export graph is static and parseable, and `scan_policy.python_export_following` plus `scan_policy.python_module_roots` or `--python-module-root` can pin how aggressively module resolution follows nonstandard repository roots
 - Java public API extraction tracks public types, public fields, interface constants, and public or interface methods while stripping leading annotations out of the stored signature; declared package plus nesting context is preserved in canonical forms such as `java:type public class demo.AuthApi`, `java:field public String demo.AuthApi.status`, `java:const public static final String demo.AuthApi.Contract.STATE`, and `java:method public String demo.AuthApi.login(...)`
 - C# public API extraction tracks public types, public fields, public constants, public properties, and public or interface methods while stripping leading attributes out of the stored signature; declared namespace plus nesting context is preserved in canonical forms such as `csharp:type public class Demo.AuthApi`, `csharp:field public static readonly string Demo.AuthApi.Version`, `csharp:const public string Demo.AuthApi.STATUS_READY`, `csharp:property public string Demo.AuthApi.DisplayName { get }`, and `csharp:method public static string Demo.AuthApi.Login(...)`
@@ -200,6 +200,7 @@ The `scan_policy` block supports:
 - `ts_export_following`: TypeScript/JavaScript barrel-following mode: `off` (default), `relative_only`, or `workspace_only`
 - `go_export_following`: Go package expansion mode: `off` (default) or `package_only`
 - `rust_export_following`: Rust module-following mode: `off` (default) or `public_modules`
+- `rust_workspace_members`: relative crate directories or `Cargo.toml` paths that Rust facade following may resolve across when a facade intentionally reexports selected workspace members
 - `ruby_export_following`: Ruby export-shaping mode: `heuristic` (default) or `off`
 - `lua_export_following`: Lua/Luau runtime export mode: `heuristic` (default), `returned_root_only`, or `off`
 - `python_export_following`: Python cross-module export resolution mode: `heuristic` (default), `roots_only`, or `off`
@@ -219,6 +220,9 @@ Example:
     "ts_export_following": "workspace_only",
     "go_export_following": "package_only",
     "rust_export_following": "public_modules",
+    "rust_workspace_members": [
+      "crates/shared"
+    ],
     "ruby_export_following": "off",
     "lua_export_following": "returned_root_only",
     "python_export_following": "roots_only",
@@ -243,6 +247,7 @@ You can set these during generation:
 mvs-manager generate --root . --manifest mvs.json --context cli --public-api-root src/cli.rs
 mvs-manager generate --root . --manifest mvs.json --context cli --exclude-path src/generated
 mvs-manager generate --root . --manifest mvs.json --context cli --public-api-exclude 'rust:const EXIT_*'
+mvs-manager generate --root . --manifest mvs.json --context cli --public-api-root app/src/lib.rs --rust-export-following public-modules --rust-workspace-member shared
 mvs-manager generate --root . --manifest mvs.json --context cli --public-api-include 'src/cli.rs|rust:fn *'
 mvs-manager generate --root . --manifest mvs.json --context cli --public-api-root src/index.ts --ts-export-following relative-only
 mvs-manager generate --root . --manifest mvs.json --context cli --public-api-root src/index.ts --ts-export-following workspace-only
@@ -267,6 +272,7 @@ Practical guidance:
 - When both root config files exist, `workspace_only` reads `tsconfig.json` before `jsconfig.json`
 - Go repos that root the contract on one `.go` file but ship a whole package surface: set `go_export_following` to `package_only` so same-package sibling files count without dragging `_test.go` helpers into `public_api_inventory`
 - Rust repos that root the contract on `src/lib.rs` or another crate facade file: set `rust_export_following` to `public_modules` so same-crate `pub mod` files count with that facade while private-module files stay out
+- Rust workspaces where one facade crate intentionally reexports selected sibling crates: add `rust_workspace_members` so only those member crates resolve across `pub use member_crate::...` paths instead of widening to the entire workspace
 - Ruby repos that want file-local declarations only: set `ruby_export_following` to `off`
 - Lua or Luau repos that require explicit runtime module returns: set `lua_export_following` to `returned_root_only`
 - Lua or Luau repos that want file-local globals only: set `lua_export_following` to `off`

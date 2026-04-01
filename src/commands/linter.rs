@@ -301,6 +301,12 @@ fn render_scan_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) {
             scan_policy.python_module_roots.join(", ")
         );
     }
+    if !scan_policy.rust_workspace_members.is_empty() {
+        println!(
+            "- Rust workspace members: {}",
+            scan_policy.rust_workspace_members.join(", ")
+        );
+    }
     if !scan_policy.public_api_excludes.is_empty() {
         println!(
             "- Public API excludes: {}",
