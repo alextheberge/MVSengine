@@ -259,6 +259,12 @@ fn render_scan_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) {
             scan_policy.public_api_includes.join(", ")
         );
     }
+    if !scan_policy.ts_export_following.is_default() {
+        println!(
+            "- TS/JS export following: {}",
+            scan_policy.ts_export_following.as_str()
+        );
+    }
     if !scan_policy.ruby_export_following.is_default() {
         println!(
             "- Ruby export following: {}",

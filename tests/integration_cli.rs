@@ -465,6 +465,101 @@ fn public_api_include_filters_persist_and_ignore_non_contract_drift() {
 }
 
 #[test]
+fn ts_export_following_persists_and_resolves_relative_barrels() {
+    let temp = TempWorkspace::new();
+    let project_root = temp.path().join("project");
+    fs::create_dir_all(project_root.join("src")).expect("failed to create src");
+
+    fs::write(
+        project_root.join("src/auth.ts"),
+        r#"
+        export function login(username: string): string {
+          return username;
+        }
+
+        export interface Session {
+          token: string;
+        }
+    "#,
+    )
+    .expect("failed to write auth fixture");
+
+    fs::write(
+        project_root.join("src/index.ts"),
+        r#"
+        export { login as authenticate, Session as ActiveSession } from "./auth";
+        export * from "./auth";
+    "#,
+    )
+    .expect("failed to write barrel fixture");
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "src/index.ts",
+            "--ts-export-following",
+            "relative-only",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("TS/JS export following"));
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+    assert_eq!(
+        generated["scan_policy"]["ts_export_following"],
+        "relative_only"
+    );
+
+    let inventory = generated["evidence"]["public_api_inventory"]
+        .as_array()
+        .expect("public api inventory should be an array");
+    assert!(inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ts/js:function authenticate(username: string): string"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ts/js:interface ActiveSession"
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ts/js:export * from \"./auth\""
+    }));
+
+    let mut lint = binary_cmd();
+    lint.args([
+        "lint",
+        "--root",
+        project_root.to_str().expect("non-utf8 path"),
+        "--manifest",
+        manifest_path.to_str().expect("non-utf8 path"),
+    ])
+    .assert()
+    .success()
+    .stdout(contains("TS/JS export following"))
+    .stdout(contains("Lint passed"));
+}
+
+#[test]
 fn python_module_roots_persist_and_enable_cross_module_python_exports() {
     let temp = TempWorkspace::new();
     let project_root = temp.path().join("project");

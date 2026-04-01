@@ -63,6 +63,13 @@ struct ApiRegexPack {
     cs_method: Regex,
 }
 
+struct PublicApiExtractionContext<'a> {
+    regex: &'a ApiRegexPack,
+    scan_policy: &'a ScanPolicy,
+    ts_module_index: &'a adapters::TsModuleIndex,
+    python_module_index: &'a adapters::PythonModuleIndex,
+}
+
 impl ApiRegexPack {
     fn new() -> Result<Self> {
         Ok(Self {
@@ -152,6 +159,25 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
             source: &file.source,
         })
         .collect();
+    let ts_module_sources: Vec<_> = source_files
+        .iter()
+        .filter(|file| {
+            matches!(
+                file.language,
+                SourceLanguage::TypeScript
+                    | SourceLanguage::Tsx
+                    | SourceLanguage::JavaScript
+                    | SourceLanguage::Jsx
+            )
+        })
+        .map(|file| adapters::TsModuleSource {
+            rel_path: &file.rel,
+            source: &file.source,
+            language: file.language,
+        })
+        .collect();
+    let ts_module_index =
+        adapters::build_ts_module_index(&ts_module_sources, scan_policy.ts_export_following);
     let python_module_index = adapters::build_python_module_index(
         &python_module_sources,
         scan_policy.python_export_following,
@@ -181,9 +207,12 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
                 &file.rel,
                 &file.source,
                 &file.lexed.masked_code,
-                &api_pack,
-                scan_policy,
-                &python_module_index,
+                PublicApiExtractionContext {
+                    regex: &api_pack,
+                    scan_policy,
+                    ts_module_index: &ts_module_index,
+                    python_module_index: &python_module_index,
+                },
             );
             for signature in signatures {
                 if !scan_policy.includes_public_api_item(&file.rel, &signature) {
@@ -235,9 +264,7 @@ fn extract_public_api(
     rel_path: &str,
     source: &str,
     masked_code: &str,
-    regex: &ApiRegexPack,
-    scan_policy: &ScanPolicy,
-    python_module_index: &adapters::PythonModuleIndex,
+    context: PublicApiExtractionContext<'_>,
 ) -> Vec<String> {
     if language == SourceLanguage::Rust {
         if let Some(ast_signatures) = extract_rust_public_api(source) {
@@ -247,13 +274,18 @@ fn extract_public_api(
         }
     }
 
-    if let Some(tree_sitter_signatures) =
-        extract_tree_sitter_public_api(language, rel_path, source, scan_policy, python_module_index)
-    {
+    if let Some(tree_sitter_signatures) = extract_tree_sitter_public_api(
+        language,
+        rel_path,
+        source,
+        context.scan_policy,
+        context.ts_module_index,
+        context.python_module_index,
+    ) {
         return tree_sitter_signatures;
     }
 
-    extract_regex_public_api(language, masked_code, regex)
+    extract_regex_public_api(language, masked_code, context.regex)
 }
 
 fn extract_tree_sitter_public_api(
@@ -261,6 +293,7 @@ fn extract_tree_sitter_public_api(
     rel_path: &str,
     source: &str,
     scan_policy: &ScanPolicy,
+    ts_module_index: &adapters::TsModuleIndex,
     python_module_index: &adapters::PythonModuleIndex,
 ) -> Option<Vec<String>> {
     let grammar = language.tree_sitter_language()?;
@@ -274,9 +307,12 @@ fn extract_tree_sitter_public_api(
         root,
         source,
         rel_path,
-        Some(python_module_index),
-        scan_policy.ruby_export_following,
-        scan_policy.lua_export_following,
+        adapters::TreeSitterExtractionContext {
+            ts_module_index: Some(ts_module_index),
+            python_module_index: Some(python_module_index),
+            ruby_export_following: scan_policy.ruby_export_following,
+            lua_export_following: scan_policy.lua_export_following,
+        },
     );
     signatures.sort();
     signatures.dedup();
@@ -2074,6 +2110,104 @@ mod tests {
     }
 
     #[test]
+    fn ts_export_following_relative_only_resolves_barrel_reexports() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("auth.ts"),
+            r#"
+            export function login(username: string): string {
+              return username;
+            }
+
+            export interface Session {
+              token: string;
+            }
+        "#,
+        )
+        .expect("failed to write auth fixture");
+
+        fs::write(
+            src.join("index.ts"),
+            r#"
+            export { login as authenticate, Session as ActiveSession } from "./auth";
+            export * from "./auth";
+        "#,
+        )
+        .expect("failed to write index fixture");
+
+        let default_report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["src/index.ts".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(default_report.public_api.iter().any(|entry| {
+            entry.signature
+                == "ts/js:export { login as authenticate, Session as ActiveSession } from \"./auth\""
+        }));
+        assert!(default_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ts/js:export * from \"./auth\""));
+        assert!(!default_report.public_api.iter().any(
+            |entry| entry.signature == "ts/js:function authenticate(username: string): string"
+        ));
+
+        let followed_report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["src/index.ts".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::RelativeOnly,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(followed_report.public_api.iter().any(
+            |entry| entry.signature == "ts/js:function authenticate(username: string): string"
+        ));
+        assert!(followed_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ts/js:function login(username: string): string"));
+        assert!(followed_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ts/js:interface ActiveSession"));
+        assert!(followed_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ts/js:interface Session"));
+        assert!(!followed_report.public_api.iter().any(|entry| {
+            entry.signature
+                == "ts/js:export { login as authenticate, Session as ActiveSession } from \"./auth\""
+        }));
+        assert!(!followed_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ts/js:export * from \"./auth\""));
+    }
+
+    #[test]
     fn tree_sitter_captures_default_export_without_body_noise() {
         let workspace = TempWorkspace::new();
         let src = workspace.path().join("src");
@@ -2580,6 +2714,7 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: Vec::new(),
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -2629,6 +2764,7 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: Vec::new(),
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Off,
@@ -3384,6 +3520,7 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: Vec::new(),
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Off,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -3536,6 +3673,7 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: Vec::new(),
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Off,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -3713,6 +3851,7 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: Vec::new(),
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::ReturnedRootOnly,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -4148,6 +4287,7 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: vec!["src/api.ts".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -4195,6 +4335,7 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: vec!["src/generated".to_string()],
                 public_api_roots: Vec::new(),
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -4274,6 +4415,7 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: vec!["src/api.ts".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,

@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::commands;
-use crate::mvs::manifest::{LuaExportFollowing, PythonExportFollowing, RubyExportFollowing};
+use crate::mvs::manifest::{
+    LuaExportFollowing, PythonExportFollowing, RubyExportFollowing, TsExportFollowing,
+};
 
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_GENERATE_ERROR: i32 = 10;
@@ -47,6 +49,21 @@ impl From<PythonExportFollowingArg> for PythonExportFollowing {
             PythonExportFollowingArg::Off => Self::Off,
             PythonExportFollowingArg::RootsOnly => Self::RootsOnly,
             PythonExportFollowingArg::Heuristic => Self::Heuristic,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum)]
+pub enum TsExportFollowingArg {
+    Off,
+    RelativeOnly,
+}
+
+impl From<TsExportFollowingArg> for TsExportFollowing {
+    fn from(value: TsExportFollowingArg) -> Self {
+        match value {
+            TsExportFollowingArg::Off => Self::Off,
+            TsExportFollowingArg::RelativeOnly => Self::RelativeOnly,
         }
     }
 }
@@ -117,6 +134,9 @@ pub struct GenerateArgs {
 
     #[arg(long = "public-api-root")]
     pub public_api_roots: Vec<PathBuf>,
+
+    #[arg(long = "ts-export-following", value_enum)]
+    pub ts_export_following: Option<TsExportFollowingArg>,
 
     #[arg(long = "ruby-export-following", value_enum)]
     pub ruby_export_following: Option<RubyExportFollowingArg>,

@@ -15,9 +15,26 @@ mod ts_js;
 use tree_sitter::Node;
 
 use super::language::SourceLanguage;
-use crate::mvs::manifest::{LuaExportFollowing, PythonExportFollowing, RubyExportFollowing};
+use crate::mvs::manifest::{
+    LuaExportFollowing, PythonExportFollowing, RubyExportFollowing, TsExportFollowing,
+};
 
 pub(super) use python::{PythonModuleIndex, PythonModuleSource};
+pub(super) use ts_js::{TsModuleIndex, TsModuleSource};
+
+pub(super) struct TreeSitterExtractionContext<'a> {
+    pub ts_module_index: Option<&'a TsModuleIndex>,
+    pub python_module_index: Option<&'a PythonModuleIndex>,
+    pub ruby_export_following: RubyExportFollowing,
+    pub lua_export_following: LuaExportFollowing,
+}
+
+pub(super) fn build_ts_module_index(
+    files: &[TsModuleSource<'_>],
+    export_following: TsExportFollowing,
+) -> TsModuleIndex {
+    ts_js::build_module_index(files, export_following)
+}
 
 pub(super) fn build_python_module_index(
     files: &[PythonModuleSource<'_>],
@@ -32,25 +49,25 @@ pub(super) fn extract_tree_sitter_public_api(
     root: Node<'_>,
     source: &str,
     rel_path: &str,
-    python_module_index: Option<&PythonModuleIndex>,
-    ruby_export_following: RubyExportFollowing,
-    lua_export_following: LuaExportFollowing,
+    context: TreeSitterExtractionContext<'_>,
 ) -> Vec<String> {
     match language {
         SourceLanguage::TypeScript
         | SourceLanguage::Tsx
         | SourceLanguage::JavaScript
-        | SourceLanguage::Jsx => ts_js::extract(root, source),
+        | SourceLanguage::Jsx => ts_js::extract(root, source, rel_path, context.ts_module_index),
         SourceLanguage::Go => go::extract(root, source),
-        SourceLanguage::Python => python::extract(root, source, rel_path, python_module_index),
+        SourceLanguage::Python => {
+            python::extract(root, source, rel_path, context.python_module_index)
+        }
         SourceLanguage::Java => java::extract(root, source),
         SourceLanguage::Kotlin => kotlin::extract(root, source),
         SourceLanguage::Csharp => csharp::extract(root, source),
         SourceLanguage::Php => php::extract(root, source),
-        SourceLanguage::Ruby => ruby::extract(root, source, ruby_export_following),
+        SourceLanguage::Ruby => ruby::extract(root, source, context.ruby_export_following),
         SourceLanguage::Swift => swift::extract(root, source),
-        SourceLanguage::Lua => lua::extract(root, source, lua_export_following),
-        SourceLanguage::Luau => luau::extract(root, source, lua_export_following),
+        SourceLanguage::Lua => lua::extract(root, source, context.lua_export_following),
+        SourceLanguage::Luau => luau::extract(root, source, context.lua_export_following),
         SourceLanguage::Rust => Vec::new(),
     }
 }
