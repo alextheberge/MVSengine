@@ -137,7 +137,7 @@ The parser-backed path is organized as per-language adapters, so expanding or ti
 For class-like languages, stored member signatures are owner-qualified so collisions between similarly named methods or properties stay visible in `public_api_inventory`. Java, C#, and Kotlin also include declared package or namespace context in both type and member signatures.
 
 - TypeScript/JavaScript: multiline exports, named export clauses, re-exports, and default exports are parser-backed, and `scan_policy.ts_export_following` or `--ts-export-following relative-only` can follow same-workspace relative barrel re-exports
-- Go: exported `func` declarations, exported methods, exported named types, exported struct fields, exported embedded struct fields, exported interface methods, embedded interface type elements, exported constants, and exported package `var` declarations are parser-backed
+- Go: exported `func` declarations, exported methods, exported named types, exported struct fields, exported embedded struct fields, exported interface methods, embedded interface type elements, exported constants, and exported package `var` declarations are parser-backed, and `scan_policy.go_export_following` or `--go-export-following package-only` can expand a rooted `.go` file to same-package sibling source files while skipping `_test.go` files
 - Python: public `class` declarations, non-underscore `def` declarations, public `type` aliases, and module-level or class-level constants such as `API_VERSION`, `__all__`, or `Worker.STATUS` are parser-backed without promoting nested local helpers or private class bodies; parseable `__all__` becomes the top-level export boundary, including common alias, unpacking, and `+=` composition patterns built from parseable literals, explicit import re-exports are stored in canonical forms such as `python:from auth.core import login as authorize`, same-workspace `from ... import *` or imported `__all__` aliases resolve when the upstream module export graph is static and parseable, and `scan_policy.python_export_following` plus `scan_policy.python_module_roots` or `--python-module-root` can pin how cross-module facade resolution behaves
 - Java: public types, public fields, interface constants, and public or interface methods are parser-backed; stored signatures drop leading annotations and preserve package plus nesting context as `java:type public class demo.AuthApi`, `java:field public String demo.AuthApi.status`, `java:const public static final String demo.AuthApi.Contract.STATE`, and `java:method public String demo.AuthApi.login(...)`
 - C#: public types, public fields, public constants, public properties, and public or interface methods are parser-backed; stored signatures drop leading attributes and preserve namespace plus nesting context as `csharp:type public class Demo.AuthApi`, `csharp:field public static readonly string Demo.AuthApi.Version`, `csharp:const public string Demo.AuthApi.STATUS_READY`, `csharp:property public string Demo.AuthApi.DisplayName { get }`, and `csharp:method public static string Demo.AuthApi.Login(...)`
@@ -162,6 +162,7 @@ Rust API signatures are AST-normalized before they are persisted. Typical entrie
 
 - `public_api_roots`: relative file or directory prefixes that define the public API surface
 - `ts_export_following`: TypeScript/JavaScript barrel-following mode: `off` or `relative_only`
+- `go_export_following`: Go package expansion mode: `off` or `package_only`
 - `ruby_export_following`: Ruby export-shaping mode: `heuristic` or `off`
 - `lua_export_following`: Lua/Luau runtime export mode: `heuristic`, `returned_root_only`, or `off`
 - `python_export_following`: Python cross-module export resolution mode: `heuristic`, `roots_only`, or `off`
@@ -176,6 +177,7 @@ This is especially useful when:
 - that facade file still contains public constants or argument structs that are not real consumer contract
 - a library has an explicit `public/` or `index.ts` export layer
 - a TypeScript or JavaScript repo uses barrel files and wants `index.ts` to contribute the followed concrete contract instead of raw re-export statements
+- a Go repo treats one `.go` file as the visible entrypoint but wants the whole same-package surface to count without importing `_test.go` helpers
 - a Ruby repo wants file-local declarations without `module_function` or `extend self` promotion
 - a Lua or Luau repo wants explicit returned module roots before runtime exports count, or wants returned-root following disabled
 - a Python repo keeps importable modules under a nonstandard root such as `app/` or `services/`
@@ -188,6 +190,7 @@ Example:
 
 ```bash
 mvs-manager generate --root . --manifest mvs.json --context server --public-api-root src/index.ts --ts-export-following relative-only
+mvs-manager generate --root . --manifest mvs.json --context server --public-api-root src/api.go --go-export-following package-only
 mvs-manager generate --root . --manifest mvs.json --context server --ruby-export-following off
 mvs-manager generate --root . --manifest mvs.json --context server --lua-export-following returned-root-only
 mvs-manager generate --root . --manifest mvs.json --context server --python-module-root app

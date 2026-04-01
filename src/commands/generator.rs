@@ -323,6 +323,10 @@ fn apply_scan_policy_overrides(manifest: &mut Manifest, args: &GenerateArgs) {
         manifest.scan_policy.ts_export_following = mode.into();
     }
 
+    if let Some(mode) = args.go_export_following {
+        manifest.scan_policy.go_export_following = mode.into();
+    }
+
     if let Some(mode) = args.ruby_export_following {
         manifest.scan_policy.ruby_export_following = mode.into();
     }
@@ -433,6 +437,12 @@ fn render_scan_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) {
         println!(
             "- TS/JS export following: {}",
             scan_policy.ts_export_following.as_str()
+        );
+    }
+    if !scan_policy.go_export_following.is_default() {
+        println!(
+            "- Go export following: {}",
+            scan_policy.go_export_following.as_str()
         );
     }
     if !scan_policy.ruby_export_following.is_default() {
@@ -732,6 +742,7 @@ mod tests {
             exclude_paths: Vec::new(),
             public_api_roots: Vec::new(),
             ts_export_following: None,
+            go_export_following: None,
             ruby_export_following: None,
             lua_export_following: None,
             python_export_following: None,

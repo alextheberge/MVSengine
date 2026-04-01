@@ -101,6 +101,8 @@ pub struct ScanPolicy {
     pub public_api_roots: Vec<String>,
     #[serde(default, skip_serializing_if = "TsExportFollowing::is_default")]
     pub ts_export_following: TsExportFollowing,
+    #[serde(default, skip_serializing_if = "GoExportFollowing::is_default")]
+    pub go_export_following: GoExportFollowing,
     #[serde(default, skip_serializing_if = "RubyExportFollowing::is_default")]
     pub ruby_export_following: RubyExportFollowing,
     #[serde(default, skip_serializing_if = "LuaExportFollowing::is_default")]
@@ -130,6 +132,14 @@ pub enum TsExportFollowing {
     #[default]
     Off,
     RelativeOnly,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum GoExportFollowing {
+    #[default]
+    Off,
+    PackageOnly,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, Eq, PartialEq)]
@@ -348,6 +358,7 @@ impl ScanPolicy {
         self.exclude_paths.is_empty()
             && self.public_api_roots.is_empty()
             && self.ts_export_following.is_default()
+            && self.go_export_following.is_default()
             && self.ruby_export_following.is_default()
             && self.lua_export_following.is_default()
             && self.python_export_following.is_default()
@@ -426,6 +437,19 @@ impl TsExportFollowing {
         match self {
             Self::Off => "off",
             Self::RelativeOnly => "relative_only",
+        }
+    }
+}
+
+impl GoExportFollowing {
+    pub fn is_default(&self) -> bool {
+        *self == Self::Off
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::PackageOnly => "package_only",
         }
     }
 }
@@ -707,8 +731,9 @@ fn current_unix_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Evidence, LuaExportFollowing, Manifest, ProtocolRange, PublicApiSnapshot,
-        PythonExportFollowing, RubyExportFollowing, ScanPolicy, TsExportFollowing,
+        Evidence, GoExportFollowing, LuaExportFollowing, Manifest, ProtocolRange,
+        PublicApiSnapshot, PythonExportFollowing, RubyExportFollowing, ScanPolicy,
+        TsExportFollowing,
     };
 
     #[test]
@@ -791,6 +816,7 @@ mod tests {
             exclude_paths: vec!["src/generated".to_string()],
             public_api_roots: vec!["src/cli.rs".to_string(), "src/facade".to_string()],
             ts_export_following: TsExportFollowing::Off,
+            go_export_following: GoExportFollowing::Off,
             ruby_export_following: RubyExportFollowing::Heuristic,
             lua_export_following: LuaExportFollowing::Heuristic,
             python_export_following: PythonExportFollowing::Heuristic,
@@ -820,6 +846,7 @@ mod tests {
             exclude_paths: Vec::new(),
             public_api_roots: vec!["src/cli.rs".to_string()],
             ts_export_following: TsExportFollowing::Off,
+            go_export_following: GoExportFollowing::Off,
             ruby_export_following: RubyExportFollowing::Heuristic,
             lua_export_following: LuaExportFollowing::Heuristic,
             python_export_following: PythonExportFollowing::Heuristic,

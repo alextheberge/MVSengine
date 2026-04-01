@@ -15,7 +15,7 @@ use syn::{FnArg, ImplItem, Item, ReturnType, Signature, TraitItem, Visibility};
 use tree_sitter::{Node, Parser as TreeSitterParser};
 use walkdir::{DirEntry, WalkDir};
 
-use crate::mvs::manifest::ScanPolicy;
+use crate::mvs::manifest::{GoExportFollowing, ScanPolicy};
 
 use self::language::{LexStrategy, SourceLanguage};
 
@@ -159,6 +159,14 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
             source: &file.source,
         })
         .collect();
+    let go_package_sources: Vec<_> = source_files
+        .iter()
+        .filter(|file| file.language == SourceLanguage::Go)
+        .map(|file| adapters::GoPackageSource {
+            rel_path: &file.rel,
+            source: &file.source,
+        })
+        .collect();
     let ts_module_sources: Vec<_> = source_files
         .iter()
         .filter(|file| {
@@ -176,6 +184,8 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
             language: file.language,
         })
         .collect();
+    let go_package_index =
+        adapters::build_go_package_index(&go_package_sources, scan_policy.go_export_following);
     let ts_module_index =
         adapters::build_ts_module_index(&ts_module_sources, scan_policy.ts_export_following);
     let python_module_index = adapters::build_python_module_index(
@@ -183,6 +193,8 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
         scan_policy.python_export_following,
         &scan_policy.python_module_roots,
     );
+    let effective_public_api_files =
+        build_effective_public_api_files(&source_files, scan_policy, &go_package_index);
 
     for file in source_files {
         for tag in extract_named_tags(&file.lexed.comments, &feature_re, "name", "name2") {
@@ -201,7 +213,7 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
             });
         }
 
-        if scan_policy.includes_public_api(&file.rel) {
+        if includes_effective_public_api(&effective_public_api_files, &file.rel) {
             let signatures = extract_public_api(
                 file.language,
                 &file.rel,
@@ -232,6 +244,47 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
     report.public_api.dedup();
 
     Ok(report)
+}
+
+fn build_effective_public_api_files(
+    source_files: &[SourceFileInput],
+    scan_policy: &ScanPolicy,
+    go_package_index: &adapters::GoPackageIndex,
+) -> Option<BTreeSet<String>> {
+    if scan_policy.public_api_roots.is_empty() {
+        return None;
+    }
+
+    let mut files = BTreeSet::new();
+    for file in source_files {
+        if !scan_policy.includes_public_api(&file.rel) {
+            continue;
+        }
+
+        files.insert(file.rel.clone());
+        if file.language == SourceLanguage::Go
+            && scan_policy.go_export_following == GoExportFollowing::PackageOnly
+        {
+            files.extend(
+                go_package_index
+                    .package_files_for(&file.rel)
+                    .iter()
+                    .cloned(),
+            );
+        }
+    }
+
+    Some(files)
+}
+
+fn includes_effective_public_api(
+    effective_public_api_files: &Option<BTreeSet<String>>,
+    relative_path: &str,
+) -> bool {
+    match effective_public_api_files {
+        Some(files) => files.contains(relative_path),
+        None => true,
+    }
 }
 
 fn extract_named_tags(
@@ -2144,6 +2197,7 @@ mod tests {
                 exclude_paths: Vec::new(),
                 public_api_roots: vec!["src/index.ts".to_string()],
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -2172,6 +2226,7 @@ mod tests {
                 exclude_paths: Vec::new(),
                 public_api_roots: vec!["src/index.ts".to_string()],
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::RelativeOnly,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -2205,6 +2260,107 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature == "ts/js:export * from \"./auth\""));
+    }
+
+    #[test]
+    fn go_export_following_package_only_expands_file_roots_to_same_package_siblings() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("api.go"),
+            r#"
+            package demo
+
+            func Connect(target string) error {
+                return nil
+            }
+        "#,
+        )
+        .expect("failed to write go api fixture");
+
+        fs::write(
+            src.join("types.go"),
+            r#"
+            package demo
+
+            type Session struct {
+                Token string
+            }
+        "#,
+        )
+        .expect("failed to write go types fixture");
+
+        fs::write(
+            src.join("api_test.go"),
+            r#"
+            package demo
+
+            const TestHelper string = "ignored"
+        "#,
+        )
+        .expect("failed to write go test fixture");
+
+        let default_report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["src/api.go".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(default_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "go:func Connect(target string) error"));
+        assert!(!default_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "go:type Session struct"));
+
+        let package_report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["src/api.go".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::PackageOnly,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(package_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "go:func Connect(target string) error"));
+        assert!(package_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "go:type Session struct"));
+        assert!(package_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "go:field Session.Token string"));
+        assert!(!package_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("TestHelper")));
     }
 
     #[test]
@@ -2715,6 +2871,7 @@ mod tests {
                 exclude_paths: Vec::new(),
                 public_api_roots: Vec::new(),
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -2765,6 +2922,7 @@ mod tests {
                 exclude_paths: Vec::new(),
                 public_api_roots: Vec::new(),
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Off,
@@ -3521,6 +3679,7 @@ mod tests {
                 exclude_paths: Vec::new(),
                 public_api_roots: Vec::new(),
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Off,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -3674,6 +3833,7 @@ mod tests {
                 exclude_paths: Vec::new(),
                 public_api_roots: Vec::new(),
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Off,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -3852,6 +4012,7 @@ mod tests {
                 exclude_paths: Vec::new(),
                 public_api_roots: Vec::new(),
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::ReturnedRootOnly,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -4288,6 +4449,7 @@ mod tests {
                 exclude_paths: Vec::new(),
                 public_api_roots: vec!["src/api.ts".to_string()],
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -4336,6 +4498,7 @@ mod tests {
                 exclude_paths: vec!["src/generated".to_string()],
                 public_api_roots: Vec::new(),
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -4416,6 +4579,7 @@ mod tests {
                 exclude_paths: Vec::new(),
                 public_api_roots: vec!["src/api.ts".to_string()],
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,

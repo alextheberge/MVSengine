@@ -5,7 +5,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::commands;
 use crate::mvs::manifest::{
-    LuaExportFollowing, PythonExportFollowing, RubyExportFollowing, TsExportFollowing,
+    GoExportFollowing, LuaExportFollowing, PythonExportFollowing, RubyExportFollowing,
+    TsExportFollowing,
 };
 
 pub const EXIT_SUCCESS: i32 = 0;
@@ -64,6 +65,21 @@ impl From<TsExportFollowingArg> for TsExportFollowing {
         match value {
             TsExportFollowingArg::Off => Self::Off,
             TsExportFollowingArg::RelativeOnly => Self::RelativeOnly,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum)]
+pub enum GoExportFollowingArg {
+    Off,
+    PackageOnly,
+}
+
+impl From<GoExportFollowingArg> for GoExportFollowing {
+    fn from(value: GoExportFollowingArg) -> Self {
+        match value {
+            GoExportFollowingArg::Off => Self::Off,
+            GoExportFollowingArg::PackageOnly => Self::PackageOnly,
         }
     }
 }
@@ -137,6 +153,9 @@ pub struct GenerateArgs {
 
     #[arg(long = "ts-export-following", value_enum)]
     pub ts_export_following: Option<TsExportFollowingArg>,
+
+    #[arg(long = "go-export-following", value_enum)]
+    pub go_export_following: Option<GoExportFollowingArg>,
 
     #[arg(long = "ruby-export-following", value_enum)]
     pub ruby_export_following: Option<RubyExportFollowingArg>,

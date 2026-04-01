@@ -1,11 +1,76 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
+
 use tree_sitter::Node;
+use tree_sitter::Parser;
+
+use crate::mvs::manifest::GoExportFollowing;
 
 use super::super::{
     children_by_field_name, extract_tree_sitter_prefix_before_fields,
     extract_tree_sitter_prefix_signature, is_exported_tree_sitter_name, named_children, node_text,
     normalize_tree_sitter_signature,
 };
+
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub(crate) struct GoPackageIndex {
+    files_by_rel_path: BTreeMap<String, Vec<String>>,
+}
+
+pub(crate) struct GoPackageSource<'a> {
+    pub rel_path: &'a str,
+    pub source: &'a str,
+}
+
+impl GoPackageIndex {
+    pub(crate) fn package_files_for<'a>(&'a self, rel_path: &str) -> &'a [String] {
+        self.files_by_rel_path
+            .get(rel_path)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+}
+
+pub(super) fn build_package_index(
+    files: &[GoPackageSource<'_>],
+    export_following: GoExportFollowing,
+) -> GoPackageIndex {
+    if export_following == GoExportFollowing::Off {
+        return GoPackageIndex::default();
+    }
+
+    let mut packages: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+
+    for file in files {
+        if file.rel_path.ends_with("_test.go") {
+            continue;
+        }
+
+        let Some(package_name) = extract_package_name(file.source) else {
+            continue;
+        };
+        let directory = go_relative_directory(file.rel_path);
+        packages
+            .entry((directory, package_name))
+            .or_default()
+            .insert(file.rel_path.to_string());
+    }
+
+    let mut index = GoPackageIndex::default();
+    for files in packages.into_values() {
+        let related_files: Vec<String> = files.iter().cloned().collect();
+        for rel_path in files {
+            index
+                .files_by_rel_path
+                .insert(rel_path, related_files.clone());
+        }
+    }
+
+    index
+}
 
 pub(super) fn extract(root: Node<'_>, source: &str) -> Vec<String> {
     let mut signatures = Vec::new();
@@ -331,4 +396,36 @@ fn is_exported_go_embedded_type(type_text: &str) -> bool {
         .unwrap_or(type_text)
         .trim();
     is_exported_go_name(type_name)
+}
+
+fn extract_package_name(source: &str) -> Option<String> {
+    let mut parser = Parser::new();
+    parser.set_language(&tree_sitter_go::LANGUAGE.into()).ok()?;
+    let tree = parser.parse(source, None)?;
+    let root = tree.root_node();
+
+    named_children(root)
+        .into_iter()
+        .find(|child| child.kind() == "package_clause")
+        .and_then(|child| node_text(child, source))
+        .map(normalize_tree_sitter_signature)
+        .and_then(|text| {
+            text.strip_prefix("package ")
+                .map(str::trim)
+                .map(str::to_string)
+        })
+        .filter(|name| !name.is_empty())
+}
+
+fn go_relative_directory(rel_path: &str) -> String {
+    let directory = Path::new(rel_path)
+        .parent()
+        .and_then(|parent| parent.to_str())
+        .unwrap_or("")
+        .replace('\\', "/");
+    if directory == "." {
+        String::new()
+    } else {
+        directory
+    }
 }

@@ -16,9 +16,11 @@ use tree_sitter::Node;
 
 use super::language::SourceLanguage;
 use crate::mvs::manifest::{
-    LuaExportFollowing, PythonExportFollowing, RubyExportFollowing, TsExportFollowing,
+    GoExportFollowing, LuaExportFollowing, PythonExportFollowing, RubyExportFollowing,
+    TsExportFollowing,
 };
 
+pub(super) use go::{GoPackageIndex, GoPackageSource};
 pub(super) use python::{PythonModuleIndex, PythonModuleSource};
 pub(super) use ts_js::{TsModuleIndex, TsModuleSource};
 
@@ -34,6 +36,13 @@ pub(super) fn build_ts_module_index(
     export_following: TsExportFollowing,
 ) -> TsModuleIndex {
     ts_js::build_module_index(files, export_following)
+}
+
+pub(super) fn build_go_package_index(
+    files: &[GoPackageSource<'_>],
+    export_following: GoExportFollowing,
+) -> GoPackageIndex {
+    go::build_package_index(files, export_following)
 }
 
 pub(super) fn build_python_module_index(
