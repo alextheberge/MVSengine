@@ -340,6 +340,56 @@ fn validate_json_failure_uses_stable_exit_code() {
     assert_eq!(payload["status"], "incompatible");
     assert_eq!(payload["exit_code"], 30);
     assert_eq!(payload["compatible"], false);
+    assert_eq!(payload["failure_count"], 1);
+    assert_eq!(payload["degraded_count"], 0);
+    let checks = payload["checks"]
+        .as_array()
+        .expect("validate checks should be an array");
+    assert!(checks.iter().any(|check| {
+        check["axis"].as_str().expect("axis should be a string") == "protocol"
+            && check["status"].as_str().expect("status should be a string") == "fail"
+            && check["code"].as_str().expect("code should be a string") == "protocol_range_mismatch"
+    }));
+}
+
+#[test]
+fn validate_json_degraded_reports_shimmed_protocol_axis() {
+    let host = fixtures_root().join("manifests/host_with_shim.json");
+    let extension = fixtures_root().join("manifests/extension_out_of_range.json");
+
+    let mut validate = binary_cmd();
+    let assert = validate
+        .args([
+            "validate",
+            "--host-manifest",
+            host.to_str().expect("non-utf8 path"),
+            "--extension-manifest",
+            extension.to_str().expect("non-utf8 path"),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())
+        .expect("validate output should be valid utf8");
+    let payload: Value = serde_json::from_str(&stdout).expect("validate json output should parse");
+
+    assert_eq!(payload["command"], "validate");
+    assert_eq!(payload["status"], "degraded");
+    assert_eq!(payload["exit_code"], 0);
+    assert_eq!(payload["compatible"], true);
+    assert_eq!(payload["degraded"], true);
+    assert_eq!(payload["failure_count"], 0);
+    assert_eq!(payload["degraded_count"], 1);
+    let checks = payload["checks"]
+        .as_array()
+        .expect("validate checks should be an array");
+    assert!(checks.iter().any(|check| {
+        check["axis"].as_str().expect("axis should be a string") == "protocol"
+            && check["status"].as_str().expect("status should be a string") == "degraded"
+            && check["code"].as_str().expect("code should be a string") == "protocol_range_shimmed"
+    }));
 }
 
 #[test]

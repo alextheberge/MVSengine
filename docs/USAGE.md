@@ -90,6 +90,8 @@ Machine-readable output:
 mvs-manager validate --host-manifest host.json --extension-manifest extension.json --format json
 ```
 
+`validate --format json` now includes structured `checks` entries with stable `axis`, `status`, and `code` fields so automation can distinguish protocol, context, capability, runtime-profile, and AI-contract failures without scraping human text.
+
 Context hierarchies are supported. Example: `edge` extensions can run on `edge.mobile` hosts when ranges and capabilities pass.
 
 AI runtime capability override for validation:

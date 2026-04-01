@@ -7,7 +7,7 @@ use crate::cli::{
 };
 use crate::commands::output::{emit_error, emit_json, CommandFailure};
 use crate::mvs::manifest::Manifest;
-use crate::mvs::reader::validate_host_extension;
+use crate::mvs::reader::{validate_host_extension, ValidationCheck, ValidationCheckStatus};
 
 /// @mvs-feature("manifest_compatibility_validation")
 /// @mvs-protocol("cli_validate_command")
@@ -67,6 +67,16 @@ fn try_run(args: &ValidateArgs) -> std::result::Result<ValidateReport, CommandFa
         exit_code,
         compatible: result.compatible,
         degraded: result.degraded,
+        failure_count: result
+            .checks
+            .iter()
+            .filter(|check| check.status == ValidationCheckStatus::Fail)
+            .count(),
+        degraded_count: result
+            .checks
+            .iter()
+            .filter(|check| check.status == ValidationCheckStatus::Degraded)
+            .count(),
         host_manifest: args.host_manifest.display().to_string(),
         extension_manifest: args.extension_manifest.display().to_string(),
         target_context: args
@@ -74,6 +84,7 @@ fn try_run(args: &ValidateArgs) -> std::result::Result<ValidateReport, CommandFa
             .clone()
             .unwrap_or_else(|| extension.identity.cont.clone()),
         reasons: result.reasons,
+        checks: result.checks,
     })
 }
 
@@ -109,8 +120,11 @@ struct ValidateReport {
     exit_code: i32,
     compatible: bool,
     degraded: bool,
+    failure_count: usize,
+    degraded_count: usize,
     host_manifest: String,
     extension_manifest: String,
     target_context: String,
     reasons: Vec<String>,
+    checks: Vec<ValidationCheck>,
 }

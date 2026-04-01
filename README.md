@@ -317,6 +317,12 @@ JSON responses are designed for CI, bots, editor tooling, and release automation
 - semantic diff details where relevant
 - command-specific metadata such as identity changes, inventory counts, or compatibility reasons
 
+`validate --format json` also includes:
+
+- `failure_count`
+- `degraded_count`
+- `checks`: structured compatibility checks with stable `axis`, `status`, and `code` values
+
 Example `lint --format json` failure shape:
 
 ```json
@@ -327,6 +333,43 @@ Example `lint --format json` failure shape:
   "failure_count": 1,
   "failures": [
     "Public API signature drift detected. Added: src/api.ts|ts/js:function rotateToken(token:string): string Build must fail until PROT is incremented and manifest is regenerated."
+  ]
+}
+```
+
+Example `validate --format json` incompatibility shape:
+
+```json
+{
+  "command": "validate",
+  "status": "incompatible",
+  "exit_code": 30,
+  "compatible": false,
+  "degraded": false,
+  "failure_count": 1,
+  "degraded_count": 0,
+  "checks": [
+    {
+      "axis": "protocol",
+      "status": "fail",
+      "code": "protocol_range_mismatch",
+      "message": "Protocol range mismatch: extension requires host 1-1, host exposes 2-2 and is at PROT 2.",
+      "details": {
+        "extension_protocol": 1,
+        "host_protocol": 2,
+        "required_host_range": {
+          "min_prot": 1,
+          "max_prot": 1
+        },
+        "host_extension_range": {
+          "min_prot": 2,
+          "max_prot": 2
+        }
+      }
+    }
+  ],
+  "reasons": [
+    "Protocol range mismatch: extension requires host 1-1, host exposes 2-2 and is at PROT 2."
   ]
 }
 ```

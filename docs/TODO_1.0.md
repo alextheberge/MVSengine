@@ -6,7 +6,7 @@ This document tracks the work required to move `mvs-manager` from the current fe
 
 - The scanner is now parser-backed across Rust, TypeScript/JavaScript, Go, Python, Java, Kotlin, C#, PHP, Ruby, Swift, Lua, and Luau.
 - Manifests persist semantic evidence inventories, machine-readable command output, and per-language scan policy.
-- The main remaining work is no longer raw language coverage. It is contract stability, machine-readable compatibility semantics, and release hardening.
+- The main remaining work is no longer raw language coverage. It is contract stability, output-contract freeze, and release hardening.
 
 ## 1.0 Exit Criteria
 
@@ -23,9 +23,6 @@ This document tracks the work required to move `mvs-manager` from the current fe
   - Define which `mvs.json` fields are stable in `1.x`.
   - Define which `scan_policy` options are stable in `1.x`.
   - Document compatibility guarantees for canonical signature inventories and JSON command output.
-- Tighten validation semantics.
-  - Make `validate` return machine-usable failing axes, not only free-text reasons.
-  - Publish a stable exit-code matrix for success, degraded compatibility, incompatibility, invalid manifest, and internal failure.
 - Add release-grade regression fixtures.
   - Broaden multi-crate Rust workspace fixtures beyond the current allowlisted member-reexport path.
   - TS/JS package-export, import-map, monorepo self-reference, and path-alias fixtures.
