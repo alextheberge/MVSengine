@@ -162,7 +162,7 @@ This reduces formatting noise in `public_api_inventory` and makes policy pattern
 
 ## Scanner Precision
 
-The crawler now tokenizes source before matching decorators, uses AST extraction for Rust, and uses parser-backed public API adapters for every other supported language: TypeScript/JavaScript, Go, Python, Java, Kotlin, C#, PHP, Swift, and Luau.
+The crawler now tokenizes source before matching decorators, uses AST extraction for Rust, and uses parser-backed public API adapters for every other supported language: TypeScript/JavaScript, Go, Python, Java, Kotlin, C#, PHP, Ruby, Swift, and Luau.
 
 Internally, parser-backed extraction now dispatches through dedicated language adapters under `src/mvs/crawler/adapters/`, with shared language metadata in `src/mvs/crawler/language.rs`. That keeps new language work localized instead of expanding one monolithic extractor path.
 
@@ -175,6 +175,7 @@ Internally, parser-backed extraction now dispatches through dedicated language a
 - Java and C# public API extraction tracks public types and public methods while stripping leading annotations or attributes out of the stored signature
 - Kotlin public API extraction tracks public or default-visible `class`, `interface`, `object`, and `fun` declarations, preserving modifiers such as `data` and `suspend` while skipping `private`, `protected`, and `internal`
 - PHP public API extraction tracks top-level functions and constants, classes, interfaces, traits, enums, public properties, public or interface constants, and public or interface methods while treating `#` comments as decorators and ignoring attribute syntax in stored signatures
+- Ruby public API extraction tracks `class`, `module`, public `def`, singleton methods, and `class << self` method bodies while ignoring heredoc fixture content and methods hidden behind `private` or `protected`
 - Swift public API extraction tracks `public` and `open` types, functions, properties, and inherited protocol requirements, and the scanner masks multiline Swift string literals so embedded examples do not pollute evidence
 - Luau public API extraction tracks global `function` declarations, `export type` definitions, and returned module-table exports such as `Api.connect = function(...) end`, `function Api:refresh(...)`, and named fields from returned tables
 

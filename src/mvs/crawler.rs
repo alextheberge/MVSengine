@@ -635,6 +635,7 @@ fn extract_regex_public_api(
             | SourceLanguage::JavaScript
             | SourceLanguage::Jsx
             | SourceLanguage::Php
+            | SourceLanguage::Ruby
             | SourceLanguage::Swift
             | SourceLanguage::Luau => {}
             SourceLanguage::Go => {
@@ -750,6 +751,7 @@ fn lex_source(source: &str, language: SourceLanguage) -> LexedSource {
         LexStrategy::CStyle => lex_c_style_source(source, language),
         LexStrategy::Python => lex_python_source(source),
         LexStrategy::Php => lex_php_source(source),
+        LexStrategy::Ruby => lex_ruby_source(source),
         LexStrategy::Luau => lex_luau_source(source),
     }
 }
@@ -933,6 +935,50 @@ fn lex_luau_source(source: &str) -> LexedSource {
 
             let end = skip_line_comment(bytes, i);
             comments.push(source[i + 2..end].to_string());
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        i += 1;
+    }
+
+    LexedSource {
+        comments,
+        masked_code: String::from_utf8(masked).unwrap_or_else(|_| source.to_string()),
+    }
+}
+
+fn lex_ruby_source(source: &str) -> LexedSource {
+    let bytes = source.as_bytes();
+    let mut masked = bytes.to_vec();
+    let mut comments = Vec::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if let Some((content_start, content_end, end)) = skip_ruby_block_comment(source, bytes, i) {
+            comments.push(source[content_start..content_end].to_string());
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        if let Some(end) = skip_ruby_heredoc(source, bytes, i) {
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        if bytes[i] == b'`' || bytes[i] == b'\'' || bytes[i] == b'"' {
+            let end = skip_quoted_string(bytes, i, bytes[i]);
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        if bytes[i] == b'#' {
+            let end = skip_line_comment(bytes, i);
+            comments.push(source[i + 1..end].to_string());
             mask_range(&mut masked, bytes, i, end);
             i = end;
             continue;
@@ -1141,6 +1187,118 @@ fn skip_python_triple_quoted_string(bytes: &[u8], start: usize) -> Option<usize>
     None
 }
 
+fn skip_ruby_block_comment(
+    source: &str,
+    bytes: &[u8],
+    start: usize,
+) -> Option<(usize, usize, usize)> {
+    if !is_line_start(bytes, start)
+        || !matches!(bytes.get(start..start + 6), Some(prefix) if prefix == b"=begin")
+    {
+        return None;
+    }
+
+    let content_start = skip_line_comment(bytes, start);
+    let mut line_start = content_start;
+    while line_start < bytes.len() {
+        if bytes[line_start] == b'\n' {
+            line_start += 1;
+        }
+
+        let line_end = skip_line_comment(bytes, line_start);
+        let line = source.get(line_start..line_end)?.trim_start();
+        if line.starts_with("=end") {
+            return Some((content_start, line_start, line_end));
+        }
+
+        line_start = line_end;
+    }
+
+    Some((content_start, bytes.len(), bytes.len()))
+}
+
+fn skip_ruby_heredoc(source: &str, bytes: &[u8], start: usize) -> Option<usize> {
+    if bytes.get(start) != Some(&b'<') || bytes.get(start + 1) != Some(&b'<') {
+        return None;
+    }
+    if start > 0 && bytes[start - 1] == b'<' {
+        return None;
+    }
+
+    let mut index = start + 2;
+    let allow_indent = matches!(bytes.get(index), Some(b'-' | b'~'));
+    if allow_indent {
+        index += 1;
+    }
+    if index >= bytes.len() {
+        return None;
+    }
+
+    let mut delimiter = String::new();
+    if matches!(bytes[index], b'\'' | b'"' | b'`') {
+        let quote = bytes[index];
+        index += 1;
+        let content_start = index;
+        while index < bytes.len() && bytes[index] != quote {
+            index += 1;
+        }
+        if index >= bytes.len() {
+            return Some(bytes.len());
+        }
+        delimiter.push_str(source.get(content_start..index)?);
+        index += 1;
+    } else {
+        let content_start = index;
+        while index < bytes.len() && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+        {
+            index += 1;
+        }
+        if index == content_start {
+            return None;
+        }
+        delimiter.push_str(source.get(content_start..index)?);
+    }
+
+    if delimiter.is_empty()
+        || !delimiter
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
+    {
+        return None;
+    }
+
+    while index < bytes.len() && matches!(bytes[index], b' ' | b'\t') {
+        index += 1;
+    }
+    if index < bytes.len() && bytes[index] != b'\n' {
+        return None;
+    }
+    if index < bytes.len() {
+        index += 1;
+    }
+
+    while index < bytes.len() {
+        let line_end = skip_line_comment(bytes, index);
+        let line = source.get(index..line_end)?;
+        let trimmed = if allow_indent {
+            line.trim_start_matches([' ', '\t'])
+        } else {
+            line
+        };
+        if trimmed == delimiter {
+            return Some(line_end);
+        }
+
+        index = if line_end < bytes.len() {
+            line_end + 1
+        } else {
+            line_end
+        };
+    }
+
+    Some(bytes.len())
+}
+
 fn skip_luau_long_bracket(bytes: &[u8], start: usize) -> Option<(usize, usize, usize)> {
     if bytes.get(start) != Some(&b'[') {
         return None;
@@ -1187,6 +1345,10 @@ fn matches_hash_suffix(bytes: &[u8], start: usize, hashes: usize) -> bool {
         && bytes[start..start + hashes]
             .iter()
             .all(|byte| *byte == b'#')
+}
+
+fn is_line_start(bytes: &[u8], index: usize) -> bool {
+    index == 0 || matches!(bytes.get(index - 1), Some(b'\n'))
 }
 
 fn skip_rust_raw_string(bytes: &[u8], start: usize) -> Option<usize> {
@@ -1504,6 +1666,7 @@ fn is_comment_line(line: &str, extension: &str) -> bool {
     match extension {
         "py" => line.starts_with('#'),
         "php" => line.starts_with('#') || line.starts_with("//") || line.starts_with("/*"),
+        "rb" => line.starts_with('#') || line.starts_with("=begin"),
         "luau" => line.starts_with("--"),
         _ => line.starts_with("//") || line.starts_with("/*") || line.starts_with('*'),
     }
@@ -1586,6 +1749,50 @@ mod tests {
     impl Drop for TempWorkspace {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    struct ParserAdapterCase<'a> {
+        file_name: &'a str,
+        source: &'a str,
+        expected_feature: &'a str,
+        expected_protocol: &'a str,
+        expected_public_api: &'a [&'a str],
+        rejected_public_api_fragments: &'a [&'a str],
+    }
+
+    fn assert_parser_adapter_case(case: ParserAdapterCase<'_>) {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+        fs::write(src.join(case.file_name), case.source).expect("failed to write parser fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report.feature_tags.contains(case.expected_feature));
+        assert!(report.protocol_tags.contains(case.expected_protocol));
+
+        for signature in case.expected_public_api {
+            assert!(
+                report
+                    .public_api
+                    .iter()
+                    .any(|entry| entry.signature == *signature),
+                "missing public API signature {signature} for {}",
+                case.file_name
+            );
+        }
+
+        for fragment in case.rejected_public_api_fragments {
+            assert!(
+                !report
+                    .public_api
+                    .iter()
+                    .any(|entry| entry.signature.contains(fragment)),
+                "unexpected public API fragment {fragment} for {}",
+                case.file_name
+            );
         }
     }
 
@@ -2304,6 +2511,82 @@ mod tests {
     }
 
     #[test]
+    fn tree_sitter_captures_ruby_public_api_without_heredoc_or_private_visibility_noise() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("api.rb"),
+            r##"
+            fixture = <<~DOC
+            # @mvs-feature("fake_feature")
+            # @mvs-protocol("fake_protocol")
+            DOC
+
+            # @mvs-feature("ruby_bridge")
+            # @mvs-protocol("ruby-api-v1")
+            module Demo
+              class AuthApi < BaseApi
+                def login(username)
+                  username
+                end
+
+                private
+
+                def hidden(secret)
+                  secret
+                end
+
+                class << self
+                  def connect(target)
+                    target
+                  end
+                end
+              end
+
+              def self.ping(target)
+                target
+              end
+            end
+        "##,
+        )
+        .expect("failed to write ruby fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report.feature_tags.contains("ruby_bridge"));
+        assert!(report.protocol_tags.contains("ruby-api-v1"));
+        assert!(!report.feature_tags.contains("fake_feature"));
+        assert!(!report.protocol_tags.contains("fake_protocol"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:module Demo"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:class AuthApi < BaseApi"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:def login(username)"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:def self.connect(target)"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:def self.ping(target)"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("hidden")));
+    }
+
+    #[test]
     fn tree_sitter_captures_luau_global_functions_module_exports_and_export_types() {
         let workspace = TempWorkspace::new();
         let src = workspace.path().join("src");
@@ -2394,6 +2677,265 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("Internal.hidden")));
+    }
+
+    #[test]
+    fn parser_backed_adapters_share_comment_aware_contract_smoke_coverage() {
+        let cases = [
+            ParserAdapterCase {
+                file_name: "api.ts",
+                source: r#"
+                const fixture = `
+                // @mvs-feature("fake_feature")
+                // @mvs-protocol("fake_protocol")
+                export function fakeLogin(username: string): Promise<string> {
+                  return Promise.resolve(username)
+                }
+                `;
+
+                // @mvs-feature("ts_bridge")
+                // @mvs-protocol("ts-api-v1")
+                export function login(username: string): Promise<string> {
+                  return Promise.resolve(username)
+                }
+            "#,
+                expected_feature: "ts_bridge",
+                expected_protocol: "ts-api-v1",
+                expected_public_api: &["ts/js:function login(username: string): Promise<string>"],
+                rejected_public_api_fragments: &["fakeLogin"],
+            },
+            ParserAdapterCase {
+                file_name: "api.go",
+                source: r#"
+                package demo
+
+                var fixture = `
+                // @mvs-feature("fake_feature")
+                // @mvs-protocol("fake_protocol")
+                `
+
+                // @mvs-feature("go_bridge")
+                // @mvs-protocol("go-api-v1")
+                func Connect(target string) error {
+                    return nil
+                }
+
+                func hidden(target string) error {
+                    return nil
+                }
+            "#,
+                expected_feature: "go_bridge",
+                expected_protocol: "go-api-v1",
+                expected_public_api: &["go:func Connect(target string) error"],
+                rejected_public_api_fragments: &["hidden"],
+            },
+            ParserAdapterCase {
+                file_name: "api.py",
+                source: r#"
+                fixture = """
+                # @mvs-feature("fake_feature")
+                # @mvs-protocol("fake_protocol")
+                """
+
+                # @mvs-feature("python_bridge")
+                # @mvs-protocol("python-api-v1")
+                def login(username: str) -> str:
+                    return username
+
+                def _hidden() -> str:
+                    return "hidden"
+            "#,
+                expected_feature: "python_bridge",
+                expected_protocol: "python-api-v1",
+                expected_public_api: &["python:def login(username: str) -> str"],
+                rejected_public_api_fragments: &["_hidden"],
+            },
+            ParserAdapterCase {
+                file_name: "AuthApi.java",
+                source: r#"
+                package demo;
+
+                class Fixture {
+                    String example = """
+                    // @mvs-feature("fake_feature")
+                    // @mvs-protocol("fake_protocol")
+                    """;
+                }
+
+                // @mvs-feature("java_bridge")
+                // @mvs-protocol("java-api-v1")
+                public class AuthApi {
+                    public String login(String username) {
+                        return username;
+                    }
+
+                    private String hidden(String username) {
+                        return username;
+                    }
+                }
+            "#,
+                expected_feature: "java_bridge",
+                expected_protocol: "java-api-v1",
+                expected_public_api: &["java:type public class AuthApi"],
+                rejected_public_api_fragments: &["hidden"],
+            },
+            ParserAdapterCase {
+                file_name: "api.kt",
+                source: r#"
+                val fixture = """
+                // @mvs-feature("fake_feature")
+                // @mvs-protocol("fake_protocol")
+                """
+
+                // @mvs-feature("kotlin_bridge")
+                // @mvs-protocol("kotlin-api-v1")
+                class AuthApi {
+                    fun login(username: String): String {
+                        return username
+                    }
+
+                    private fun hidden(): String {
+                        return "hidden"
+                    }
+                }
+            "#,
+                expected_feature: "kotlin_bridge",
+                expected_protocol: "kotlin-api-v1",
+                expected_public_api: &[
+                    "kotlin:class AuthApi",
+                    "kotlin:fun login(username: String): String",
+                ],
+                rejected_public_api_fragments: &["hidden"],
+            },
+            ParserAdapterCase {
+                file_name: "Api.cs",
+                source: r#"
+                var fixture = @"
+                // @mvs-feature(""fake_feature"")
+                // @mvs-protocol(""fake_protocol"")
+                ";
+
+                // @mvs-feature("csharp_bridge")
+                // @mvs-protocol("csharp-api-v1")
+                public class AuthApi {
+                    public static string Login(string username) {
+                        return username;
+                    }
+
+                    private static string Hidden(string username) {
+                        return username;
+                    }
+                }
+            "#,
+                expected_feature: "csharp_bridge",
+                expected_protocol: "csharp-api-v1",
+                expected_public_api: &["csharp:type public class AuthApi"],
+                rejected_public_api_fragments: &["Hidden"],
+            },
+            ParserAdapterCase {
+                file_name: "Api.php",
+                source: r#"
+                <?php
+
+                $fixture = "
+                # @mvs-feature(\"fake_feature\")
+                # @mvs-protocol(\"fake_protocol\")
+                ";
+
+                # @mvs-feature("php_bridge")
+                # @mvs-protocol("php-api-v1")
+                function login(string $username): string {
+                    return $username;
+                }
+
+                final class InternalApi {
+                    private function hidden(string $username): string {
+                        return $username;
+                    }
+                }
+            "#,
+                expected_feature: "php_bridge",
+                expected_protocol: "php-api-v1",
+                expected_public_api: &["php:function login(string $username): string"],
+                rejected_public_api_fragments: &["hidden"],
+            },
+            ParserAdapterCase {
+                file_name: "api.rb",
+                source: r##"
+                fixture = <<~DOC
+                # @mvs-feature("fake_feature")
+                # @mvs-protocol("fake_protocol")
+                DOC
+
+                # @mvs-feature("ruby_bridge")
+                # @mvs-protocol("ruby-api-v1")
+                class AuthApi
+                  def login(username)
+                    username
+                  end
+
+                  private
+
+                  def hidden(secret)
+                    secret
+                  end
+                end
+            "##,
+                expected_feature: "ruby_bridge",
+                expected_protocol: "ruby-api-v1",
+                expected_public_api: &["ruby:class AuthApi", "ruby:def login(username)"],
+                rejected_public_api_fragments: &["hidden"],
+            },
+            ParserAdapterCase {
+                file_name: "Api.swift",
+                source: r#"
+                let fixture = """
+                // @mvs-feature("fake_feature")
+                // @mvs-protocol("fake_protocol")
+                """
+
+                // @mvs-feature("swift_bridge")
+                // @mvs-protocol("swift-api-v1")
+                public struct Session {
+                    public let token: String
+                }
+            "#,
+                expected_feature: "swift_bridge",
+                expected_protocol: "swift-api-v1",
+                expected_public_api: &[
+                    "swift:public struct Session",
+                    "swift:public let token: String",
+                ],
+                rejected_public_api_fragments: &["fake_feature"],
+            },
+            ParserAdapterCase {
+                file_name: "Api.luau",
+                source: r#"
+                local fixture = [[
+                -- @mvs-feature("fake_feature")
+                -- @mvs-protocol("fake_protocol")
+                ]]
+
+                -- @mvs-feature("luau_bridge")
+                -- @mvs-protocol("luau-api-v1")
+                function connect(target: string): boolean
+                    return target ~= ""
+                end
+
+                local function hidden(): boolean
+                    return false
+                end
+            "#,
+                expected_feature: "luau_bridge",
+                expected_protocol: "luau-api-v1",
+                expected_public_api: &["luau:function connect(target: string): boolean"],
+                rejected_public_api_fragments: &["hidden"],
+            },
+        ];
+
+        for case in cases {
+            assert_parser_adapter_case(case);
+        }
     }
 
     #[test]

@@ -6,6 +6,7 @@ mod kotlin;
 mod luau;
 mod php;
 mod python;
+mod ruby;
 mod swift;
 mod ts_js;
 
@@ -29,6 +30,7 @@ pub(super) fn extract_tree_sitter_public_api(
         SourceLanguage::Kotlin => kotlin::extract(root, source),
         SourceLanguage::Csharp => csharp::extract(root, source),
         SourceLanguage::Php => php::extract(root, source),
+        SourceLanguage::Ruby => ruby::extract(root, source),
         SourceLanguage::Swift => swift::extract(root, source),
         SourceLanguage::Luau => luau::extract(root, source),
         SourceLanguage::Rust => Vec::new(),

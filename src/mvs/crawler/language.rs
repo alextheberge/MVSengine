@@ -16,6 +16,7 @@ pub(super) enum SourceLanguage {
     Kotlin,
     Csharp,
     Php,
+    Ruby,
     Swift,
     Luau,
 }
@@ -25,6 +26,7 @@ pub(super) enum LexStrategy {
     CStyle,
     Python,
     Php,
+    Ruby,
     Luau,
 }
 
@@ -42,6 +44,7 @@ impl SourceLanguage {
             Some("kt") => Some(Self::Kotlin),
             Some("cs") => Some(Self::Csharp),
             Some("php") => Some(Self::Php),
+            Some("rb") => Some(Self::Ruby),
             Some("swift") => Some(Self::Swift),
             Some("luau") => Some(Self::Luau),
             _ => None,
@@ -61,6 +64,7 @@ impl SourceLanguage {
             Self::Kotlin => "kt",
             Self::Csharp => "cs",
             Self::Php => "php",
+            Self::Ruby => "rb",
             Self::Swift => "swift",
             Self::Luau => "luau",
         }
@@ -70,6 +74,7 @@ impl SourceLanguage {
         match self {
             Self::Python => LexStrategy::Python,
             Self::Php => LexStrategy::Php,
+            Self::Ruby => LexStrategy::Ruby,
             Self::Luau => LexStrategy::Luau,
             _ => LexStrategy::CStyle,
         }
@@ -87,6 +92,7 @@ impl SourceLanguage {
             Self::Kotlin => Some(tree_sitter_kotlin_ng::LANGUAGE.into()),
             Self::Csharp => Some(tree_sitter_c_sharp::LANGUAGE.into()),
             Self::Php => Some(tree_sitter_php::LANGUAGE_PHP.into()),
+            Self::Ruby => Some(tree_sitter_ruby::LANGUAGE.into()),
             Self::Swift => Some(tree_sitter_swift::LANGUAGE.into()),
             Self::Luau => Some(tree_sitter_luau::LANGUAGE.into()),
             Self::TypeScript => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),

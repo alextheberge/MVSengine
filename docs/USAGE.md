@@ -140,6 +140,7 @@ The parser-backed path is organized as per-language adapters, so expanding or ti
 - Java and C#: public type and method declarations are parser-backed, and stored signatures drop leading annotations or attributes
 - Kotlin: public or default-visible `class`, `interface`, `object`, and `fun` declarations are parser-backed, while `private`, `protected`, and `internal` declarations are skipped
 - PHP: top-level functions and constants, classes, interfaces, traits, enums, public properties, public or interface constants, and public or interface methods are parser-backed; `#` comments count for decorators, while attributes are ignored in stored signatures
+- Ruby: `class`, `module`, public `def`, singleton methods, and `class << self` method bodies are parser-backed; `#` comments count for decorators, while heredocs and non-public methods are ignored
 - Swift: `public` and `open` types, functions, properties, and inherited protocol requirements are parser-backed, and multiline Swift string literals are masked during decorator scans
 - Luau: global `function` declarations, `export type` definitions, and returned module-table exports are parser-backed, and `--` plus long-bracket comments are recognized during decorator scans
 

@@ -14,8 +14,8 @@ Work instructions:
    - If `mvs.json` already exists, preserve its intent and regenerate it instead of replacing it by hand.
 
 2. Add MVS comment decorators to real source files.
-   - `mvs-manager` scans these file types:
-     `.rs`, `.ts`, `.tsx`, `.js`, `.jsx`, `.go`, `.py`, `.java`, `.kt`, `.cs`, `.php`, `.swift`, `.luau`
+  - `mvs-manager` scans these file types:
+    `.rs`, `.ts`, `.tsx`, `.js`, `.jsx`, `.go`, `.py`, `.java`, `.kt`, `.cs`, `.php`, `.rb`, `.swift`, `.luau`
    - It ignores these directories:
      `.git`, `node_modules`, `dist`, `build`, `target`, `vendor`, `.next`, `tests`, `examples`, `benches`
    - Add comment markers immediately above the relevant public/exported declaration or integration boundary.
@@ -46,9 +46,10 @@ Work instructions:
    - Python scanning is parser-backed and tracks non-underscore `def` declarations, including decorated class methods, without promoting nested local helpers.
    - Java and C# scanning are parser-backed and track public types and methods while ignoring leading annotations or attributes in the stored signature.
    - Kotlin scanning is parser-backed and tracks public or default-visible `class`, `interface`, `object`, and `fun` declarations while skipping `private`, `protected`, and `internal`.
-   - PHP scanning is parser-backed and tracks top-level functions and constants, classes, interfaces, traits, enums, public properties, public or interface constants, and public or interface methods while treating `#` comments as decorators and ignoring attributes in stored signatures.
-   - Swift scanning is parser-backed and tracks `public` and `open` types, functions, properties, and inherited protocol requirements.
-   - Luau scanning is parser-backed and tracks global `function` declarations, `export type` definitions, and returned module-table exports.
+  - PHP scanning is parser-backed and tracks top-level functions and constants, classes, interfaces, traits, enums, public properties, public or interface constants, and public or interface methods while treating `#` comments as decorators and ignoring attributes in stored signatures.
+  - Ruby scanning is parser-backed and tracks `class`, `module`, public `def`, singleton methods, and `class << self` method bodies while ignoring heredoc fixtures and non-public methods.
+  - Swift scanning is parser-backed and tracks `public` and `open` types, functions, properties, and inherited protocol requirements.
+  - Luau scanning is parser-backed and tracks global `function` declarations, `export type` definitions, and returned module-table exports.
    - Ensure externally consumed surfaces are actually public/exported in the language’s normal way.
    - Examples:
      - TypeScript/JavaScript: `export function`, `export class`, `export interface`, `export type`, `export enum`, `export const`
@@ -58,6 +59,7 @@ Work instructions:
      - Java/C#: public types and public methods are scanned
      - Kotlin: public or default-visible `class`, `interface`, `object`, and `fun` declarations are scanned
      - PHP: top-level `function` and `const`, `class`, `interface`, `trait`, `enum`, public properties, and public or interface constants and methods are scanned
+     - Ruby: `class`, `module`, public `def`, singleton methods, and `class << self` method bodies are scanned
      - Swift: `public` or `open` `struct`, `class`, `enum`, `protocol`, `extension`, `func`, `var`, and inherited protocol requirement declarations are scanned
      - Luau: global `function` declarations, `export type` definitions, and returned module-table exports are scanned
 
