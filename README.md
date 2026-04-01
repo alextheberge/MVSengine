@@ -172,9 +172,9 @@ The crawler now tokenizes source before matching decorators, uses AST extraction
 - Python public API extraction tracks non-underscore `def` declarations, including decorated class methods, without promoting nested local helpers into the API inventory
 - Java and C# public API extraction tracks public types and public methods while stripping leading annotations or attributes out of the stored signature
 - Kotlin public API extraction tracks public or default-visible `class`, `interface`, `object`, and `fun` declarations, preserving modifiers such as `data` and `suspend` while skipping `private`, `protected`, and `internal`
-- PHP public API extraction tracks top-level functions, classes, interfaces, traits, enums, and public or interface methods while treating `#` comments as decorators and ignoring attribute syntax in stored signatures
-- Swift public API extraction tracks `public` and `open` types and functions, and the scanner masks multiline Swift string literals so embedded examples do not pollute evidence
-- Luau public API extraction starts with global `function` declarations and `export type` definitions, and the scanner understands `--` comments plus long-bracket strings and comments
+- PHP public API extraction tracks top-level functions and constants, classes, interfaces, traits, enums, public properties, public or interface constants, and public or interface methods while treating `#` comments as decorators and ignoring attribute syntax in stored signatures
+- Swift public API extraction tracks `public` and `open` types, functions, properties, and inherited protocol requirements, and the scanner masks multiline Swift string literals so embedded examples do not pollute evidence
+- Luau public API extraction tracks global `function` declarations, `export type` definitions, and returned module-table exports such as `Api.connect = function(...) end`, `function Api:refresh(...)`, and named fields from returned tables
 
 This matters for repositories that keep code examples, fixture payloads, or prompt templates alongside real source. Those examples no longer pollute `mvs.json.evidence`.
 

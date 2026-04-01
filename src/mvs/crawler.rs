@@ -615,6 +615,20 @@ fn collect_tree_sitter_php_public_api(
                     signatures.push(format!("php:{signature}"));
                 }
             }
+            "property_declaration" => {
+                signatures.extend(extract_tree_sitter_php_property_signatures(
+                    child,
+                    source,
+                    inside_interface,
+                ));
+            }
+            "const_declaration" => {
+                signatures.extend(extract_tree_sitter_php_const_signatures(
+                    child,
+                    source,
+                    inside_interface,
+                ));
+            }
             "program" | "compound_statement" | "declaration_list" => {
                 collect_tree_sitter_php_public_api(child, source, signatures, inside_interface);
             }
@@ -630,7 +644,7 @@ fn collect_tree_sitter_php_public_api(
 
 fn extract_tree_sitter_swift_public_api(root: Node<'_>, source: &str) -> Vec<String> {
     let mut signatures = Vec::new();
-    collect_tree_sitter_swift_public_api(root, source, &mut signatures);
+    collect_tree_sitter_swift_public_api(root, source, &mut signatures, None);
     signatures
 }
 
@@ -638,13 +652,13 @@ fn collect_tree_sitter_swift_public_api(
     node: Node<'_>,
     source: &str,
     signatures: &mut Vec<String>,
+    exported_protocol_visibility: Option<&str>,
 ) {
     for child in named_children(node) {
         match child.kind() {
             "class_declaration"
             | "struct_declaration"
             | "enum_declaration"
-            | "protocol_declaration"
             | "extension_declaration" => {
                 if let Some(signature) = extract_tree_sitter_prefix_signature(child, source, "body")
                     .and_then(|value| normalize_swift_signature(&value))
@@ -653,7 +667,20 @@ fn collect_tree_sitter_swift_public_api(
                 }
 
                 if let Some(body) = child.child_by_field_name("body") {
-                    collect_tree_sitter_swift_public_api(body, source, signatures);
+                    collect_tree_sitter_swift_public_api(body, source, signatures, None);
+                }
+            }
+            "protocol_declaration" => {
+                let normalized = extract_tree_sitter_prefix_signature(child, source, "body")
+                    .and_then(|value| normalize_swift_signature(&value));
+                let visibility = normalized.as_deref().and_then(swift_visibility_keyword);
+
+                if let Some(signature) = normalized.as_deref() {
+                    signatures.push(format!("swift:{signature}"));
+                }
+
+                if let Some(body) = child.child_by_field_name("body") {
+                    collect_tree_sitter_swift_public_api(body, source, signatures, visibility);
                 }
             }
             "function_declaration" => {
@@ -663,8 +690,50 @@ fn collect_tree_sitter_swift_public_api(
                     signatures.push(format!("swift:{signature}"));
                 }
             }
-            "source_file" | "class_body" | "protocol_body" => {
-                collect_tree_sitter_swift_public_api(child, source, signatures);
+            "property_declaration" => {
+                if let Some(signature) = extract_tree_sitter_prefix_before_fields(
+                    child,
+                    source,
+                    &["computed_value", "value"],
+                )
+                .and_then(|value| normalize_swift_signature(&value))
+                {
+                    signatures.push(format!("swift:{signature}"));
+                }
+            }
+            "protocol_function_declaration" => {
+                if let Some(signature) =
+                    extract_tree_sitter_prefix_before_named_child(child, source, &["statements"])
+                        .and_then(|value| {
+                            normalize_swift_protocol_member_signature(
+                                &value,
+                                exported_protocol_visibility,
+                            )
+                        })
+                {
+                    signatures.push(format!("swift:{signature}"));
+                }
+            }
+            "protocol_property_declaration" => {
+                if let Some(signature) = node_text(child, source)
+                    .map(normalize_tree_sitter_signature)
+                    .and_then(|value| {
+                        normalize_swift_protocol_member_signature(
+                            &value,
+                            exported_protocol_visibility,
+                        )
+                    })
+                {
+                    signatures.push(format!("swift:{signature}"));
+                }
+            }
+            "source_file" | "class_body" | "protocol_body" | "enum_class_body" => {
+                collect_tree_sitter_swift_public_api(
+                    child,
+                    source,
+                    signatures,
+                    exported_protocol_visibility,
+                );
             }
             _ => {}
         }
@@ -673,17 +742,29 @@ fn collect_tree_sitter_swift_public_api(
 
 fn extract_tree_sitter_luau_public_api(root: Node<'_>, source: &str) -> Vec<String> {
     let mut signatures = Vec::new();
-    collect_tree_sitter_luau_public_api(root, source, &mut signatures);
+    collect_tree_sitter_luau_global_public_api(root, source, &mut signatures);
+    collect_tree_sitter_luau_module_exports(root, source, &mut signatures);
     signatures
 }
 
-fn collect_tree_sitter_luau_public_api(node: Node<'_>, source: &str, signatures: &mut Vec<String>) {
+fn collect_tree_sitter_luau_global_public_api(
+    node: Node<'_>,
+    source: &str,
+    signatures: &mut Vec<String>,
+) {
     for child in named_children(node) {
         match child.kind() {
             "chunk" | "statement" => {
-                collect_tree_sitter_luau_public_api(child, source, signatures);
+                collect_tree_sitter_luau_global_public_api(child, source, signatures);
             }
             "function_declaration" => {
+                let Some(name) = child.child_by_field_name("name") else {
+                    continue;
+                };
+                if name.kind() != "identifier" {
+                    continue;
+                }
+
                 if let Some(signature) = extract_tree_sitter_prefix_signature(child, source, "body")
                     .filter(|value| !value.starts_with("local function "))
                 {
@@ -700,6 +781,256 @@ fn collect_tree_sitter_luau_public_api(node: Node<'_>, source: &str, signatures:
             }
             _ => {}
         }
+    }
+}
+
+fn collect_tree_sitter_luau_module_exports(
+    root: Node<'_>,
+    source: &str,
+    signatures: &mut Vec<String>,
+) {
+    let module_names = extract_luau_returned_module_names(root, source);
+    if module_names.is_empty() {
+        return;
+    }
+
+    for item in luau_top_level_items(root) {
+        match item.kind() {
+            "variable_declaration" => {
+                let Some(assignment) = named_children(item)
+                    .into_iter()
+                    .find(|child| child.kind() == "assignment_statement")
+                else {
+                    continue;
+                };
+                collect_luau_module_assignment_exports(
+                    assignment,
+                    source,
+                    &module_names,
+                    signatures,
+                );
+            }
+            "assignment_statement" => {
+                collect_luau_module_assignment_exports(item, source, &module_names, signatures);
+            }
+            "function_declaration" => {
+                let Some(name) = item.child_by_field_name("name") else {
+                    continue;
+                };
+                if extract_luau_module_member_name(name, source, &module_names).is_none() {
+                    continue;
+                }
+
+                if let Some(signature) = extract_tree_sitter_prefix_signature(item, source, "body")
+                {
+                    signatures.push(format!("luau:{signature}"));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_luau_module_assignment_exports(
+    assignment: Node<'_>,
+    source: &str,
+    module_names: &BTreeSet<String>,
+    signatures: &mut Vec<String>,
+) {
+    for (target, value) in extract_luau_assignment_pairs(assignment) {
+        if let Some(module_name) = extract_luau_identifier_name(target, source) {
+            if module_names.contains(module_name) && value.kind() == "table_constructor" {
+                collect_luau_table_constructor_exports(module_name, value, source, signatures);
+            }
+            continue;
+        }
+
+        let Some(member_name) = extract_luau_module_member_name(target, source, module_names)
+        else {
+            continue;
+        };
+
+        if value.kind() == "function_definition" {
+            if let Some(signature) =
+                extract_luau_assigned_function_signature(&member_name, value, source)
+            {
+                signatures.push(format!("luau:{signature}"));
+            }
+            continue;
+        }
+
+        signatures.push(format!("luau:field {member_name}"));
+    }
+}
+
+fn collect_luau_table_constructor_exports(
+    module_name: &str,
+    table_constructor: Node<'_>,
+    source: &str,
+    signatures: &mut Vec<String>,
+) {
+    for field in named_children(table_constructor) {
+        if field.kind() != "field" {
+            continue;
+        }
+
+        let Some(name) = field.child_by_field_name("name") else {
+            continue;
+        };
+        if name.kind() != "identifier" {
+            continue;
+        }
+        let Some(field_name) = node_text(name, source).map(str::trim) else {
+            continue;
+        };
+        if field_name.is_empty() {
+            continue;
+        }
+
+        let target = format!("{module_name}.{field_name}");
+        let Some(value) = field.child_by_field_name("value") else {
+            continue;
+        };
+
+        if value.kind() == "function_definition" {
+            if let Some(signature) =
+                extract_luau_assigned_function_signature(&target, value, source)
+            {
+                signatures.push(format!("luau:{signature}"));
+            }
+            continue;
+        }
+
+        signatures.push(format!("luau:field {target}"));
+    }
+}
+
+fn extract_luau_returned_module_names(root: Node<'_>, source: &str) -> BTreeSet<String> {
+    let mut module_names = BTreeSet::new();
+
+    for item in luau_top_level_items(root) {
+        if item.kind() != "return_statement" {
+            continue;
+        }
+
+        let Some(expression_list) = named_children(item)
+            .into_iter()
+            .find(|child| child.kind() == "expression_list")
+        else {
+            continue;
+        };
+
+        for expression in named_children(expression_list) {
+            if let Some(name) = extract_luau_identifier_name(expression, source) {
+                module_names.insert(name.to_string());
+            }
+        }
+    }
+
+    module_names
+}
+
+fn luau_top_level_items(node: Node<'_>) -> Vec<Node<'_>> {
+    let mut items = Vec::new();
+
+    for child in named_children(node) {
+        match child.kind() {
+            "chunk" | "statement" => items.extend(luau_top_level_items(child)),
+            _ => items.push(child),
+        }
+    }
+
+    items
+}
+
+fn extract_luau_assignment_pairs(assignment: Node<'_>) -> Vec<(Node<'_>, Node<'_>)> {
+    let Some(variable_list) = named_children(assignment)
+        .into_iter()
+        .find(|child| child.kind() == "variable_list")
+    else {
+        return Vec::new();
+    };
+    let Some(expression_list) = named_children(assignment)
+        .into_iter()
+        .find(|child| child.kind() == "expression_list")
+    else {
+        return Vec::new();
+    };
+
+    named_children(variable_list)
+        .into_iter()
+        .zip(named_children(expression_list))
+        .collect()
+}
+
+fn extract_luau_identifier_name<'a>(node: Node<'_>, source: &'a str) -> Option<&'a str> {
+    let node = unwrap_luau_variable(node);
+    if node.kind() != "identifier" {
+        return None;
+    }
+
+    node_text(node, source)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+}
+
+fn extract_luau_module_member_name(
+    node: Node<'_>,
+    source: &str,
+    module_names: &BTreeSet<String>,
+) -> Option<String> {
+    let node = unwrap_luau_variable(node);
+    let separator = match node.kind() {
+        "dot_index_expression" => ".",
+        "method_index_expression" => ":",
+        _ => return None,
+    };
+
+    let table = node.child_by_field_name("table")?;
+    let table_name = extract_luau_identifier_name(table, source)?;
+    if !module_names.contains(table_name) {
+        return None;
+    }
+
+    let field_name = match separator {
+        "." => node.child_by_field_name("field")?,
+        ":" => node.child_by_field_name("method")?,
+        _ => unreachable!(),
+    };
+    let field_name = node_text(field_name, source).map(str::trim)?;
+    if field_name.is_empty() {
+        return None;
+    }
+
+    Some(format!("{table_name}{separator}{field_name}"))
+}
+
+fn unwrap_luau_variable(node: Node<'_>) -> Node<'_> {
+    let mut current = node;
+    loop {
+        if current.kind() != "variable" {
+            return current;
+        }
+
+        let Some(child) = named_children(current).into_iter().next() else {
+            return current;
+        };
+        current = child;
+    }
+}
+
+fn extract_luau_assigned_function_signature(
+    target: &str,
+    function_definition: Node<'_>,
+    source: &str,
+) -> Option<String> {
+    let suffix = extract_tree_sitter_prefix_signature(function_definition, source, "body")?;
+    let suffix = suffix.strip_prefix("function").map(str::trim_start)?;
+    let signature = normalize_signature(&format!("function {target}{suffix}"));
+    if signature.is_empty() {
+        None
+    } else {
+        Some(signature)
     }
 }
 
@@ -805,6 +1136,25 @@ fn extract_tree_sitter_prefix_before_named_child(
         .find(|child| stop_kinds.contains(&child.kind()))
         .map(|child| child.start_byte())
         .unwrap_or_else(|| node.end_byte());
+    node_text_range(source, node.start_byte(), end)
+        .map(normalize_tree_sitter_signature)
+        .filter(|signature| !signature.is_empty())
+}
+
+fn extract_tree_sitter_prefix_before_fields(
+    node: Node<'_>,
+    source: &str,
+    stop_fields: &[&str],
+) -> Option<String> {
+    let end = stop_fields
+        .iter()
+        .filter_map(|field_name| {
+            node.child_by_field_name(field_name)
+                .map(|field| field.start_byte())
+        })
+        .min()
+        .unwrap_or_else(|| node.end_byte());
+
     node_text_range(source, node.start_byte(), end)
         .map(normalize_tree_sitter_signature)
         .filter(|signature| !signature.is_empty())
@@ -974,12 +1324,174 @@ fn normalize_php_method_signature(signature: &str, inside_interface: bool) -> Op
     None
 }
 
+fn extract_tree_sitter_php_property_signatures(
+    node: Node<'_>,
+    source: &str,
+    inside_interface: bool,
+) -> Vec<String> {
+    let visibility = php_visibility_modifier(node, source).or_else(|| {
+        if php_has_modifier(node, "var_modifier") || inside_interface {
+            Some("public".to_string())
+        } else {
+            None
+        }
+    });
+    if visibility.as_deref() != Some("public") {
+        return Vec::new();
+    }
+
+    let mut prefix_parts = vec![visibility.expect("public visibility already checked")];
+    if php_has_modifier(node, "static_modifier") {
+        prefix_parts.push("static".to_string());
+    }
+    if php_has_modifier(node, "readonly_modifier") {
+        prefix_parts.push("readonly".to_string());
+    }
+    if let Some(type_annotation) = node
+        .child_by_field_name("type")
+        .and_then(|child| node_text(child, source))
+        .map(normalize_tree_sitter_signature)
+        .filter(|value| !value.is_empty())
+    {
+        prefix_parts.push(type_annotation);
+    }
+
+    let prefix = prefix_parts.join(" ");
+    let mut signatures = Vec::new();
+    for child in named_children(node) {
+        if child.kind() != "property_element" {
+            continue;
+        }
+
+        let Some(name) = child
+            .child_by_field_name("name")
+            .and_then(|name| node_text(name, source))
+            .map(str::trim)
+        else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+
+        let signature = normalize_signature(&format!("{prefix} {name}"));
+        if !signature.is_empty() {
+            signatures.push(format!("php:{signature}"));
+        }
+    }
+
+    signatures
+}
+
+fn extract_tree_sitter_php_const_signatures(
+    node: Node<'_>,
+    source: &str,
+    inside_interface: bool,
+) -> Vec<String> {
+    let visibility = php_visibility_modifier(node, source).or_else(|| {
+        if inside_interface {
+            Some("public".to_string())
+        } else {
+            None
+        }
+    });
+    if matches!(visibility.as_deref(), Some("private" | "protected")) {
+        return Vec::new();
+    }
+
+    let mut prefix_parts = Vec::new();
+    if let Some(visibility) = visibility {
+        prefix_parts.push(visibility);
+    }
+    if php_has_modifier(node, "final_modifier") {
+        prefix_parts.push("final".to_string());
+    }
+    prefix_parts.push("const".to_string());
+    if let Some(type_annotation) = node
+        .child_by_field_name("type")
+        .and_then(|child| node_text(child, source))
+        .map(normalize_tree_sitter_signature)
+        .filter(|value| !value.is_empty())
+    {
+        prefix_parts.push(type_annotation);
+    }
+
+    let prefix = prefix_parts.join(" ");
+    let mut signatures = Vec::new();
+    for child in named_children(node) {
+        if child.kind() != "const_element" {
+            continue;
+        }
+
+        let Some(name) = named_children(child)
+            .into_iter()
+            .find(|named_child| named_child.kind() == "name")
+            .and_then(|name| node_text(name, source))
+            .map(str::trim)
+        else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+
+        let signature = normalize_signature(&format!("{prefix} {name}"));
+        if !signature.is_empty() {
+            signatures.push(format!("php:{signature}"));
+        }
+    }
+
+    signatures
+}
+
+fn php_visibility_modifier(node: Node<'_>, source: &str) -> Option<String> {
+    named_children(node)
+        .into_iter()
+        .find(|child| child.kind() == "visibility_modifier")
+        .and_then(|child| node_text(child, source))
+        .map(normalize_tree_sitter_signature)
+        .filter(|value| !value.is_empty())
+}
+
+fn php_has_modifier(node: Node<'_>, modifier_kind: &str) -> bool {
+    named_children(node)
+        .into_iter()
+        .any(|child| child.kind() == modifier_kind)
+}
+
 fn normalize_swift_signature(signature: &str) -> Option<String> {
     if !contains_any_signature_keyword(signature, &["public", "open"]) {
         return None;
     }
 
     trim_signature_to_keywords(signature, &["public", "open"])
+}
+
+fn normalize_swift_protocol_member_signature(
+    signature: &str,
+    inherited_visibility: Option<&str>,
+) -> Option<String> {
+    if let Some(signature) = normalize_swift_signature(signature) {
+        return Some(signature);
+    }
+
+    let inherited_visibility = inherited_visibility?;
+    let normalized = normalize_tree_sitter_signature(signature);
+    if normalized.is_empty() {
+        return None;
+    }
+
+    Some(format!("{inherited_visibility} {normalized}"))
+}
+
+fn swift_visibility_keyword(signature: &str) -> Option<&'static str> {
+    if contains_signature_keyword(signature, "open") {
+        Some("open")
+    } else if contains_signature_keyword(signature, "public") {
+        Some("public")
+    } else {
+        None
+    }
 }
 
 fn trim_signature_to_keywords(signature: &str, keywords: &[&str]) -> Option<String> {
@@ -2544,7 +3056,7 @@ mod tests {
     }
 
     #[test]
-    fn tree_sitter_captures_swift_public_types_and_methods() {
+    fn tree_sitter_captures_swift_public_types_properties_and_protocol_requirements() {
         let workspace = TempWorkspace::new();
         let src = workspace.path().join("src");
         fs::create_dir_all(&src).expect("failed to create src");
@@ -2560,9 +3072,22 @@ mod tests {
             // @mvs-protocol("swift-api-v1")
             public struct Session {}
 
+            public protocol SessionContract {
+                var token: String { get }
+                func renew(target: String) -> Bool
+            }
+
             public class AuthApi {
+                public var status: String {
+                    "ready"
+                }
+
                 public func login(username: String) -> String {
                     username
+                }
+
+                private var hiddenStatus: String {
+                    "hidden"
                 }
 
                 private func hidden() -> String {
@@ -2586,7 +3111,23 @@ mod tests {
         assert!(report
             .public_api
             .iter()
+            .any(|entry| entry.signature == "swift:public protocol SessionContract"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| { entry.signature == "swift:public var token: String { get }" }));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| { entry.signature == "swift:public func renew(target: String) -> Bool" }));
+        assert!(report
+            .public_api
+            .iter()
             .any(|entry| entry.signature == "swift:public class AuthApi"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "swift:public var status: String"));
         assert!(report.public_api.iter().any(|entry| {
             entry.signature == "swift:public func login(username: String) -> String"
         }));
@@ -2597,7 +3138,7 @@ mod tests {
     }
 
     #[test]
-    fn tree_sitter_captures_php_public_api_and_hash_comments() {
+    fn tree_sitter_captures_php_public_api_constants_properties_and_hash_comments() {
         let workspace = TempWorkspace::new();
         let src = workspace.path().join("src");
         fs::create_dir_all(&src).expect("failed to create src");
@@ -2614,8 +3155,15 @@ mod tests {
                 return $username;
             }
 
+            const VERSION = "1";
+
             #[Deprecated]
             final class AuthApi {
+                public const STATUS_READY = "ready";
+                public readonly string $token;
+                public static string $sharedName;
+                private string $secret;
+
                 #[Deprecated]
                 public static function run(string $name): string {
                     return $name;
@@ -2627,6 +3175,7 @@ mod tests {
             }
 
             interface Contract {
+                const SYNC = "sync";
                 public function sync(string $token): void;
             }
         "#,
@@ -2645,7 +3194,23 @@ mod tests {
         assert!(report
             .public_api
             .iter()
+            .any(|entry| entry.signature == "php:const VERSION"));
+        assert!(report
+            .public_api
+            .iter()
             .any(|entry| entry.signature == "php:final class AuthApi"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "php:public const STATUS_READY"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "php:public readonly string $token"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "php:public static string $sharedName"));
         assert!(report.public_api.iter().any(|entry| {
             entry.signature == "php:public static function run(string $name): string"
         }));
@@ -2653,6 +3218,10 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature == "php:interface Contract"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "php:public const SYNC"));
         assert!(report
             .public_api
             .iter()
@@ -2665,10 +3234,14 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("hidden")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("$secret")));
     }
 
     #[test]
-    fn tree_sitter_captures_luau_global_functions_and_export_types() {
+    fn tree_sitter_captures_luau_global_functions_module_exports_and_export_types() {
         let workspace = TempWorkspace::new();
         let src = workspace.path().join("src");
         fs::create_dir_all(&src).expect("failed to create src");
@@ -2690,9 +3263,32 @@ mod tests {
                 return target ~= ""
             end
 
+            local Api = {
+                ping = function(target: string): boolean
+                    return target ~= ""
+                end,
+                version = "v1",
+            }
+
+            Api.connect = function(target: string): boolean
+                return target ~= ""
+            end
+
+            function Api:refresh(token: string): boolean
+                return token ~= ""
+            end
+
+            local Internal = {}
+
+            function Internal.hidden(): boolean
+                return false
+            end
+
             local function hidden(): boolean
                 return false
             end
+
+            return Api
         "#,
         )
         .expect("failed to write luau fixture");
@@ -2710,11 +3306,31 @@ mod tests {
         assert!(report
             .public_api
             .iter()
+            .any(|entry| entry.signature == "luau:function Api.ping(target: string): boolean"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "luau:field Api.version"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "luau:function Api.connect(target: string): boolean"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "luau:function Api:refresh(token: string): boolean"));
+        assert!(report
+            .public_api
+            .iter()
             .any(|entry| entry.signature == "luau:function connect(target: string): boolean"));
         assert!(!report
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("hidden")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("Internal.hidden")));
     }
 
     #[test]
