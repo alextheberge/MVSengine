@@ -36,7 +36,10 @@ fn collect_definition(
             if !inside_callable && is_public_python_name(node, source) {
                 if let Some(signature) = extract_tree_sitter_prefix_signature(node, source, "body")
                 {
-                    signatures.push(format!("python:{signature}"));
+                    signatures.push(format!(
+                        "python:{}",
+                        qualify_python_function_signature(&signature, class_namespace)
+                    ));
                 }
             }
         }
@@ -188,6 +191,18 @@ fn qualify_python_member_name(namespace: &[String], name: &str) -> String {
     } else {
         format!("{}.{}", namespace.join("."), name)
     }
+}
+
+fn qualify_python_function_signature(signature: &str, class_namespace: &[String]) -> String {
+    if class_namespace.is_empty() {
+        return signature.to_string();
+    }
+
+    let Some(rest) = signature.strip_prefix("def ") else {
+        return signature.to_string();
+    };
+
+    format!("def {}.{rest}", class_namespace.join("."))
 }
 
 fn python_type_alias_name(signature: &str) -> Option<&str> {

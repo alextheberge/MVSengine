@@ -134,15 +134,17 @@ Public API extraction is syntax-aware across all supported languages:
 
 The parser-backed path is organized as per-language adapters, so expanding or tightening one language does not require editing the full crawler.
 
+For class-like languages, stored member signatures are owner-qualified so collisions between similarly named methods or properties stay visible in `public_api_inventory`.
+
 - TypeScript/JavaScript: multiline exports, named export clauses, re-exports, and default exports are parser-backed
 - Go: exported `func` declarations, exported methods, exported named types, exported struct fields, exported embedded struct fields, exported interface methods, embedded interface type elements, exported constants, and exported package `var` declarations are parser-backed
-- Python: public `class` declarations, non-underscore `def` declarations, public `type` aliases, and module-level or class-level constants such as `API_VERSION`, `__all__`, or `Worker.STATUS` are parser-backed without promoting nested local helpers or private class bodies
-- Java and C#: public type and method declarations are parser-backed, and stored signatures drop leading annotations or attributes
-- Kotlin: public or default-visible `class`, `interface`, `object`, and `fun` declarations are parser-backed, while `private`, `protected`, and `internal` declarations are skipped
-- PHP: top-level functions and constants, classes, interfaces, traits, enums, public properties, public or interface constants, and public or interface methods are parser-backed; `#` comments count for decorators, while attributes are ignored in stored signatures
-- Ruby: `class`, `module`, public `def`, singleton methods, `class << self` method bodies, public `attr_reader`/`attr_writer`/`attr_accessor` macros, and namespace constants are parser-backed; `private_constant` removes hidden constants, `#` comments count for decorators, and heredocs plus non-public methods are ignored
+- Python: public `class` declarations, non-underscore `def` declarations, public `type` aliases, and module-level or class-level constants such as `API_VERSION`, `__all__`, or `Worker.STATUS` are parser-backed without promoting nested local helpers or private class bodies; class methods are stored as `python:def Worker.run_job(...)`
+- Java and C#: public type and method declarations are parser-backed, stored signatures drop leading annotations or attributes, and public methods are owner-qualified as `java:method public String AuthApi.login(...)` or `csharp:method public static string AuthApi.Login(...)`
+- Kotlin: public or default-visible `class`, `interface`, `object`, and `fun` declarations are parser-backed, while `private`, `protected`, and `internal` declarations are skipped; member functions are owner-qualified as `kotlin:fun AuthApi.login(...)`
+- PHP: top-level functions and constants, classes, interfaces, traits, enums, public properties, public or interface constants, and public or interface methods are parser-backed; `#` comments count for decorators, attributes are ignored in stored signatures, and class/interface members are owner-qualified as `AuthApi.run(...)`, `AuthApi.$token`, and `AuthApi::STATUS_READY`
+- Ruby: `class`, `module`, public `def`, singleton methods, `class << self` method bodies, public `attr_reader`/`attr_writer`/`attr_accessor` macros, and namespace constants are parser-backed; `private_constant` removes hidden constants, `#` comments count for decorators, heredocs plus non-public methods are ignored, and member signatures use Ruby owner forms such as `Demo::AuthApi#login(...)`
 - Lua: global `function` declarations and returned module-table exports are parser-backed, and `--` plus long-bracket comments are recognized during decorator scans
-- Swift: `public` and `open` types, functions, properties, and inherited protocol requirements are parser-backed, and multiline Swift string literals are masked during decorator scans
+- Swift: `public` and `open` types, functions, properties, and inherited protocol requirements are parser-backed, multiline Swift string literals are masked during decorator scans, and type/protocol members are owner-qualified as `swift:public func AuthApi.login(...)` and `swift:public var SessionContract.token: ...`
 - Luau: global `function` declarations, `export type` definitions, and returned module-table exports are parser-backed, and `--` plus long-bracket comments are recognized during decorator scans
 
 Rust API signatures are AST-normalized before they are persisted. Typical entries look like:

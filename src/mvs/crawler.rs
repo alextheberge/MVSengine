@@ -2234,7 +2234,7 @@ mod tests {
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "python:def run_job(name: str) -> str"));
+            .any(|entry| entry.signature == "python:def Worker.run_job(name: str) -> str"));
         assert!(report
             .public_api
             .iter()
@@ -2315,7 +2315,8 @@ mod tests {
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "java:method public String login(String username)"));
+            .any(|entry| entry.signature
+                == "java:method public String AuthApi.login(String username)"));
         assert!(!report
             .public_api
             .iter()
@@ -2368,7 +2369,7 @@ mod tests {
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "kotlin:fun login(username: String): String"));
+            .any(|entry| entry.signature == "kotlin:fun AuthApi.login(username: String): String"));
         assert!(report
             .public_api
             .iter()
@@ -2437,7 +2438,7 @@ mod tests {
             .iter()
             .any(|entry| entry.signature == "csharp:type public struct Result"));
         assert!(report.public_api.iter().any(|entry| {
-            entry.signature == "csharp:method public static string Login(string username)"
+            entry.signature == "csharp:method public static string AuthApi.Login(string username)"
         }));
         assert!(!report
             .public_api
@@ -2506,14 +2507,12 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature == "swift:public protocol SessionContract"));
-        assert!(report
-            .public_api
-            .iter()
-            .any(|entry| { entry.signature == "swift:public var token: String { get }" }));
-        assert!(report
-            .public_api
-            .iter()
-            .any(|entry| { entry.signature == "swift:public func renew(target: String) -> Bool" }));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature == "swift:public var SessionContract.token: String { get }"
+        }));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature == "swift:public func SessionContract.renew(target: String) -> Bool"
+        }));
         assert!(report
             .public_api
             .iter()
@@ -2521,9 +2520,9 @@ mod tests {
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "swift:public var status: String"));
+            .any(|entry| entry.signature == "swift:public var AuthApi.status: String"));
         assert!(report.public_api.iter().any(|entry| {
-            entry.signature == "swift:public func login(username: String) -> String"
+            entry.signature == "swift:public func AuthApi.login(username: String) -> String"
         }));
         assert!(!report
             .public_api
@@ -2596,17 +2595,17 @@ mod tests {
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "php:public const STATUS_READY"));
+            .any(|entry| entry.signature == "php:public const AuthApi::STATUS_READY"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "php:public readonly string $token"));
+            .any(|entry| entry.signature == "php:public readonly string AuthApi.$token"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "php:public static string $sharedName"));
+            .any(|entry| entry.signature == "php:public static string AuthApi.$sharedName"));
         assert!(report.public_api.iter().any(|entry| {
-            entry.signature == "php:public static function run(string $name): string"
+            entry.signature == "php:public static function AuthApi.run(string $name): string"
         }));
         assert!(report
             .public_api
@@ -2615,11 +2614,11 @@ mod tests {
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "php:public const SYNC"));
+            .any(|entry| entry.signature == "php:public const Contract::SYNC"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "php:function sync(string $token): void"));
+            .any(|entry| entry.signature == "php:function Contract.sync(string $token): void"));
         assert!(!report
             .public_api
             .iter()
@@ -2714,27 +2713,27 @@ mod tests {
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "ruby:attr_reader token"));
+            .any(|entry| entry.signature == "ruby:attr_reader Demo::AuthApi#token"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "ruby:attr_reader status"));
+            .any(|entry| entry.signature == "ruby:attr_reader Demo::AuthApi#status"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "ruby:attr_accessor mode"));
+            .any(|entry| entry.signature == "ruby:attr_accessor Demo::AuthApi#mode"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "ruby:def login(username)"));
+            .any(|entry| entry.signature == "ruby:def Demo::AuthApi#login(username)"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "ruby:def self.connect(target)"));
+            .any(|entry| entry.signature == "ruby:def Demo::AuthApi.connect(target)"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "ruby:def self.ping(target)"));
+            .any(|entry| entry.signature == "ruby:def Demo.ping(target)"));
         assert!(!report
             .public_api
             .iter()
@@ -3057,7 +3056,10 @@ mod tests {
             "#,
                 expected_feature: "java_bridge",
                 expected_protocol: "java-api-v1",
-                expected_public_api: &["java:type public class AuthApi"],
+                expected_public_api: &[
+                    "java:type public class AuthApi",
+                    "java:method public String AuthApi.login(String username)",
+                ],
                 rejected_public_api_fragments: &["hidden"],
             },
             ParserAdapterCase {
@@ -3084,7 +3086,7 @@ mod tests {
                 expected_protocol: "kotlin-api-v1",
                 expected_public_api: &[
                     "kotlin:class AuthApi",
-                    "kotlin:fun login(username: String): String",
+                    "kotlin:fun AuthApi.login(username: String): String",
                 ],
                 rejected_public_api_fragments: &["hidden"],
             },
@@ -3110,7 +3112,10 @@ mod tests {
             "#,
                 expected_feature: "csharp_bridge",
                 expected_protocol: "csharp-api-v1",
-                expected_public_api: &["csharp:type public class AuthApi"],
+                expected_public_api: &[
+                    "csharp:type public class AuthApi",
+                    "csharp:method public static string AuthApi.Login(string username)",
+                ],
                 rejected_public_api_fragments: &["Hidden"],
             },
             ParserAdapterCase {
@@ -3176,8 +3181,8 @@ mod tests {
                     "ruby:module Demo",
                     "ruby:const Demo::VERSION",
                     "ruby:class AuthApi",
-                    "ruby:attr_reader token",
-                    "ruby:def login(username)",
+                    "ruby:attr_reader Demo::AuthApi#token",
+                    "ruby:def Demo::AuthApi#login(username)",
                 ],
                 rejected_public_api_fragments: &["hidden", "SECRET"],
             },
@@ -3199,7 +3204,7 @@ mod tests {
                 expected_protocol: "swift-api-v1",
                 expected_public_api: &[
                     "swift:public struct Session",
-                    "swift:public let token: String",
+                    "swift:public let Session.token: String",
                 ],
                 rejected_public_api_fragments: &["fake_feature"],
             },

@@ -111,7 +111,7 @@ fn collect_public_api(
 
             if visibility == Visibility::Public && singleton_receiver.is_none() {
                 signatures.extend(
-                    extract_ruby_attribute_signatures(node, source)
+                    extract_ruby_attribute_signatures(node, source, namespace)
                         .into_iter()
                         .map(|signature| format!("ruby:{signature}")),
                 );
@@ -120,7 +120,7 @@ fn collect_public_api(
         "method" => {
             if visibility == Visibility::Public {
                 if let Some(signature) =
-                    normalize_ruby_method_signature(node, source, singleton_receiver)
+                    normalize_ruby_method_signature(node, source, singleton_receiver, namespace)
                 {
                     signatures.push(format!("ruby:{signature}"));
                 }
@@ -130,6 +130,7 @@ fn collect_public_api(
             if visibility == Visibility::Public {
                 if let Some(signature) = extract_tree_sitter_prefix_signature(node, source, "body")
                     .and_then(|value| trim_signature_to_keywords(&value, &["def"]))
+                    .map(|value| qualify_ruby_singleton_signature(&value, namespace))
                 {
                     signatures.push(format!("ruby:{signature}"));
                 }
@@ -173,18 +174,28 @@ fn normalize_ruby_method_signature(
     node: Node<'_>,
     source: &str,
     singleton_receiver: Option<&str>,
+    namespace: &[String],
 ) -> Option<String> {
     let signature = extract_tree_sitter_prefix_signature(node, source, "body")
         .and_then(|value| trim_signature_to_keywords(&value, &["def"]))?;
+    let owner = namespace.join("::");
     let Some(receiver) = singleton_receiver else {
-        return Some(signature);
+        if owner.is_empty() {
+            return Some(signature);
+        }
+        return Some(qualify_ruby_instance_signature(&signature, &owner));
     };
 
-    let rest = signature.strip_prefix("def ")?;
-    Some(normalize_tree_sitter_signature(&format!(
-        "def {receiver}.{}",
-        rest.trim_start()
-    )))
+    let resolved_receiver = if receiver == "self" && !owner.is_empty() {
+        owner
+    } else {
+        receiver.to_string()
+    };
+
+    Some(qualify_ruby_receiver_signature(
+        &signature,
+        &resolved_receiver,
+    ))
 }
 
 fn visibility_change(node: Node<'_>, source: &str) -> Option<Visibility> {
@@ -308,7 +319,11 @@ fn extract_ruby_private_constants(
         .collect()
 }
 
-fn extract_ruby_attribute_signatures(node: Node<'_>, source: &str) -> Vec<String> {
+fn extract_ruby_attribute_signatures(
+    node: Node<'_>,
+    source: &str,
+    namespace: &[String],
+) -> Vec<String> {
     if node.child_by_field_name("receiver").is_some() {
         return Vec::new();
     }
@@ -325,7 +340,13 @@ fn extract_ruby_attribute_signatures(node: Node<'_>, source: &str) -> Vec<String
 
     ruby_call_argument_names(node, source)
         .into_iter()
-        .map(|name| format!("{method} {name}"))
+        .map(|name| {
+            if namespace.is_empty() {
+                format!("{method} {name}")
+            } else {
+                format!("{method} {}#{name}", namespace.join("::"))
+            }
+        })
         .collect()
 }
 
@@ -378,4 +399,33 @@ fn qualify_ruby_constant_name(namespace: &[String], name: &str) -> String {
     } else {
         format!("{}::{name}", namespace.join("::"))
     }
+}
+
+fn qualify_ruby_instance_signature(signature: &str, owner: &str) -> String {
+    let Some(rest) = signature.strip_prefix("def ") else {
+        return signature.to_string();
+    };
+
+    normalize_tree_sitter_signature(&format!("def {owner}#{rest}"))
+}
+
+fn qualify_ruby_receiver_signature(signature: &str, receiver: &str) -> String {
+    let Some(rest) = signature.strip_prefix("def ") else {
+        return signature.to_string();
+    };
+
+    normalize_tree_sitter_signature(&format!("def {receiver}.{}", rest.trim_start()))
+}
+
+fn qualify_ruby_singleton_signature(signature: &str, namespace: &[String]) -> String {
+    if namespace.is_empty() {
+        return signature.to_string();
+    }
+
+    let owner = namespace.join("::");
+    if let Some(rest) = signature.strip_prefix("def self.") {
+        return normalize_tree_sitter_signature(&format!("def {owner}.{rest}"));
+    }
+
+    signature.to_string()
 }
