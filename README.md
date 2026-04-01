@@ -162,13 +162,19 @@ This reduces formatting noise in `public_api_inventory` and makes policy pattern
 
 ## Scanner Precision
 
-The crawler now tokenizes source before matching decorators, uses AST extraction for Rust, and uses a parser-backed adapter for TypeScript/JavaScript public API surfaces.
+The crawler now tokenizes source before matching decorators, uses AST extraction for Rust, and uses parser-backed public API adapters for every other supported language: TypeScript/JavaScript, Go, Python, Java, Kotlin, C#, PHP, Swift, and Luau.
 
 - `@mvs-feature(...)` and `@mvs-protocol(...)` are counted only when they appear in real comments
 - block comments such as `/* ... */` are supported for decorator extraction
 - string literals and embedded fixture blobs are ignored during decorator extraction
-- TypeScript/JavaScript public API extraction now handles multiline exports, named export clauses, re-exports, and default exports without depending on line-based regex matching
-- regex-based API scanners still operate on comment/string-masked code for the remaining non-Rust languages so multiline template examples do not create fake exports
+- TypeScript/JavaScript public API extraction handles multiline exports, named export clauses, re-exports, and default exports without depending on line-based regex matching
+- Go public API extraction tracks exported `func` declarations and exported methods from syntax trees
+- Python public API extraction tracks non-underscore `def` declarations, including decorated class methods, without promoting nested local helpers into the API inventory
+- Java and C# public API extraction tracks public types and public methods while stripping leading annotations or attributes out of the stored signature
+- Kotlin public API extraction tracks public or default-visible `class`, `interface`, `object`, and `fun` declarations, preserving modifiers such as `data` and `suspend` while skipping `private`, `protected`, and `internal`
+- PHP public API extraction tracks top-level functions, classes, interfaces, traits, enums, and public or interface methods while treating `#` comments as decorators and ignoring attribute syntax in stored signatures
+- Swift public API extraction tracks `public` and `open` types and functions, and the scanner masks multiline Swift string literals so embedded examples do not pollute evidence
+- Luau public API extraction starts with global `function` declarations and `export type` definitions, and the scanner understands `--` comments plus long-bracket strings and comments
 
 This matters for repositories that keep code examples, fixture payloads, or prompt templates alongside real source. Those examples no longer pollute `mvs.json.evidence`.
 

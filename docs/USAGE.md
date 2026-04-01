@@ -130,14 +130,16 @@ Decorator extraction is comment-aware:
 - block comments count
 - string literals and embedded source examples do not count
 
-TypeScript/JavaScript public API extraction is parser-backed, so it can reliably capture:
+Public API extraction is syntax-aware across all supported languages:
 
-- multiline exported declarations
-- named export clauses such as `export { login, logout as signOut }`
-- re-exports such as `export { login } from "./auth"` and `export * as authApi from "./auth"`
-- default exports without pulling function or class bodies into the signature
-
-Regex-based API extraction still runs against string/comment-masked code for the remaining non-Rust languages, which avoids false positives from template literals and fixture blobs.
+- TypeScript/JavaScript: multiline exports, named export clauses, re-exports, and default exports are parser-backed
+- Go: exported `func` declarations and exported methods are parser-backed
+- Python: non-underscore `def` declarations, including decorated class methods, are parser-backed without promoting nested local helpers
+- Java and C#: public type and method declarations are parser-backed, and stored signatures drop leading annotations or attributes
+- Kotlin: public or default-visible `class`, `interface`, `object`, and `fun` declarations are parser-backed, while `private`, `protected`, and `internal` declarations are skipped
+- PHP: top-level functions, classes, interfaces, traits, enums, and public or interface methods are parser-backed; `#` comments count for decorators, while attributes are ignored in stored signatures
+- Swift: `public` and `open` types and functions are parser-backed, and multiline Swift string literals are masked during decorator scans
+- Luau: global `function` declarations and `export type` definitions are parser-backed, and `--` plus long-bracket comments are recognized during decorator scans
 
 Rust API signatures are AST-normalized before they are persisted. Typical entries look like:
 

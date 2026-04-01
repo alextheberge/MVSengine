@@ -47,6 +47,17 @@ enum SourceLanguage {
     Java,
     Kotlin,
     Csharp,
+    Php,
+    Swift,
+    Luau,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum LexStrategy {
+    CStyle,
+    Python,
+    Php,
+    Luau,
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +124,9 @@ impl SourceLanguage {
             Some("java") => Some(Self::Java),
             Some("kt") => Some(Self::Kotlin),
             Some("cs") => Some(Self::Csharp),
+            Some("php") => Some(Self::Php),
+            Some("swift") => Some(Self::Swift),
+            Some("luau") => Some(Self::Luau),
             _ => None,
         }
     }
@@ -129,6 +143,56 @@ impl SourceLanguage {
             Self::Java => "java",
             Self::Kotlin => "kt",
             Self::Csharp => "cs",
+            Self::Php => "php",
+            Self::Swift => "swift",
+            Self::Luau => "luau",
+        }
+    }
+
+    fn lex_strategy(self) -> LexStrategy {
+        match self {
+            Self::Python => LexStrategy::Python,
+            Self::Php => LexStrategy::Php,
+            Self::Luau => LexStrategy::Luau,
+            _ => LexStrategy::CStyle,
+        }
+    }
+
+    fn uses_nested_block_comments(self) -> bool {
+        matches!(self, Self::Rust | Self::Swift)
+    }
+
+    fn tree_sitter_language(self) -> Option<TreeSitterLanguage> {
+        match self {
+            Self::Go => Some(tree_sitter_go::LANGUAGE.into()),
+            Self::Python => Some(tree_sitter_python::LANGUAGE.into()),
+            Self::Java => Some(tree_sitter_java::LANGUAGE.into()),
+            Self::Kotlin => Some(tree_sitter_kotlin_ng::LANGUAGE.into()),
+            Self::Csharp => Some(tree_sitter_c_sharp::LANGUAGE.into()),
+            Self::Php => Some(tree_sitter_php::LANGUAGE_PHP.into()),
+            Self::Swift => Some(tree_sitter_swift::LANGUAGE.into()),
+            Self::Luau => Some(tree_sitter_luau::LANGUAGE.into()),
+            Self::TypeScript => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+            Self::Tsx => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+            Self::JavaScript | Self::Jsx => Some(tree_sitter_javascript::LANGUAGE.into()),
+            Self::Rust => None,
+        }
+    }
+
+    fn extract_tree_sitter_public_api(self, root: Node<'_>, source: &str) -> Vec<String> {
+        match self {
+            Self::TypeScript | Self::Tsx | Self::JavaScript | Self::Jsx => {
+                extract_tree_sitter_ts_js_public_api(root, source)
+            }
+            Self::Go => extract_tree_sitter_go_public_api(root, source),
+            Self::Python => extract_tree_sitter_python_public_api(root, source),
+            Self::Java => extract_tree_sitter_java_public_api(root, source),
+            Self::Kotlin => extract_tree_sitter_kotlin_public_api(root, source),
+            Self::Csharp => extract_tree_sitter_csharp_public_api(root, source),
+            Self::Php => extract_tree_sitter_php_public_api(root, source),
+            Self::Swift => extract_tree_sitter_swift_public_api(root, source),
+            Self::Luau => extract_tree_sitter_luau_public_api(root, source),
+            Self::Rust => Vec::new(),
         }
     }
 }
@@ -255,17 +319,21 @@ fn extract_public_api(
 }
 
 fn extract_tree_sitter_public_api(language: SourceLanguage, source: &str) -> Option<Vec<String>> {
-    let grammar = tree_sitter_language(language)?;
+    let grammar = language.tree_sitter_language()?;
     let mut parser = TreeSitterParser::new();
     parser.set_language(&grammar).ok()?;
     let tree = parser.parse(source, None)?;
     let root = tree.root_node();
 
+    let mut signatures = language.extract_tree_sitter_public_api(root, source);
+    signatures.sort();
+    signatures.dedup();
+    Some(signatures)
+}
+
+fn extract_tree_sitter_ts_js_public_api(root: Node<'_>, source: &str) -> Vec<String> {
     let mut signatures = Vec::new();
-    for index in 0..root.named_child_count() {
-        let Some(child) = root.named_child(index) else {
-            continue;
-        };
+    for child in named_children(root) {
         if child.kind() != "export_statement" {
             continue;
         }
@@ -273,19 +341,365 @@ fn extract_tree_sitter_public_api(language: SourceLanguage, source: &str) -> Opt
         signatures.extend(extract_tree_sitter_export_statement(child, source));
     }
 
-    signatures.sort();
-    signatures.dedup();
-    Some(signatures)
+    signatures
 }
 
-fn tree_sitter_language(language: SourceLanguage) -> Option<TreeSitterLanguage> {
-    match language {
-        SourceLanguage::TypeScript => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
-        SourceLanguage::Tsx => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
-        SourceLanguage::JavaScript | SourceLanguage::Jsx => {
-            Some(tree_sitter_javascript::LANGUAGE.into())
+fn extract_tree_sitter_go_public_api(root: Node<'_>, source: &str) -> Vec<String> {
+    let mut signatures = Vec::new();
+
+    for child in named_children(root) {
+        match child.kind() {
+            "function_declaration" | "method_declaration"
+                if is_exported_tree_sitter_name(child, source) =>
+            {
+                if let Some(signature) = extract_tree_sitter_prefix_signature(child, source, "body")
+                {
+                    signatures.push(format!("go:{signature}"));
+                }
+            }
+            _ => {}
         }
-        _ => None,
+    }
+
+    signatures
+}
+
+fn extract_tree_sitter_python_public_api(root: Node<'_>, source: &str) -> Vec<String> {
+    let mut signatures = Vec::new();
+    collect_tree_sitter_python_public_api(root, source, &mut signatures, false);
+    signatures
+}
+
+fn collect_tree_sitter_python_public_api(
+    node: Node<'_>,
+    source: &str,
+    signatures: &mut Vec<String>,
+    inside_callable: bool,
+) {
+    for child in named_children(node) {
+        collect_tree_sitter_python_definition(child, source, signatures, inside_callable);
+    }
+}
+
+fn collect_tree_sitter_python_definition(
+    node: Node<'_>,
+    source: &str,
+    signatures: &mut Vec<String>,
+    inside_callable: bool,
+) {
+    match node.kind() {
+        "function_definition" => {
+            if !inside_callable && is_public_python_name(node, source) {
+                if let Some(signature) = extract_tree_sitter_prefix_signature(node, source, "body")
+                {
+                    signatures.push(format!("python:{signature}"));
+                }
+            }
+        }
+        "class_definition" => {
+            if !inside_callable {
+                if let Some(body) = node.child_by_field_name("body") {
+                    collect_tree_sitter_python_public_api(body, source, signatures, false);
+                }
+            }
+        }
+        "decorated_definition" => {
+            if let Some(definition) = node.child_by_field_name("definition") {
+                collect_tree_sitter_python_definition(
+                    definition,
+                    source,
+                    signatures,
+                    inside_callable,
+                );
+            }
+        }
+        "module" | "block" => {
+            collect_tree_sitter_python_public_api(node, source, signatures, inside_callable);
+        }
+        _ => {}
+    }
+}
+
+fn extract_tree_sitter_java_public_api(root: Node<'_>, source: &str) -> Vec<String> {
+    let mut signatures = Vec::new();
+    collect_tree_sitter_java_public_api(root, source, &mut signatures);
+    signatures
+}
+
+fn collect_tree_sitter_java_public_api(node: Node<'_>, source: &str, signatures: &mut Vec<String>) {
+    for child in named_children(node) {
+        match child.kind() {
+            "class_declaration"
+            | "interface_declaration"
+            | "enum_declaration"
+            | "record_declaration"
+            | "annotation_type_declaration" => {
+                if has_tree_sitter_keyword(child, source, "body", "public") {
+                    if let Some(signature) =
+                        extract_tree_sitter_prefix_signature(child, source, "body")
+                            .and_then(|value| trim_signature_to_keywords(&value, &["public"]))
+                    {
+                        signatures.push(format!("java:type {signature}"));
+                    }
+                }
+
+                if let Some(body) = child.child_by_field_name("body") {
+                    collect_tree_sitter_java_public_api(body, source, signatures);
+                }
+            }
+            "method_declaration" => {
+                if has_tree_sitter_keyword(child, source, "body", "public") {
+                    if let Some(signature) =
+                        extract_tree_sitter_prefix_signature(child, source, "body")
+                            .and_then(|value| trim_signature_to_keywords(&value, &["public"]))
+                    {
+                        signatures.push(format!("java:method {signature}"));
+                    }
+                }
+            }
+            "class_body" | "interface_body" | "annotation_type_body" | "enum_body_declarations" => {
+                collect_tree_sitter_java_public_api(child, source, signatures);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn extract_tree_sitter_kotlin_public_api(root: Node<'_>, source: &str) -> Vec<String> {
+    let mut signatures = Vec::new();
+    collect_tree_sitter_kotlin_public_api(root, source, &mut signatures);
+    signatures
+}
+
+fn collect_tree_sitter_kotlin_public_api(
+    node: Node<'_>,
+    source: &str,
+    signatures: &mut Vec<String>,
+) {
+    for child in named_children(node) {
+        match child.kind() {
+            "class_declaration" | "object_declaration" => {
+                if let Some(signature) = extract_tree_sitter_prefix_before_named_child(
+                    child,
+                    source,
+                    &["class_body", "enum_class_body"],
+                )
+                .and_then(|value| normalize_kotlin_signature(&value))
+                {
+                    signatures.push(format!("kotlin:{signature}"));
+                }
+
+                for nested in named_children(child) {
+                    if matches!(nested.kind(), "class_body" | "enum_class_body") {
+                        collect_tree_sitter_kotlin_public_api(nested, source, signatures);
+                    }
+                }
+            }
+            "function_declaration" => {
+                if let Some(signature) =
+                    extract_tree_sitter_prefix_before_named_child(child, source, &["function_body"])
+                        .and_then(|value| normalize_kotlin_signature(&value))
+                {
+                    signatures.push(format!("kotlin:{signature}"));
+                }
+            }
+            "class_body" | "enum_class_body" => {
+                collect_tree_sitter_kotlin_public_api(child, source, signatures);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn extract_tree_sitter_csharp_public_api(root: Node<'_>, source: &str) -> Vec<String> {
+    let mut signatures = Vec::new();
+    collect_tree_sitter_csharp_public_api(root, source, &mut signatures);
+    signatures
+}
+
+fn collect_tree_sitter_csharp_public_api(
+    node: Node<'_>,
+    source: &str,
+    signatures: &mut Vec<String>,
+) {
+    for child in named_children(node) {
+        match child.kind() {
+            "class_declaration"
+            | "interface_declaration"
+            | "enum_declaration"
+            | "record_declaration"
+            | "struct_declaration" => {
+                if has_tree_sitter_keyword(child, source, "body", "public") {
+                    if let Some(signature) =
+                        extract_tree_sitter_prefix_signature(child, source, "body")
+                            .and_then(|value| trim_signature_to_keywords(&value, &["public"]))
+                    {
+                        signatures.push(format!("csharp:type {signature}"));
+                    }
+                }
+
+                if let Some(body) = child.child_by_field_name("body") {
+                    collect_tree_sitter_csharp_public_api(body, source, signatures);
+                }
+            }
+            "method_declaration" => {
+                if has_tree_sitter_keyword(child, source, "body", "public") {
+                    if let Some(signature) =
+                        extract_tree_sitter_prefix_signature(child, source, "body")
+                            .and_then(|value| trim_signature_to_keywords(&value, &["public"]))
+                    {
+                        signatures.push(format!("csharp:method {signature}"));
+                    }
+                }
+            }
+            "namespace_declaration" => {
+                if let Some(body) = child.child_by_field_name("body") {
+                    collect_tree_sitter_csharp_public_api(body, source, signatures);
+                }
+            }
+            "compilation_unit" | "declaration_list" | "file_scoped_namespace_declaration" => {
+                collect_tree_sitter_csharp_public_api(child, source, signatures);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn extract_tree_sitter_php_public_api(root: Node<'_>, source: &str) -> Vec<String> {
+    let mut signatures = Vec::new();
+    collect_tree_sitter_php_public_api(root, source, &mut signatures, false);
+    signatures
+}
+
+fn collect_tree_sitter_php_public_api(
+    node: Node<'_>,
+    source: &str,
+    signatures: &mut Vec<String>,
+    inside_interface: bool,
+) {
+    for child in named_children(node) {
+        match child.kind() {
+            "class_declaration" | "trait_declaration" | "enum_declaration" => {
+                if let Some(signature) = extract_tree_sitter_prefix_signature(child, source, "body")
+                    .and_then(|value| normalize_php_type_signature(&value))
+                {
+                    signatures.push(format!("php:{signature}"));
+                }
+
+                if let Some(body) = child.child_by_field_name("body") {
+                    collect_tree_sitter_php_public_api(body, source, signatures, false);
+                }
+            }
+            "interface_declaration" => {
+                if let Some(signature) = extract_tree_sitter_prefix_signature(child, source, "body")
+                    .and_then(|value| normalize_php_type_signature(&value))
+                {
+                    signatures.push(format!("php:{signature}"));
+                }
+
+                if let Some(body) = child.child_by_field_name("body") {
+                    collect_tree_sitter_php_public_api(body, source, signatures, true);
+                }
+            }
+            "function_definition" => {
+                if let Some(signature) = extract_tree_sitter_prefix_signature(child, source, "body")
+                    .and_then(|value| normalize_php_function_signature(&value))
+                {
+                    signatures.push(format!("php:{signature}"));
+                }
+            }
+            "method_declaration" => {
+                if let Some(signature) = extract_tree_sitter_prefix_signature(child, source, "body")
+                    .and_then(|value| normalize_php_method_signature(&value, inside_interface))
+                {
+                    signatures.push(format!("php:{signature}"));
+                }
+            }
+            "program" | "compound_statement" | "declaration_list" => {
+                collect_tree_sitter_php_public_api(child, source, signatures, inside_interface);
+            }
+            "namespace_definition" => {
+                if let Some(body) = child.child_by_field_name("body") {
+                    collect_tree_sitter_php_public_api(body, source, signatures, inside_interface);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn extract_tree_sitter_swift_public_api(root: Node<'_>, source: &str) -> Vec<String> {
+    let mut signatures = Vec::new();
+    collect_tree_sitter_swift_public_api(root, source, &mut signatures);
+    signatures
+}
+
+fn collect_tree_sitter_swift_public_api(
+    node: Node<'_>,
+    source: &str,
+    signatures: &mut Vec<String>,
+) {
+    for child in named_children(node) {
+        match child.kind() {
+            "class_declaration"
+            | "struct_declaration"
+            | "enum_declaration"
+            | "protocol_declaration"
+            | "extension_declaration" => {
+                if let Some(signature) = extract_tree_sitter_prefix_signature(child, source, "body")
+                    .and_then(|value| normalize_swift_signature(&value))
+                {
+                    signatures.push(format!("swift:{signature}"));
+                }
+
+                if let Some(body) = child.child_by_field_name("body") {
+                    collect_tree_sitter_swift_public_api(body, source, signatures);
+                }
+            }
+            "function_declaration" => {
+                if let Some(signature) = extract_tree_sitter_prefix_signature(child, source, "body")
+                    .and_then(|value| normalize_swift_signature(&value))
+                {
+                    signatures.push(format!("swift:{signature}"));
+                }
+            }
+            "source_file" | "class_body" | "protocol_body" => {
+                collect_tree_sitter_swift_public_api(child, source, signatures);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn extract_tree_sitter_luau_public_api(root: Node<'_>, source: &str) -> Vec<String> {
+    let mut signatures = Vec::new();
+    collect_tree_sitter_luau_public_api(root, source, &mut signatures);
+    signatures
+}
+
+fn collect_tree_sitter_luau_public_api(node: Node<'_>, source: &str, signatures: &mut Vec<String>) {
+    for child in named_children(node) {
+        match child.kind() {
+            "chunk" | "statement" => {
+                collect_tree_sitter_luau_public_api(child, source, signatures);
+            }
+            "function_declaration" => {
+                if let Some(signature) = extract_tree_sitter_prefix_signature(child, source, "body")
+                    .filter(|value| !value.starts_with("local function "))
+                {
+                    signatures.push(format!("luau:{signature}"));
+                }
+            }
+            "type_definition" => {
+                if let Some(signature) = node_text(child, source)
+                    .map(normalize_tree_sitter_signature)
+                    .filter(|value| value.starts_with("export type "))
+                {
+                    signatures.push(format!("luau:{signature}"));
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -377,7 +791,22 @@ fn extract_tree_sitter_prefix_signature(
         .map(|field| field.start_byte())
         .unwrap_or_else(|| node.end_byte());
     node_text_range(source, node.start_byte(), end)
-        .map(normalize_export_statement_signature)
+        .map(normalize_tree_sitter_signature)
+        .filter(|signature| !signature.is_empty())
+}
+
+fn extract_tree_sitter_prefix_before_named_child(
+    node: Node<'_>,
+    source: &str,
+    stop_kinds: &[&str],
+) -> Option<String> {
+    let end = named_children(node)
+        .into_iter()
+        .find(|child| stop_kinds.contains(&child.kind()))
+        .map(|child| child.start_byte())
+        .unwrap_or_else(|| node.end_byte());
+    node_text_range(source, node.start_byte(), end)
+        .map(normalize_tree_sitter_signature)
         .filter(|signature| !signature.is_empty())
 }
 
@@ -432,11 +861,176 @@ fn extract_tree_sitter_variable_signatures(node: Node<'_>, source: &str) -> Vec<
 }
 
 fn normalize_export_statement_signature(raw: &str) -> String {
-    let mut normalized = normalize_signature(raw.trim().trim_end_matches(';'));
+    normalize_tree_sitter_signature(raw)
+}
+
+fn normalize_tree_sitter_signature(raw: &str) -> String {
+    let mut normalized =
+        normalize_signature(raw.trim().trim_end_matches(';').trim_end_matches(':'));
     for (from, to) in [(",)", ")"), (", }", " }"), (",]", "]")] {
         normalized = normalized.replace(from, to);
     }
     normalized
+}
+
+fn named_children(node: Node<'_>) -> Vec<Node<'_>> {
+    let mut children = Vec::new();
+    for index in 0..node.named_child_count() {
+        if let Some(child) = node.named_child(index) {
+            children.push(child);
+        }
+    }
+    children
+}
+
+fn is_exported_tree_sitter_name(node: Node<'_>, source: &str) -> bool {
+    node.child_by_field_name("name")
+        .and_then(|child| node_text(child, source))
+        .map(|name| {
+            name.chars()
+                .next()
+                .map(|first| first.is_ascii_uppercase())
+                .unwrap_or(false)
+        })
+        .unwrap_or(false)
+}
+
+fn is_public_python_name(node: Node<'_>, source: &str) -> bool {
+    node.child_by_field_name("name")
+        .and_then(|child| node_text(child, source))
+        .map(|name| !name.starts_with('_'))
+        .unwrap_or(false)
+}
+
+fn has_tree_sitter_keyword(
+    node: Node<'_>,
+    source: &str,
+    stop_field_name: &str,
+    keyword: &str,
+) -> bool {
+    extract_tree_sitter_prefix_signature(node, source, stop_field_name)
+        .map(|signature| contains_signature_keyword(&signature, keyword))
+        .unwrap_or(false)
+}
+
+fn normalize_kotlin_signature(signature: &str) -> Option<String> {
+    if contains_signature_keyword(signature, "private")
+        || contains_signature_keyword(signature, "protected")
+        || contains_signature_keyword(signature, "internal")
+    {
+        return None;
+    }
+
+    trim_signature_to_keywords(
+        signature,
+        &[
+            "public",
+            "data",
+            "sealed",
+            "enum",
+            "annotation",
+            "value",
+            "suspend",
+            "class",
+            "interface",
+            "object",
+            "fun",
+        ],
+    )
+}
+
+fn normalize_php_type_signature(signature: &str) -> Option<String> {
+    trim_signature_to_keywords(
+        signature,
+        &[
+            "abstract",
+            "final",
+            "readonly",
+            "class",
+            "interface",
+            "trait",
+            "enum",
+        ],
+    )
+}
+
+fn normalize_php_function_signature(signature: &str) -> Option<String> {
+    trim_signature_to_keywords(signature, &["function"])
+}
+
+fn normalize_php_method_signature(signature: &str, inside_interface: bool) -> Option<String> {
+    if contains_any_signature_keyword(signature, &["private", "protected"]) {
+        return None;
+    }
+
+    if inside_interface {
+        return trim_signature_to_keywords(signature, &["function"]);
+    }
+
+    if contains_signature_keyword(signature, "public") {
+        return trim_signature_to_keywords(signature, &["public"]);
+    }
+
+    None
+}
+
+fn normalize_swift_signature(signature: &str) -> Option<String> {
+    if !contains_any_signature_keyword(signature, &["public", "open"]) {
+        return None;
+    }
+
+    trim_signature_to_keywords(signature, &["public", "open"])
+}
+
+fn trim_signature_to_keywords(signature: &str, keywords: &[&str]) -> Option<String> {
+    let start = keywords
+        .iter()
+        .filter_map(|keyword| find_signature_keyword(signature, keyword))
+        .min()
+        .unwrap_or(0);
+    let trimmed = normalize_tree_sitter_signature(signature.get(start..)?.trim());
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn find_signature_keyword(signature: &str, keyword: &str) -> Option<usize> {
+    let bytes = signature.as_bytes();
+    let keyword_bytes = keyword.as_bytes();
+    if keyword_bytes.is_empty() || keyword_bytes.len() > bytes.len() {
+        return None;
+    }
+
+    for index in 0..=bytes.len() - keyword_bytes.len() {
+        if &bytes[index..index + keyword_bytes.len()] != keyword_bytes {
+            continue;
+        }
+
+        let left_ok = index == 0 || !is_signature_word_byte(bytes[index - 1]);
+        let right_index = index + keyword_bytes.len();
+        let right_ok = right_index == bytes.len() || !is_signature_word_byte(bytes[right_index]);
+        if left_ok && right_ok {
+            return Some(index);
+        }
+    }
+
+    None
+}
+
+fn contains_signature_keyword(signature: &str, keyword: &str) -> bool {
+    find_signature_keyword(signature, keyword).is_some()
+}
+
+fn contains_any_signature_keyword(signature: &str, keywords: &[&str]) -> bool {
+    keywords
+        .iter()
+        .any(|keyword| contains_signature_keyword(signature, keyword))
+}
+
+fn is_signature_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
 fn node_text<'a>(node: Node<'_>, source: &'a str) -> Option<&'a str> {
@@ -464,7 +1058,10 @@ fn extract_regex_public_api(
             SourceLanguage::TypeScript
             | SourceLanguage::Tsx
             | SourceLanguage::JavaScript
-            | SourceLanguage::Jsx => {}
+            | SourceLanguage::Jsx
+            | SourceLanguage::Php
+            | SourceLanguage::Swift
+            | SourceLanguage::Luau => {}
             SourceLanguage::Go => {
                 if let Some(capture) = regex.go_func.captures(trimmed) {
                     let recv = capture
@@ -574,9 +1171,11 @@ fn extract_regex_public_api(
 }
 
 fn lex_source(source: &str, language: SourceLanguage) -> LexedSource {
-    match language {
-        SourceLanguage::Python => lex_python_source(source),
-        _ => lex_c_style_source(source, language),
+    match language.lex_strategy() {
+        LexStrategy::CStyle => lex_c_style_source(source, language),
+        LexStrategy::Python => lex_python_source(source),
+        LexStrategy::Php => lex_php_source(source),
+        LexStrategy::Luau => lex_luau_source(source),
     }
 }
 
@@ -589,6 +1188,14 @@ fn lex_c_style_source(source: &str, language: SourceLanguage) -> LexedSource {
     while i < bytes.len() {
         if language == SourceLanguage::Rust {
             if let Some(end) = skip_rust_raw_string(bytes, i) {
+                mask_range(&mut masked, bytes, i, end);
+                i = end;
+                continue;
+            }
+        }
+
+        if language == SourceLanguage::Swift {
+            if let Some(end) = skip_swift_string(bytes, i) {
                 mask_range(&mut masked, bytes, i, end);
                 i = end;
                 continue;
@@ -633,13 +1240,127 @@ fn lex_c_style_source(source: &str, language: SourceLanguage) -> LexedSource {
             }
 
             if bytes[i + 1] == b'*' {
-                let end = skip_block_comment(bytes, i, language == SourceLanguage::Rust);
+                let end = skip_block_comment(bytes, i, language.uses_nested_block_comments());
                 let content_end = if end >= i + 4 { end - 2 } else { end };
                 comments.push(source[i + 2..content_end].to_string());
                 mask_range(&mut masked, bytes, i, end);
                 i = end;
                 continue;
             }
+        }
+
+        i += 1;
+    }
+
+    LexedSource {
+        comments,
+        masked_code: String::from_utf8(masked).unwrap_or_else(|_| source.to_string()),
+    }
+}
+
+fn lex_php_source(source: &str) -> LexedSource {
+    let bytes = source.as_bytes();
+    let mut masked = bytes.to_vec();
+    let mut comments = Vec::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if is_csharp_verbatim_string_start(bytes, i) {
+            let end = skip_csharp_verbatim_string(bytes, i);
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        if bytes[i] == b'`' {
+            let end = skip_backtick_string(bytes, i);
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        if uses_single_quote_strings(SourceLanguage::Php) && (bytes[i] == b'\'' || bytes[i] == b'"')
+        {
+            let end = skip_quoted_string(bytes, i, bytes[i]);
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        if bytes[i] == b'#' {
+            if matches!(bytes.get(i + 1), Some(b'[')) {
+                i += 1;
+                continue;
+            }
+
+            let end = skip_line_comment(bytes, i);
+            comments.push(source[i + 1..end].to_string());
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        if bytes[i] == b'/' && i + 1 < bytes.len() {
+            if bytes[i + 1] == b'/' {
+                let end = skip_line_comment(bytes, i);
+                comments.push(source[i + 2..end].to_string());
+                mask_range(&mut masked, bytes, i, end);
+                i = end;
+                continue;
+            }
+
+            if bytes[i + 1] == b'*' {
+                let end = skip_block_comment(bytes, i, false);
+                let content_end = if end >= i + 4 { end - 2 } else { end };
+                comments.push(source[i + 2..content_end].to_string());
+                mask_range(&mut masked, bytes, i, end);
+                i = end;
+                continue;
+            }
+        }
+
+        i += 1;
+    }
+
+    LexedSource {
+        comments,
+        masked_code: String::from_utf8(masked).unwrap_or_else(|_| source.to_string()),
+    }
+}
+
+fn lex_luau_source(source: &str) -> LexedSource {
+    let bytes = source.as_bytes();
+    let mut masked = bytes.to_vec();
+    let mut comments = Vec::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if let Some((_, _, end)) = skip_luau_long_bracket(bytes, i) {
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        if bytes[i] == b'\'' || bytes[i] == b'"' {
+            let end = skip_quoted_string(bytes, i, bytes[i]);
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        if bytes[i] == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+            if let Some((content_start, content_end, end)) = skip_luau_long_bracket(bytes, i + 2) {
+                comments.push(source[content_start..content_end].to_string());
+                mask_range(&mut masked, bytes, i, end);
+                i = end;
+                continue;
+            }
+
+            let end = skip_line_comment(bytes, i);
+            comments.push(source[i + 2..end].to_string());
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
         }
 
         i += 1;
@@ -765,6 +1486,53 @@ fn skip_quoted_string(bytes: &[u8], start: usize, quote: u8) -> usize {
     bytes.len()
 }
 
+fn skip_swift_string(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut index = start;
+    let mut hashes = 0usize;
+
+    while index < bytes.len() && bytes[index] == b'#' {
+        hashes += 1;
+        index += 1;
+    }
+
+    if index >= bytes.len() || bytes[index] != b'"' {
+        return None;
+    }
+
+    let multiline = matches!(bytes.get(index..index + 3), Some(prefix) if prefix == b"\"\"\"");
+    index += if multiline { 3 } else { 1 };
+
+    while index < bytes.len() {
+        if !multiline && bytes[index] == b'\\' {
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+
+        if multiline {
+            if !matches!(bytes.get(index..index + 3), Some(prefix) if prefix == b"\"\"\"") {
+                index += 1;
+                continue;
+            }
+
+            let end = index + 3;
+            if matches_hash_suffix(bytes, end, hashes) {
+                return Some((end + hashes).min(bytes.len()));
+            }
+
+            index += 1;
+            continue;
+        }
+
+        if bytes[index] == b'"' && matches_hash_suffix(bytes, index + 1, hashes) {
+            return Some((index + 1 + hashes).min(bytes.len()));
+        }
+
+        index += 1;
+    }
+
+    Some(bytes.len())
+}
+
 fn skip_backtick_string(bytes: &[u8], start: usize) -> usize {
     let mut index = start + 1;
 
@@ -796,6 +1564,54 @@ fn skip_python_triple_quoted_string(bytes: &[u8], start: usize) -> Option<usize>
     }
 
     None
+}
+
+fn skip_luau_long_bracket(bytes: &[u8], start: usize) -> Option<(usize, usize, usize)> {
+    if bytes.get(start) != Some(&b'[') {
+        return None;
+    }
+
+    let mut index = start + 1;
+    let mut equals_count = 0usize;
+    while index < bytes.len() && bytes[index] == b'=' {
+        equals_count += 1;
+        index += 1;
+    }
+
+    if bytes.get(index) != Some(&b'[') {
+        return None;
+    }
+
+    let content_start = index + 1;
+    let mut cursor = content_start;
+    while cursor < bytes.len() {
+        if bytes[cursor] != b']' {
+            cursor += 1;
+            continue;
+        }
+
+        let mut end = cursor + 1;
+        let mut matched = 0usize;
+        while matched < equals_count && end < bytes.len() && bytes[end] == b'=' {
+            matched += 1;
+            end += 1;
+        }
+
+        if matched == equals_count && bytes.get(end) == Some(&b']') {
+            return Some((content_start, cursor, end + 1));
+        }
+
+        cursor += 1;
+    }
+
+    Some((content_start, bytes.len(), bytes.len()))
+}
+
+fn matches_hash_suffix(bytes: &[u8], start: usize, hashes: usize) -> bool {
+    start + hashes <= bytes.len()
+        && bytes[start..start + hashes]
+            .iter()
+            .all(|byte| *byte == b'#')
 }
 
 fn skip_rust_raw_string(bytes: &[u8], start: usize) -> Option<usize> {
@@ -1112,6 +1928,8 @@ fn normalize_signature(raw: &str) -> String {
 fn is_comment_line(line: &str, extension: &str) -> bool {
     match extension {
         "py" => line.starts_with('#'),
+        "php" => line.starts_with('#') || line.starts_with("//") || line.starts_with("/*"),
+        "luau" => line.starts_with("--"),
         _ => line.starts_with("//") || line.starts_with("/*") || line.starts_with('*'),
     }
 }
@@ -1438,6 +2256,465 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("Promise.resolve")));
+    }
+
+    #[test]
+    fn tree_sitter_captures_go_exported_functions_and_methods() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("api.go"),
+            r#"
+            package demo
+
+            type service struct{}
+
+            func ExportedLogin(username string) string {
+                return username
+            }
+
+            func unexported() {}
+
+            func (s *service) hidden(target string) error {
+                return nil
+            }
+
+            func (s *service) Connect(target string) error {
+                return nil
+            }
+        "#,
+        )
+        .expect("failed to write go fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "go:func ExportedLogin(username string) string"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "go:func(s *service) Connect(target string) error"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("unexported")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("hidden")));
+    }
+
+    #[test]
+    fn tree_sitter_captures_python_public_defs_without_decorators_or_nested_locals() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("api.py"),
+            r#"
+            class Worker:
+                @staticmethod
+                def run_job(name: str) -> str:
+                    def helper() -> str:
+                        return name
+                    return helper()
+
+                def _hidden(self) -> str:
+                    return "hidden"
+
+            @decorator
+            def login(username: str) -> str:
+                return username
+
+            def _internal() -> str:
+                return "hidden"
+        "#,
+        )
+        .expect("failed to write python fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:def run_job(name: str) -> str"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:def login(username: str) -> str"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("helper")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("@decorator")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("_internal")));
+    }
+
+    #[test]
+    fn tree_sitter_captures_java_public_types_and_methods() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("AuthApi.java"),
+            r#"
+            package demo;
+
+            @Deprecated
+            public record Session(String token) {}
+
+            public class AuthApi {
+                @Deprecated
+                public String login(String username) {
+                    return username;
+                }
+
+                void hidden() {}
+
+                public static class Nested {}
+            }
+        "#,
+        )
+        .expect("failed to write java fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "java:type public record Session(String token)"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "java:type public class AuthApi"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "java:type public static class Nested"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "java:method public String login(String username)"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("@Deprecated")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("hidden")));
+    }
+
+    #[test]
+    fn tree_sitter_captures_kotlin_public_declarations() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("api.kt"),
+            r#"
+            public class AuthApi {
+                fun login(username: String): String {
+                    return username
+                }
+
+                private fun hidden(): String {
+                    return "hidden"
+                }
+
+                data class Session(val token: String)
+            }
+
+            internal object InternalDefaults
+
+            suspend fun load(token: String): String {
+                return token
+            }
+
+            object Defaults
+        "#,
+        )
+        .expect("failed to write kotlin fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "kotlin:public class AuthApi"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "kotlin:fun login(username: String): String"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "kotlin:data class Session(val token: String)"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "kotlin:suspend fun load(token: String): String"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "kotlin:object Defaults"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("hidden")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("InternalDefaults")));
+    }
+
+    #[test]
+    fn tree_sitter_captures_csharp_public_types_and_methods_without_attributes() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("Api.cs"),
+            r#"
+            namespace Demo;
+
+            [Obsolete]
+            public record Session(string Token);
+
+            public class AuthApi {
+                [Obsolete]
+                public static string Login(string username) {
+                    return username;
+                }
+
+                private static string Hidden(string username) {
+                    return username;
+                }
+
+                public struct Result { }
+            }
+        "#,
+        )
+        .expect("failed to write csharp fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "csharp:type public record Session(string Token)"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "csharp:type public class AuthApi"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "csharp:type public struct Result"));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature == "csharp:method public static string Login(string username)"
+        }));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("[Obsolete]")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("Hidden")));
+    }
+
+    #[test]
+    fn tree_sitter_captures_swift_public_types_and_methods() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("Api.swift"),
+            r#"
+            let example = """
+            // @mvs-feature("fake_feature")
+            """
+
+            // @mvs-feature("swift_bridge")
+            // @mvs-protocol("swift-api-v1")
+            public struct Session {}
+
+            public class AuthApi {
+                public func login(username: String) -> String {
+                    username
+                }
+
+                private func hidden() -> String {
+                    "hidden"
+                }
+            }
+        "#,
+        )
+        .expect("failed to write swift fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report.feature_tags.contains("swift_bridge"));
+        assert!(report.protocol_tags.contains("swift-api-v1"));
+        assert!(!report.feature_tags.contains("fake_feature"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "swift:public struct Session"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "swift:public class AuthApi"));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature == "swift:public func login(username: String) -> String"
+        }));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("hidden")));
+    }
+
+    #[test]
+    fn tree_sitter_captures_php_public_api_and_hash_comments() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("Api.php"),
+            r#"
+            <?php
+
+            # @mvs-feature("php_jobs")
+            /* @mvs-protocol("php-worker-v1") */
+            #[Deprecated]
+            function login(string $username): string {
+                return $username;
+            }
+
+            #[Deprecated]
+            final class AuthApi {
+                #[Deprecated]
+                public static function run(string $name): string {
+                    return $name;
+                }
+
+                private function hidden(string $name): string {
+                    return $name;
+                }
+            }
+
+            interface Contract {
+                public function sync(string $token): void;
+            }
+        "#,
+        )
+        .expect("failed to write php fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report.feature_tags.contains("php_jobs"));
+        assert!(report.protocol_tags.contains("php-worker-v1"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "php:function login(string $username): string"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "php:final class AuthApi"));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature == "php:public static function run(string $name): string"
+        }));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "php:interface Contract"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "php:function sync(string $token): void"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("#[Deprecated]")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("hidden")));
+    }
+
+    #[test]
+    fn tree_sitter_captures_luau_global_functions_and_export_types() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("Api.luau"),
+            r#"
+            local fixture = [[
+            -- @mvs-feature("fake_feature")
+            ]]
+
+            -- @mvs-feature("luau_bridge")
+            --[[ @mvs-protocol("luau-module-v1") ]]
+            export type Session = {
+                token: string,
+            }
+
+            function connect(target: string): boolean
+                return target ~= ""
+            end
+
+            local function hidden(): boolean
+                return false
+            end
+        "#,
+        )
+        .expect("failed to write luau fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report.feature_tags.contains("luau_bridge"));
+        assert!(report.protocol_tags.contains("luau-module-v1"));
+        assert!(!report.feature_tags.contains("fake_feature"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "luau:export type Session={ token: string }"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "luau:function connect(target: string): boolean"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("hidden")));
     }
 
     #[test]
