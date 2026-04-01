@@ -16,6 +16,51 @@ fn fixtures_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
 }
 
+fn contract_fixtures_root() -> PathBuf {
+    fixtures_root().join("contracts")
+}
+
+fn load_contract_json(name: &str) -> Value {
+    let path = contract_fixtures_root().join(name);
+    serde_json::from_str(&fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "failed to read contract fixture {}: {error}",
+            path.display()
+        )
+    }))
+    .unwrap_or_else(|error| {
+        panic!(
+            "contract fixture {} should be valid json: {error}",
+            path.display()
+        )
+    })
+}
+
+fn replace_string_field(payload: &mut Value, key: &str, replacement: &str) {
+    if let Some(value) = payload.get_mut(key) {
+        assert!(value.is_string(), "{key} should be a string field");
+        *value = Value::String(replacement.to_string());
+    }
+}
+
+fn normalize_contract_output(payload: &mut Value) {
+    replace_string_field(payload, "manifest_path", "<MANIFEST_PATH>");
+    replace_string_field(payload, "root", "<ROOT>");
+    replace_string_field(payload, "host_manifest", "<HOST_MANIFEST>");
+    replace_string_field(payload, "extension_manifest", "<EXTENSION_MANIFEST>");
+}
+
+fn normalize_contract_manifest(manifest: &mut Value) {
+    if let Some(history) = manifest.get_mut("history").and_then(Value::as_array_mut) {
+        for entry in history {
+            let object = entry
+                .as_object_mut()
+                .expect("history entries should be objects");
+            object.insert("changed_at_unix".to_string(), Value::from(0_u64));
+        }
+    }
+}
+
 fn copy_dir_recursive(src: &Path, dst: &Path) {
     fs::create_dir_all(dst).expect("failed to create destination fixture directory");
 
@@ -260,6 +305,78 @@ fn generate_json_reports_semantic_evidence_snapshot_counts() {
 }
 
 #[test]
+fn generate_json_matches_golden_contract_fixture() {
+    let temp = TempWorkspace::new();
+    let fixture_project = fixtures_root().join("generator_project");
+    let project_root = temp.path().join("project");
+    copy_dir_recursive(&fixture_project, &project_root);
+
+    let manifest_path = temp.path().join("mvs.json");
+    let ai_schema_path = project_root.join("tool_schema.json");
+
+    let mut generate = binary_cmd();
+    let assert = generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--ai-schema",
+            ai_schema_path.to_str().expect("non-utf8 path"),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())
+        .expect("generate output should be valid utf8");
+    let mut payload: Value =
+        serde_json::from_str(&stdout).expect("generate json output should parse");
+    normalize_contract_output(&mut payload);
+
+    assert_eq!(payload, load_contract_json("generate_cli.json"));
+}
+
+#[test]
+fn generated_manifest_matches_golden_contract_fixture() {
+    let temp = TempWorkspace::new();
+    let fixture_project = fixtures_root().join("generator_project");
+    let project_root = temp.path().join("project");
+    copy_dir_recursive(&fixture_project, &project_root);
+
+    let manifest_path = temp.path().join("mvs.json");
+    let ai_schema_path = project_root.join("tool_schema.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--ai-schema",
+            ai_schema_path.to_str().expect("non-utf8 path"),
+        ])
+        .assert()
+        .success();
+
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+    normalize_contract_manifest(&mut manifest);
+
+    assert_eq!(manifest, load_contract_json("generator_manifest_cli.json"));
+}
+
+#[test]
 fn lint_json_failure_uses_stable_exit_code() {
     let temp = TempWorkspace::new();
     let fixture_project = fixtures_root().join("generator_project");
@@ -314,6 +431,58 @@ fn lint_json_failure_uses_stable_exit_code() {
 }
 
 #[test]
+fn lint_json_failure_matches_golden_contract_fixture() {
+    let temp = TempWorkspace::new();
+    let fixture_project = fixtures_root().join("generator_project");
+    let project_root = temp.path().join("project");
+    copy_dir_recursive(&fixture_project, &project_root);
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+        ])
+        .assert()
+        .success();
+
+    let api_file = project_root.join("src/api.ts");
+    let updated = format!(
+        "{}\nexport function rotateToken(token: string): string {{ return token; }}\n",
+        fs::read_to_string(&api_file).expect("failed to read API file")
+    );
+    fs::write(&api_file, updated).expect("failed to write API file drift");
+
+    let mut lint = binary_cmd();
+    let assert = lint
+        .args([
+            "lint",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .code(20);
+
+    let stdout =
+        String::from_utf8(assert.get_output().stdout.clone()).expect("lint output should be utf8");
+    let mut payload: Value = serde_json::from_str(&stdout).expect("lint json output should parse");
+    normalize_contract_output(&mut payload);
+
+    assert_eq!(payload, load_contract_json("lint_public_api_drift.json"));
+}
+
+#[test]
 fn validate_json_failure_uses_stable_exit_code() {
     let host = fixtures_root().join("manifests/host_no_shim.json");
     let extension = fixtures_root().join("manifests/extension_out_of_range.json");
@@ -350,6 +519,34 @@ fn validate_json_failure_uses_stable_exit_code() {
             && check["status"].as_str().expect("status should be a string") == "fail"
             && check["code"].as_str().expect("code should be a string") == "protocol_range_mismatch"
     }));
+}
+
+#[test]
+fn validate_json_incompatible_matches_golden_contract_fixture() {
+    let host = fixtures_root().join("manifests/host_no_shim.json");
+    let extension = fixtures_root().join("manifests/extension_out_of_range.json");
+
+    let mut validate = binary_cmd();
+    let assert = validate
+        .args([
+            "validate",
+            "--host-manifest",
+            host.to_str().expect("non-utf8 path"),
+            "--extension-manifest",
+            extension.to_str().expect("non-utf8 path"),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .code(30);
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())
+        .expect("validate output should be valid utf8");
+    let mut payload: Value =
+        serde_json::from_str(&stdout).expect("validate json output should parse");
+    normalize_contract_output(&mut payload);
+
+    assert_eq!(payload, load_contract_json("validate_incompatible.json"));
 }
 
 #[test]
@@ -390,6 +587,34 @@ fn validate_json_degraded_reports_shimmed_protocol_axis() {
             && check["status"].as_str().expect("status should be a string") == "degraded"
             && check["code"].as_str().expect("code should be a string") == "protocol_range_shimmed"
     }));
+}
+
+#[test]
+fn validate_json_degraded_matches_golden_contract_fixture() {
+    let host = fixtures_root().join("manifests/host_with_shim.json");
+    let extension = fixtures_root().join("manifests/extension_out_of_range.json");
+
+    let mut validate = binary_cmd();
+    let assert = validate
+        .args([
+            "validate",
+            "--host-manifest",
+            host.to_str().expect("non-utf8 path"),
+            "--extension-manifest",
+            extension.to_str().expect("non-utf8 path"),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())
+        .expect("validate output should be valid utf8");
+    let mut payload: Value =
+        serde_json::from_str(&stdout).expect("validate json output should parse");
+    normalize_contract_output(&mut payload);
+
+    assert_eq!(payload, load_contract_json("validate_degraded.json"));
 }
 
 #[test]
@@ -1613,6 +1838,96 @@ fn rust_workspace_members_persist_and_resolve_cross_crate_reexports() {
 }
 
 #[test]
+fn rust_workspace_members_cover_deeper_workspace_facade_fixture() {
+    let temp = TempWorkspace::new();
+    let fixture_project = fixtures_root().join("release_rust_workspace");
+    let project_root = temp.path().join("project");
+    copy_dir_recursive(&fixture_project, &project_root);
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "app/src/lib.rs",
+            "--rust-export-following",
+            "public-modules",
+            "--rust-workspace-member",
+            "sdk",
+            "--rust-workspace-member",
+            "shared",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Rust export following"))
+        .stdout(contains("Rust workspace members"));
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+    let members = generated["scan_policy"]["rust_workspace_members"]
+        .as_array()
+        .expect("workspace members should be an array");
+    assert_eq!(members.len(), 2);
+    assert_eq!(members[0], "sdk");
+    assert_eq!(members[1], "shared");
+
+    let inventory = generated["evidence"]["public_api_inventory"]
+        .as_array()
+        .expect("public api inventory should be an array");
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "app/src/lib.rs"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "rust:struct PublicSession"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "app/src/lib.rs"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "rust:impl-fn PublicSession::ping(&self) -> bool"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "app/src/lib.rs"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "rust:fn open(target: u32) -> bool"
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            .contains("Hidden")
+    }));
+
+    let mut lint = binary_cmd();
+    lint.args([
+        "lint",
+        "--root",
+        project_root.to_str().expect("non-utf8 path"),
+        "--manifest",
+        manifest_path.to_str().expect("non-utf8 path"),
+    ])
+    .assert()
+    .success()
+    .stdout(contains("Rust export following"))
+    .stdout(contains("Rust workspace members"))
+    .stdout(contains("Lint passed"));
+}
+
+#[test]
 fn python_module_roots_persist_and_enable_cross_module_python_exports() {
     let temp = TempWorkspace::new();
     let project_root = temp.path().join("project");
@@ -1679,6 +1994,93 @@ fn python_module_roots_persist_and_enable_cross_module_python_exports() {
             .as_str()
             .expect("signature should be a string")
             == "python:from pkg.core import login"
+    }));
+
+    let mut lint = binary_cmd();
+    lint.args([
+        "lint",
+        "--root",
+        project_root.to_str().expect("non-utf8 path"),
+        "--manifest",
+        manifest_path.to_str().expect("non-utf8 path"),
+    ])
+    .assert()
+    .success()
+    .stdout(contains("Python export following"))
+    .stdout(contains("Python module roots"))
+    .stdout(contains("Lint passed"));
+}
+
+#[test]
+fn python_module_roots_cover_multi_root_release_fixture() {
+    let temp = TempWorkspace::new();
+    let fixture_project = fixtures_root().join("release_python_multi_root");
+    let project_root = temp.path().join("project");
+    copy_dir_recursive(&fixture_project, &project_root);
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "app/api.py",
+            "--python-export-following",
+            "roots-only",
+            "--python-module-root",
+            "app",
+            "--python-module-root",
+            "services",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Python export following"))
+        .stdout(contains("Python module roots"));
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+    let roots = generated["scan_policy"]["python_module_roots"]
+        .as_array()
+        .expect("python module roots should be an array");
+    assert_eq!(roots.len(), 2);
+    assert_eq!(roots[0], "app");
+    assert_eq!(roots[1], "services");
+
+    let inventory = generated["evidence"]["public_api_inventory"]
+        .as_array()
+        .expect("public api inventory should be an array");
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "app/api.py"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "python:from service_api import authorize"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "app/api.py"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "python:from service_api import SessionToken"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "app/api.py"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "python:def login(username: str) -> str"
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "services/internal/auth.py"
     }));
 
     let mut lint = binary_cmd();

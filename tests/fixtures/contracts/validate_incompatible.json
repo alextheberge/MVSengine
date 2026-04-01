@@ -1,0 +1,92 @@
+{
+  "command": "validate",
+  "status": "incompatible",
+  "exit_code": 30,
+  "compatible": false,
+  "degraded": false,
+  "failure_count": 1,
+  "degraded_count": 0,
+  "host_manifest": "<HOST_MANIFEST>",
+  "extension_manifest": "<EXTENSION_MANIFEST>",
+  "target_context": "cli",
+  "reasons": [
+    "Protocol range mismatch: extension requires host 1-1, host exposes 2-2 and is at PROT 2."
+  ],
+  "checks": [
+    {
+      "axis": "protocol",
+      "status": "fail",
+      "code": "protocol_range_mismatch",
+      "message": "Protocol range mismatch: extension requires host 1-1, host exposes 2-2 and is at PROT 2.",
+      "details": {
+        "extension_protocol": 1,
+        "host_extension_range": {
+          "max_prot": 2,
+          "min_prot": 2
+        },
+        "host_protocol": 2,
+        "required_host_range": {
+          "max_prot": 1,
+          "min_prot": 1
+        }
+      }
+    },
+    {
+      "axis": "context",
+      "status": "pass",
+      "code": "context_ok",
+      "message": "Target context `cli` satisfies extension CONT `cli`.",
+      "details": {
+        "required_context": "cli",
+        "target_context": "cli"
+      }
+    },
+    {
+      "axis": "runtime_profile",
+      "status": "pass",
+      "code": "runtime_profile_ok",
+      "message": "Host runtime profiles support target context `cli`.",
+      "details": {
+        "host_profiles": [
+          "cli"
+        ],
+        "target_context": "cli"
+      }
+    },
+    {
+      "axis": "capabilities",
+      "status": "pass",
+      "code": "required_capabilities_ok",
+      "message": "Host provides all required extension capabilities.",
+      "details": {
+        "required_capabilities": [
+          "offline_storage"
+        ]
+      }
+    },
+    {
+      "axis": "ai_schema",
+      "status": "pass",
+      "code": "ai_schema_version_ok",
+      "message": "Host AI schema version 2 satisfies extension requirement 1.",
+      "details": {
+        "provided_tool_schema_version": 2,
+        "required_tool_schema_version": 1
+      }
+    },
+    {
+      "axis": "ai_model_capabilities",
+      "status": "pass",
+      "code": "ai_model_capabilities_ok",
+      "message": "Host runtime provides all required AI model capabilities.",
+      "details": {
+        "provided_model_capabilities": [
+          "tool_calling"
+        ],
+        "required_model_capabilities": [
+          "tool_calling"
+        ]
+      }
+    }
+  ]
+}

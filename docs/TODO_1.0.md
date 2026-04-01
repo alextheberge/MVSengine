@@ -6,7 +6,8 @@ This document tracks the work required to move `mvs-manager` from the current fe
 
 - The scanner is now parser-backed across Rust, TypeScript/JavaScript, Go, Python, Java, Kotlin, C#, PHP, Ruby, Swift, Lua, and Luau.
 - Manifests persist semantic evidence inventories, machine-readable command output, and per-language scan policy.
-- The main remaining work is no longer raw language coverage. It is contract stability, output-contract freeze, and release hardening.
+- The stable `1.x` manifest and command-output contract is now documented in `docs/CONTRACT_1X.md` and guarded by golden fixtures under `tests/fixtures/contracts/`.
+- The main remaining work is release hardening, broader fixture depth, and public-release audit work.
 
 ## 1.0 Exit Criteria
 
@@ -19,24 +20,21 @@ This document tracks the work required to move `mvs-manager` from the current fe
 
 ## P0: Must Finish Before 1.0
 
-- Freeze the compatibility contract.
-  - Define which `mvs.json` fields are stable in `1.x`.
-  - Define which `scan_policy` options are stable in `1.x`.
-  - Document compatibility guarantees for canonical signature inventories and JSON command output.
 - Add release-grade regression fixtures.
-  - Broaden multi-crate Rust workspace fixtures beyond the current allowlisted member-reexport path.
+  - Continue broadening multi-crate Rust workspace fixtures beyond the current direct and chained allowlisted member-facade coverage, including more mixed `pub mod` plus `pub use` layouts.
   - TS/JS package-export, import-map, monorepo self-reference, and path-alias fixtures.
-  - Python facade and `__all__` fixtures across multiple roots.
+  - Continue broadening Python facade and `__all__` fixtures beyond the current multiple-root coverage.
   - Convention-driven Ruby and Lua/Luau export-boundary fixtures.
+- Run a public-release audit.
+  - Verify installer and release assets on macOS, Linux, and Windows.
+  - Review onboarding docs for a first-time public user, not just dogfood usage.
+  - Decide whether to ship `1.0.0-rc1` first or cut `1.0.0` directly.
 
 ## P1: Strongly Recommended For 1.0
 
 - Publish policy guidance and defaults.
   - Recommend conservative vs aggressive export-following presets per ecosystem.
   - Document when `public_api_roots`, include/exclude filters, and export-following should be used together.
-- Strengthen output contracts.
-  - Add schema docs for JSON output and include field-level examples.
-  - Add changelog guidance for any future output expansion without breaking automation.
 - Improve public API reporting.
   - Surface concrete added/removed inventory entries in `lint` and `validate` JSON.
   - Show which scan-policy rule included or excluded a declaration when debugging a boundary.
@@ -56,8 +54,8 @@ This document tracks the work required to move `mvs-manager` from the current fe
 
 ### Rust
 
-- Expand fixture coverage for allowlisted workspace-member reexports and deeper facade stacks.
-- Stronger handling for facade crates that reexport private internals through multiple layers.
+- Expand fixture coverage beyond the current direct and chained allowlisted workspace-member facades, including more mixed `pub mod` plus `pub use` layouts.
+- More real-layout workspace fixtures around private implementation modules and facade crates.
 
 ### TypeScript / JavaScript
 
@@ -67,7 +65,7 @@ This document tracks the work required to move `mvs-manager` from the current fe
 
 - Dynamic export assembly still falls back by design.
 - External-package wildcard imports should remain conservative unless policy explicitly broadens them.
-- More fixture coverage for nonstandard roots and namespace-like layouts.
+- Multiple module roots are now covered; remaining fixture gaps are namespace-like layouts and more layered facade chains.
 
 ### Ruby
 
@@ -82,7 +80,7 @@ This document tracks the work required to move `mvs-manager` from the current fe
 ## Testing And Verification
 
 - Maintain green `cargo test`, `lint`, and `make ci` on every release candidate.
-- Add golden manifest fixtures so canonical inventory changes are reviewed deliberately.
+- Keep golden command and manifest fixtures current so canonical inventory or output changes are reviewed deliberately.
 - Add integration tests for every persisted scan-policy mode.
 - Track test counts and fixture categories in release notes so regressions are visible.
 
@@ -95,9 +93,7 @@ This document tracks the work required to move `mvs-manager` from the current fe
 
 ## Suggested Sequence
 
-1. Deepen multi-workspace fixtures and golden manifests.
-2. Freeze and document JSON output, manifest schema, and scan-policy stability.
-3. Add release-grade multi-workspace fixtures and golden manifests.
-4. Tighten `validate` into a stronger machine-readable compatibility gate.
-5. Run a public-release docs and installer audit.
-6. Cut a `1.0.0-rc1` if any stability uncertainty remains; otherwise cut `1.0.0`.
+1. Deepen multi-workspace and real-layout release fixtures.
+2. Add any missing golden fixtures for new contract surfaces before feature work resumes.
+3. Run a public-release docs and installer audit.
+4. Cut a `1.0.0-rc1` if any stability uncertainty remains; otherwise cut `1.0.0`.

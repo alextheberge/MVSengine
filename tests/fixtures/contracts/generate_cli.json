@@ -1,0 +1,80 @@
+{
+  "command": "generate",
+  "status": "ok",
+  "exit_code": 0,
+  "manifest_path": "<MANIFEST_PATH>",
+  "root": "<ROOT>",
+  "context": "cli",
+  "dry_run": false,
+  "manifest_written": true,
+  "range_strategy": "normalize",
+  "scan_policy": {},
+  "identity": {
+    "previous": "0.0.0-cli",
+    "current": "0.1.1-cli",
+    "arch_increment": 0,
+    "feat_increment": 1,
+    "prot_increment": 1
+  },
+  "reasons": [
+    "Feature incremented due to @mvs-feature set drift (example source: src/api.ts).",
+    "Protocol incremented due to @mvs-protocol surface drift (example source: src/api.ts).",
+    "Protocol incremented due to public API signature drift (example source: src/api.ts).",
+    "Protocol incremented due to AI tool schema hash drift (tool-calling contract changed)."
+  ],
+  "evidence": {
+    "feature_hash": "3a2eeb5e5415fa3675608e63ab9fa958958373ece992d6088c308011cc284ba1",
+    "protocol_hash": "1ba90c74a907ed7789d3af82c8130afa6f4d00f1d5b64d915931b02edaeee94d",
+    "public_api_hash": "a09a5b032ee6d02fa8f40450d36f90b134bd8eea977009f5043458c83d32aa07",
+    "feature_inventory_count": 3,
+    "protocol_inventory_count": 3,
+    "public_api_inventory_count": 6,
+    "diff": {
+      "features": {
+        "added": [
+          "auth_flow",
+          "offline_storage",
+          "rust_surface"
+        ],
+        "removed": []
+      },
+      "protocols": {
+        "added": [
+          "auth-api-v1",
+          "rust_api",
+          "token_handshake"
+        ],
+        "removed": []
+      },
+      "public_api": {
+        "added": [
+          {
+            "file": "src/api.ts",
+            "signature": "ts/js:const buildSession"
+          },
+          {
+            "file": "src/api.ts",
+            "signature": "ts/js:function login(username: string, password: string): Promise<string>"
+          },
+          {
+            "file": "src/api.ts",
+            "signature": "ts/js:interface Session"
+          },
+          {
+            "file": "src/lib.rs",
+            "signature": "rust:fn handshake(version: u32) -> bool"
+          },
+          {
+            "file": "src/lib.rs",
+            "signature": "rust:impl-fn HostAdapter::connect(&self, target: &str) -> bool"
+          },
+          {
+            "file": "src/lib.rs",
+            "signature": "rust:struct HostAdapter"
+          }
+        ],
+        "removed": []
+      }
+    }
+  }
+}

@@ -12,6 +12,8 @@ Machine-readable output:
 mvs-manager generate --root . --manifest mvs.json --context cli --format json
 ```
 
+The stable `1.x` manifest and command-output contract is defined in [docs/CONTRACT_1X.md](CONTRACT_1X.md).
+
 Persist an explicit API boundary:
 
 ```bash
@@ -140,7 +142,7 @@ For class-like languages, stored member signatures are owner-qualified so collis
 
 - TypeScript/JavaScript: multiline exports, named export clauses, re-exports, and default exports are parser-backed; `scan_policy.ts_export_following` or `--ts-export-following relative-only` can follow same-workspace relative barrel re-exports, and `workspace-only` also follows same-workspace `package.json` export maps and `imports` maps, including wildcard subpaths, multi-condition entries, and package-local monorepo self-references, plus root `tsconfig.json` or `jsconfig.json` `baseUrl` and `paths`
 - Go: exported `func` declarations, exported methods, exported named types, exported struct fields, exported embedded struct fields, exported interface methods, embedded interface type elements, exported constants, and exported package `var` declarations are parser-backed, and `scan_policy.go_export_following` or `--go-export-following package-only` can expand a rooted `.go` file to same-package sibling source files while skipping `_test.go` files
-- Rust: AST-normalized `pub fn`, `pub struct`, `pub enum`, `pub trait`, `pub type`, `pub const`, `pub static`, and `pub` impl methods are parser-backed, and `scan_policy.rust_export_following` or `--rust-export-following public-modules` can expand a rooted Rust facade such as `src/lib.rs` across same-crate `pub mod` graphs, including nested inline public modules, while leaving private-module files out; direct and chained same-crate `pub use` facades, including grouped and glob reexports that stay inside the crate, are also resolved onto their public alias names, including associated inherent methods, and `scan_policy.rust_workspace_members` or `--rust-workspace-member` can explicitly allow selected sibling crates when a facade intentionally reexports workspace members
+- Rust: AST-normalized `pub fn`, `pub struct`, `pub enum`, `pub trait`, `pub type`, `pub const`, `pub static`, and `pub` impl methods are parser-backed, and `scan_policy.rust_export_following` or `--rust-export-following public-modules` can expand a rooted Rust facade such as `src/lib.rs` across same-crate `pub mod` graphs, including nested inline public modules, while leaving private-module files out; direct and chained same-crate `pub use` facades, including grouped and glob reexports that stay inside the crate, are also resolved onto their public alias names, including associated inherent methods, and `scan_policy.rust_workspace_members` or `--rust-workspace-member` can explicitly allow selected sibling crates when a facade intentionally reexports workspace members, including chained facade crates and crates with nonstandard `[lib].path` roots
 - Python: public `class` declarations, non-underscore `def` declarations, public `type` aliases, and module-level or class-level constants such as `API_VERSION`, `__all__`, or `Worker.STATUS` are parser-backed without promoting nested local helpers or private class bodies; parseable `__all__` becomes the top-level export boundary, including common alias, unpacking, and `+=` composition patterns built from parseable literals, explicit import re-exports are stored in canonical forms such as `python:from auth.core import login as authorize`, same-workspace `from ... import *` or imported `__all__` aliases resolve when the upstream module export graph is static and parseable, and `scan_policy.python_export_following` plus `scan_policy.python_module_roots` or `--python-module-root` can pin how cross-module facade resolution behaves
 - Java: public types, public fields, interface constants, and public or interface methods are parser-backed; stored signatures drop leading annotations and preserve package plus nesting context as `java:type public class demo.AuthApi`, `java:field public String demo.AuthApi.status`, `java:const public static final String demo.AuthApi.Contract.STATE`, and `java:method public String demo.AuthApi.login(...)`
 - C#: public types, public fields, public constants, public properties, and public or interface methods are parser-backed; stored signatures drop leading attributes and preserve namespace plus nesting context as `csharp:type public class Demo.AuthApi`, `csharp:field public static readonly string Demo.AuthApi.Version`, `csharp:const public string Demo.AuthApi.STATUS_READY`, `csharp:property public string Demo.AuthApi.DisplayName { get }`, and `csharp:method public static string Demo.AuthApi.Login(...)`
@@ -219,7 +221,7 @@ Pattern matching rules:
 - exclude rules win over include rules when both match the same declaration
 - legacy Rust function patterns like `rust:fn fn *` still match during migration, but `generate` rewrites inventories to the canonical form
 
-See also: [docs/TODO_1.0.md](TODO_1.0.md) for the release-readiness roadmap and remaining `1.x` blockers.
+See also: [docs/CONTRACT_1X.md](CONTRACT_1X.md) for the frozen `1.x` manifest and command-output contract, and [docs/TODO_1.0.md](TODO_1.0.md) for the remaining release-readiness work.
 
 ## Exit Codes
 

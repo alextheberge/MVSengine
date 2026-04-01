@@ -77,6 +77,13 @@ struct RustCrateDescriptor {
 struct RustReexportedSymbol {
     symbol_path: String,
     signature: String,
+    crate_alias: Option<String>,
+}
+
+struct RustReexportLookup<'a> {
+    crate_alias: Option<&'a str>,
+    rust_crate_names: &'a BTreeSet<String>,
+    symbol_signatures_by_path: &'a BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -426,26 +433,39 @@ fn build_rust_module_index(
             let Ok(parsed) = syn::parse_file(&file.source) else {
                 continue;
             };
+            let crate_alias = rust_workspace_catalog
+                .descriptor_for_file(&file.rel)
+                .filter(|descriptor| {
+                    rust_workspace_catalog
+                        .crate_names
+                        .contains(&descriptor.crate_name)
+                })
+                .map(|descriptor| descriptor.crate_name.as_str());
             let current_module = rust_file_module_path(
                 Path::new(&file.rel),
                 rust_workspace_catalog.descriptor_for_file(&file.rel),
             );
+            let lookup = RustReexportLookup {
+                crate_alias,
+                rust_crate_names: &rust_workspace_catalog.crate_names,
+                symbol_signatures_by_path: &symbol_signatures_by_path,
+            };
             collect_rust_reexported_symbols(
                 &parsed.items,
                 &current_module,
                 true,
-                &rust_workspace_catalog.crate_names,
-                &symbol_signatures_by_path,
+                &lookup,
                 &mut pending,
             );
         }
 
         let mut changed = false;
         for symbol in pending {
-            changed |= insert_rust_symbol_signature(
+            changed |= insert_rust_symbol_signature_variant(
                 &mut symbol_signatures_by_path,
                 &symbol.symbol_path,
                 symbol.signature,
+                symbol.crate_alias.as_deref(),
             );
         }
         if !changed {
@@ -801,21 +821,13 @@ fn collect_rust_reexported_symbols(
     items: &[Item],
     current_module: &[String],
     current_module_public: bool,
-    rust_crate_names: &BTreeSet<String>,
-    symbol_signatures_by_path: &BTreeMap<String, Vec<String>>,
+    lookup: &RustReexportLookup<'_>,
     pending: &mut BTreeSet<RustReexportedSymbol>,
 ) {
     for item in items {
         match item {
             Item::Use(item_use) if current_module_public && is_public(&item_use.vis) => {
-                collect_rust_use_tree_symbols(
-                    &item_use.tree,
-                    &[],
-                    current_module,
-                    rust_crate_names,
-                    symbol_signatures_by_path,
-                    pending,
-                );
+                collect_rust_use_tree_symbols(&item_use.tree, &[], current_module, lookup, pending);
             }
             Item::Mod(item_mod) if current_module_public => {
                 let mut nested_module = current_module.to_vec();
@@ -825,8 +837,7 @@ fn collect_rust_reexported_symbols(
                         nested_items,
                         &nested_module,
                         is_public(&item_mod.vis),
-                        rust_crate_names,
-                        symbol_signatures_by_path,
+                        lookup,
                         pending,
                     );
                 }
@@ -916,22 +927,14 @@ fn collect_rust_use_tree_symbols(
     tree: &UseTree,
     prefix: &[String],
     current_module: &[String],
-    rust_crate_names: &BTreeSet<String>,
-    symbol_signatures_by_path: &BTreeMap<String, Vec<String>>,
+    lookup: &RustReexportLookup<'_>,
     pending: &mut BTreeSet<RustReexportedSymbol>,
 ) {
     match tree {
         UseTree::Path(path) => {
             let mut next = prefix.to_vec();
             next.push(path.ident.to_string());
-            collect_rust_use_tree_symbols(
-                &path.tree,
-                &next,
-                current_module,
-                rust_crate_names,
-                symbol_signatures_by_path,
-                pending,
-            );
+            collect_rust_use_tree_symbols(&path.tree, &next, current_module, lookup, pending);
         }
         UseTree::Name(name) => {
             if name.ident == "self" {
@@ -939,15 +942,7 @@ fn collect_rust_use_tree_symbols(
             }
             let mut source = prefix.to_vec();
             source.push(name.ident.to_string());
-            resolve_rust_reexported_symbol(
-                &source,
-                None,
-                false,
-                current_module,
-                rust_crate_names,
-                symbol_signatures_by_path,
-                pending,
-            );
+            resolve_rust_reexported_symbol(&source, None, false, current_module, lookup, pending);
         }
         UseTree::Rename(rename) => {
             let mut source = prefix.to_vec();
@@ -957,32 +952,16 @@ fn collect_rust_use_tree_symbols(
                 Some(rename.rename.to_string()),
                 false,
                 current_module,
-                rust_crate_names,
-                symbol_signatures_by_path,
+                lookup,
                 pending,
             );
         }
         UseTree::Glob(_) => {
-            resolve_rust_reexported_symbol(
-                prefix,
-                None,
-                true,
-                current_module,
-                rust_crate_names,
-                symbol_signatures_by_path,
-                pending,
-            );
+            resolve_rust_reexported_symbol(prefix, None, true, current_module, lookup, pending);
         }
         UseTree::Group(group) => {
             for item in &group.items {
-                collect_rust_use_tree_symbols(
-                    item,
-                    prefix,
-                    current_module,
-                    rust_crate_names,
-                    symbol_signatures_by_path,
-                    pending,
-                );
+                collect_rust_use_tree_symbols(item, prefix, current_module, lookup, pending);
             }
         }
     }
@@ -1045,18 +1024,18 @@ fn resolve_rust_reexported_symbol(
     alias: Option<String>,
     is_glob: bool,
     current_module: &[String],
-    rust_crate_names: &BTreeSet<String>,
-    symbol_signatures_by_path: &BTreeMap<String, Vec<String>>,
+    lookup: &RustReexportLookup<'_>,
     pending: &mut BTreeSet<RustReexportedSymbol>,
 ) {
-    let Some(resolved_source) = resolve_rust_path(current_module, source, rust_crate_names) else {
+    let Some(resolved_source) = resolve_rust_path(current_module, source, lookup.rust_crate_names)
+    else {
         return;
     };
     let source_path = resolved_source.join("::");
 
     if is_glob {
         let prefix = format!("{source_path}::");
-        for (symbol_path, symbol_signatures) in symbol_signatures_by_path {
+        for (symbol_path, symbol_signatures) in lookup.symbol_signatures_by_path {
             if !(symbol_path == &source_path || symbol_path.starts_with(&prefix)) {
                 continue;
             }
@@ -1069,7 +1048,13 @@ fn resolve_rust_reexported_symbol(
                 continue;
             }
             let export_path = join_module_path(current_module, remainder);
-            queue_rust_reexported_symbols(symbol_path, &export_path, symbol_signatures, pending);
+            queue_rust_reexported_symbols(
+                symbol_path,
+                &export_path,
+                symbol_signatures,
+                lookup.crate_alias,
+                pending,
+            );
         }
         return;
     }
@@ -1081,10 +1066,16 @@ fn resolve_rust_reexported_symbol(
             .unwrap_or_else(|| source_path.clone())
     });
     let export_path = join_module_path(current_module, &export_name);
-    let Some(symbol_signatures) = symbol_signatures_by_path.get(&source_path) else {
+    let Some(symbol_signatures) = lookup.symbol_signatures_by_path.get(&source_path) else {
         return;
     };
-    queue_rust_reexported_symbols(&source_path, &export_path, symbol_signatures, pending);
+    queue_rust_reexported_symbols(
+        &source_path,
+        &export_path,
+        symbol_signatures,
+        lookup.crate_alias,
+        pending,
+    );
 }
 
 fn emit_rust_reexported_signatures(
@@ -1102,12 +1093,14 @@ fn queue_rust_reexported_symbols(
     source_path: &str,
     export_path: &str,
     symbol_signatures: &[String],
+    crate_alias: Option<&str>,
     pending: &mut BTreeSet<RustReexportedSymbol>,
 ) {
     for signature in symbol_signatures {
         pending.insert(RustReexportedSymbol {
             symbol_path: export_path.to_string(),
             signature: signature.replacen(source_path, export_path, 1),
+            crate_alias: crate_alias.map(str::to_string),
         });
     }
 }
@@ -3530,6 +3523,107 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("shared_contract::")));
+    }
+
+    #[test]
+    fn rust_export_following_public_modules_resolves_chained_workspace_member_reexports() {
+        let workspace = TempWorkspace::new();
+        let app_src = workspace.path().join("app/src");
+        let sdk_src = workspace.path().join("sdk/src");
+        let shared_contract = workspace.path().join("shared/contract");
+        fs::create_dir_all(&app_src).expect("failed to create app/src");
+        fs::create_dir_all(&sdk_src).expect("failed to create sdk/src");
+        fs::create_dir_all(&shared_contract).expect("failed to create shared/contract");
+
+        fs::write(
+            workspace.path().join("app/Cargo.toml"),
+            r#"
+            [package]
+            name = "app"
+        "#,
+        )
+        .expect("failed to write app Cargo.toml");
+
+        fs::write(
+            workspace.path().join("sdk/Cargo.toml"),
+            r#"
+            [package]
+            name = "sdk"
+        "#,
+        )
+        .expect("failed to write sdk Cargo.toml");
+
+        fs::write(
+            workspace.path().join("shared/Cargo.toml"),
+            r#"
+            [package]
+            name = "shared-contract"
+
+            [lib]
+            path = "contract/mod.rs"
+        "#,
+        )
+        .expect("failed to write shared Cargo.toml");
+
+        fs::write(
+            app_src.join("lib.rs"),
+            r#"
+            pub use sdk::{PublicSession, open};
+        "#,
+        )
+        .expect("failed to write app rust root fixture");
+
+        fs::write(
+            sdk_src.join("lib.rs"),
+            r#"
+            pub use shared_contract::{Hidden as PublicSession, connect as open};
+        "#,
+        )
+        .expect("failed to write sdk rust root fixture");
+
+        fs::write(
+            shared_contract.join("mod.rs"),
+            r#"
+            pub struct Hidden;
+
+            impl Hidden {
+                pub fn ping(&self) -> bool { true }
+            }
+
+            pub fn connect(target: u32) -> bool { target > 0 }
+        "#,
+        )
+        .expect("failed to write shared rust fixture");
+
+        let report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["app/src/lib.rs".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::PublicModules,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                rust_workspace_members: vec!["sdk".to_string(), "shared".to_string()],
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(report.public_api.iter().any(|entry| {
+            entry.file == "app/src/lib.rs" && entry.signature == "rust:struct PublicSession"
+        }));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.file == "app/src/lib.rs"
+                && entry.signature == "rust:impl-fn PublicSession::ping(&self) -> bool"
+        }));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.file == "app/src/lib.rs" && entry.signature == "rust:fn open(target: u32) -> bool"
+        }));
     }
 
     #[test]

@@ -1,0 +1,92 @@
+{
+  "$schema": "https://mvs.dev/schema/v1",
+  "identity": {
+    "mvs": "0.1.1-cli",
+    "arch": 0,
+    "feat": 1,
+    "prot": 1,
+    "cont": "cli"
+  },
+  "compatibility": {
+    "host_range": {
+      "min_prot": 0,
+      "max_prot": 1
+    },
+    "extension_range": {
+      "min_prot": 0,
+      "max_prot": 1
+    },
+    "legacy_shims": []
+  },
+  "capabilities": {},
+  "ai_contract": {
+    "tool_schema_version": 1,
+    "tool_schema_hash": "9ffb59faa75eb3f155578818fd87365e042322f529de64bb35bb32e5798ab3f7",
+    "required_model_capabilities": [],
+    "provided_model_capabilities": [],
+    "prompt_contract_id": "default"
+  },
+  "environment": {
+    "profiles": [
+      "cli"
+    ],
+    "runtime_constraints": {}
+  },
+  "evidence": {
+    "feature_hash": "3a2eeb5e5415fa3675608e63ab9fa958958373ece992d6088c308011cc284ba1",
+    "protocol_hash": "1ba90c74a907ed7789d3af82c8130afa6f4d00f1d5b64d915931b02edaeee94d",
+    "public_api_hash": "a09a5b032ee6d02fa8f40450d36f90b134bd8eea977009f5043458c83d32aa07",
+    "feature_inventory": [
+      "auth_flow",
+      "offline_storage",
+      "rust_surface"
+    ],
+    "protocol_inventory": [
+      "auth-api-v1",
+      "rust_api",
+      "token_handshake"
+    ],
+    "public_api_inventory": [
+      {
+        "file": "src/api.ts",
+        "signature": "ts/js:const buildSession"
+      },
+      {
+        "file": "src/api.ts",
+        "signature": "ts/js:function login(username: string, password: string): Promise<string>"
+      },
+      {
+        "file": "src/api.ts",
+        "signature": "ts/js:interface Session"
+      },
+      {
+        "file": "src/lib.rs",
+        "signature": "rust:fn handshake(version: u32) -> bool"
+      },
+      {
+        "file": "src/lib.rs",
+        "signature": "rust:impl-fn HostAdapter::connect(&self, target: &str) -> bool"
+      },
+      {
+        "file": "src/lib.rs",
+        "signature": "rust:struct HostAdapter"
+      }
+    ]
+  },
+  "history": [
+    {
+      "mvs": "0.1.1-cli",
+      "arch": 0,
+      "feat": 1,
+      "prot": 1,
+      "cont": "cli",
+      "reasons": [
+        "Feature incremented due to @mvs-feature set drift (example source: src/api.ts).",
+        "Protocol incremented due to @mvs-protocol surface drift (example source: src/api.ts).",
+        "Protocol incremented due to public API signature drift (example source: src/api.ts).",
+        "Protocol incremented due to AI tool schema hash drift (tool-calling contract changed)."
+      ],
+      "changed_at_unix": 0
+    }
+  ]
+}

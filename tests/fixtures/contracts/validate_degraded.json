@@ -1,0 +1,85 @@
+{
+  "command": "validate",
+  "status": "degraded",
+  "exit_code": 0,
+  "compatible": true,
+  "degraded": true,
+  "failure_count": 0,
+  "degraded_count": 1,
+  "host_manifest": "<HOST_MANIFEST>",
+  "extension_manifest": "<EXTENSION_MANIFEST>",
+  "target_context": "cli",
+  "reasons": [
+    "Protocol range mismatch resolved through legacy shim (extension PROT 1, host PROT 2)."
+  ],
+  "checks": [
+    {
+      "axis": "protocol",
+      "status": "degraded",
+      "code": "protocol_range_shimmed",
+      "message": "Protocol range mismatch resolved through legacy shim (extension PROT 1, host PROT 2).",
+      "details": {
+        "extension_protocol": 1,
+        "host_protocol": 2,
+        "shim_adapter": "auth_v1_to_v2"
+      }
+    },
+    {
+      "axis": "context",
+      "status": "pass",
+      "code": "context_ok",
+      "message": "Target context `cli` satisfies extension CONT `cli`.",
+      "details": {
+        "required_context": "cli",
+        "target_context": "cli"
+      }
+    },
+    {
+      "axis": "runtime_profile",
+      "status": "pass",
+      "code": "runtime_profile_ok",
+      "message": "Host runtime profiles support target context `cli`.",
+      "details": {
+        "host_profiles": [
+          "cli"
+        ],
+        "target_context": "cli"
+      }
+    },
+    {
+      "axis": "capabilities",
+      "status": "pass",
+      "code": "required_capabilities_ok",
+      "message": "Host provides all required extension capabilities.",
+      "details": {
+        "required_capabilities": [
+          "offline_storage"
+        ]
+      }
+    },
+    {
+      "axis": "ai_schema",
+      "status": "pass",
+      "code": "ai_schema_version_ok",
+      "message": "Host AI schema version 2 satisfies extension requirement 1.",
+      "details": {
+        "provided_tool_schema_version": 2,
+        "required_tool_schema_version": 1
+      }
+    },
+    {
+      "axis": "ai_model_capabilities",
+      "status": "pass",
+      "code": "ai_model_capabilities_ok",
+      "message": "Host runtime provides all required AI model capabilities.",
+      "details": {
+        "provided_model_capabilities": [
+          "tool_calling"
+        ],
+        "required_model_capabilities": [
+          "tool_calling"
+        ]
+      }
+    }
+  ]
+}

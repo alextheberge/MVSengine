@@ -1,0 +1,39 @@
+{
+  "command": "lint",
+  "status": "failed",
+  "exit_code": 20,
+  "manifest_path": "<MANIFEST_PATH>",
+  "root": "<ROOT>",
+  "scan_policy": {},
+  "failure_count": 1,
+  "failures": [
+    "Public API signature drift detected. Added: src/api.ts|ts/js:function rotateToken(token: string): string Build must fail until PROT is incremented and manifest is regenerated."
+  ],
+  "evidence": {
+    "feature_hash": "3a2eeb5e5415fa3675608e63ab9fa958958373ece992d6088c308011cc284ba1",
+    "protocol_hash": "1ba90c74a907ed7789d3af82c8130afa6f4d00f1d5b64d915931b02edaeee94d",
+    "public_api_hash": "ced93f98a547279f7b4e1c44fbf15c8fbeaeb996ddd2572c528b2c2fec8c69a9",
+    "feature_inventory_count": 3,
+    "protocol_inventory_count": 3,
+    "public_api_inventory_count": 7,
+    "diff": {
+      "features": {
+        "added": [],
+        "removed": []
+      },
+      "protocols": {
+        "added": [],
+        "removed": []
+      },
+      "public_api": {
+        "added": [
+          {
+            "file": "src/api.ts",
+            "signature": "ts/js:function rotateToken(token: string): string"
+          }
+        ],
+        "removed": []
+      }
+    }
+  }
+}
