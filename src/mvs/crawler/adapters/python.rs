@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tree_sitter::Node;
 
 use super::super::{
-    extract_tree_sitter_prefix_signature, is_public_python_name, named_children, node_text,
-    normalize_tree_sitter_signature,
+    children_by_field_name, extract_tree_sitter_prefix_signature, is_public_python_name,
+    named_children, node_text, normalize_tree_sitter_signature,
 };
 
 pub(super) fn extract(root: Node<'_>, source: &str) -> Vec<String> {
@@ -158,6 +158,17 @@ fn collect_definition(
                 );
             }
         }
+        "import_statement" | "import_from_statement" => {
+            if inside_callable || !class_namespace.is_empty() {
+                return;
+            }
+
+            signatures.extend(
+                extract_python_import_reexport_signatures(node, source, explicit_exports)
+                    .into_iter()
+                    .map(|signature| format!("python:{signature}")),
+            );
+        }
         "expression_statement" | "module" | "block" => collect_public_api(
             node,
             source,
@@ -172,8 +183,15 @@ fn collect_definition(
 
 fn extract_python_explicit_exports(root: Node<'_>, source: &str) -> Option<BTreeSet<String>> {
     let mut exports = BTreeSet::new();
+    let mut bindings = BTreeMap::new();
     let mut found_explicit_boundary = false;
-    if !collect_python_explicit_exports(root, source, &mut exports, &mut found_explicit_boundary) {
+    if !collect_python_explicit_exports(
+        root,
+        source,
+        &mut exports,
+        &mut bindings,
+        &mut found_explicit_boundary,
+    ) {
         return None;
     }
 
@@ -184,26 +202,39 @@ fn collect_python_explicit_exports(
     node: Node<'_>,
     source: &str,
     exports: &mut BTreeSet<String>,
+    bindings: &mut BTreeMap<String, BTreeSet<String>>,
     found_explicit_boundary: &mut bool,
 ) -> bool {
     match node.kind() {
         "module" | "expression_statement" => named_children(node).into_iter().all(|child| {
-            collect_python_explicit_exports(child, source, exports, found_explicit_boundary)
+            collect_python_explicit_exports(
+                child,
+                source,
+                exports,
+                bindings,
+                found_explicit_boundary,
+            )
         }),
         "assignment" => {
-            if extract_python_assignment_name(node, source).as_deref() != Some("__all__") {
+            let Some(name) = extract_python_assignment_name(node, source) else {
                 return true;
-            }
+            };
 
             let Some(right) = node.child_by_field_name("right") else {
-                return false;
+                return name != "__all__";
             };
-            let Some(names) = extract_python_explicit_export_names(right, source) else {
-                return false;
+            let Some(names) = extract_python_explicit_export_names(right, source, bindings) else {
+                bindings.remove(&name);
+                return name != "__all__";
             };
 
-            *found_explicit_boundary = true;
-            exports.extend(names);
+            if name == "__all__" {
+                *found_explicit_boundary = true;
+                exports.clear();
+                exports.extend(names.clone());
+            };
+
+            bindings.insert(name, names);
             true
         }
         "augmented_assignment" => {
@@ -211,45 +242,66 @@ fn collect_python_explicit_exports(
             let left_name = left
                 .and_then(|child| node_text(child, source))
                 .map(normalize_tree_sitter_signature);
-            if left_name.as_deref() != Some("__all__") {
+            let Some(name) = left_name else {
                 return true;
-            }
+            };
 
             let Some(right) = node.child_by_field_name("right") else {
-                return false;
+                return name != "__all__";
             };
-            let Some(names) = extract_python_explicit_export_names(right, source) else {
-                return false;
+            let Some(names) = extract_python_explicit_export_names(right, source, bindings) else {
+                bindings.remove(&name);
+                return name != "__all__";
             };
 
-            *found_explicit_boundary = true;
-            exports.extend(names);
+            let binding = bindings.entry(name.clone()).or_default();
+            binding.extend(names.clone());
+
+            if name == "__all__" {
+                *found_explicit_boundary = true;
+                exports.extend(names);
+            };
             true
         }
         _ => true,
     }
 }
 
-fn extract_python_explicit_export_names(node: Node<'_>, source: &str) -> Option<BTreeSet<String>> {
+fn extract_python_explicit_export_names(
+    node: Node<'_>,
+    source: &str,
+    bindings: &BTreeMap<String, BTreeSet<String>>,
+) -> Option<BTreeSet<String>> {
     match node.kind() {
         "parenthesized_expression" => named_children(node)
             .into_iter()
             .next()
-            .and_then(|child| extract_python_explicit_export_names(child, source)),
+            .and_then(|child| extract_python_explicit_export_names(child, source, bindings)),
+        "list_splat" | "parenthesized_list_splat" => named_children(node)
+            .into_iter()
+            .next()
+            .and_then(|child| extract_python_explicit_export_names(child, source, bindings)),
         "list" | "tuple" | "set" | "expression_list" => {
             let mut exports = BTreeSet::new();
             for child in named_children(node) {
-                exports.extend(extract_python_explicit_export_names(child, source)?);
+                exports.extend(extract_python_explicit_export_names(
+                    child, source, bindings,
+                )?);
             }
             Some(exports)
         }
         "binary_operator" => {
             let left = node.child_by_field_name("left")?;
             let right = node.child_by_field_name("right")?;
-            let mut exports = extract_python_explicit_export_names(left, source)?;
-            exports.extend(extract_python_explicit_export_names(right, source)?);
+            let mut exports = extract_python_explicit_export_names(left, source, bindings)?;
+            exports.extend(extract_python_explicit_export_names(
+                right, source, bindings,
+            )?);
             Some(exports)
         }
+        "identifier" => node_text(node, source)
+            .map(normalize_tree_sitter_signature)
+            .and_then(|name| bindings.get(&name).cloned()),
         "string" => {
             let name = parse_python_string_literal(node_text(node, source)?)?;
             let mut exports = BTreeSet::new();
@@ -282,6 +334,119 @@ fn parse_python_string_literal(raw: &str) -> Option<String> {
     }
 
     Some(content[1..content.len() - 1].to_string())
+}
+
+fn extract_python_import_reexport_signatures(
+    node: Node<'_>,
+    source: &str,
+    explicit_exports: Option<&BTreeSet<String>>,
+) -> Vec<String> {
+    if explicit_exports.is_none() {
+        return Vec::new();
+    }
+
+    extract_python_import_bindings(node, source)
+        .into_iter()
+        .filter(|(binding_name, _)| {
+            python_should_include_name(binding_name, &[], explicit_exports, false)
+        })
+        .map(|(_, signature)| signature)
+        .collect()
+}
+
+fn extract_python_import_bindings(node: Node<'_>, source: &str) -> Vec<(String, String)> {
+    match node.kind() {
+        "import_statement" => children_by_field_name(node, "name")
+            .into_iter()
+            .filter_map(|child| extract_python_import_binding(child, source))
+            .collect(),
+        "import_from_statement" => {
+            let Some(module_name) = node
+                .child_by_field_name("module_name")
+                .and_then(|child| node_text(child, source))
+                .map(normalize_tree_sitter_signature)
+                .filter(|value| !value.is_empty())
+            else {
+                return Vec::new();
+            };
+
+            children_by_field_name(node, "name")
+                .into_iter()
+                .filter_map(|child| extract_python_from_import_binding(child, source, &module_name))
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn extract_python_import_binding(node: Node<'_>, source: &str) -> Option<(String, String)> {
+    match node.kind() {
+        "aliased_import" => {
+            let import_name = node
+                .child_by_field_name("name")
+                .and_then(|child| node_text(child, source))
+                .map(normalize_tree_sitter_signature)
+                .filter(|value| !value.is_empty())?;
+            let alias = node
+                .child_by_field_name("alias")
+                .and_then(|child| node_text(child, source))
+                .map(normalize_tree_sitter_signature)
+                .filter(|value| !value.is_empty())?;
+            Some((alias.clone(), format!("import {import_name} as {alias}")))
+        }
+        "dotted_name" => {
+            let import_name = node_text(node, source)
+                .map(normalize_tree_sitter_signature)
+                .filter(|value| !value.is_empty())?;
+            let binding_name = import_name
+                .split('.')
+                .next()
+                .map(ToString::to_string)
+                .filter(|value| !value.is_empty())?;
+            Some((binding_name, format!("import {import_name}")))
+        }
+        _ => None,
+    }
+}
+
+fn extract_python_from_import_binding(
+    node: Node<'_>,
+    source: &str,
+    module_name: &str,
+) -> Option<(String, String)> {
+    match node.kind() {
+        "aliased_import" => {
+            let import_name = node
+                .child_by_field_name("name")
+                .and_then(|child| node_text(child, source))
+                .map(normalize_tree_sitter_signature)
+                .filter(|value| !value.is_empty())?;
+            let alias = node
+                .child_by_field_name("alias")
+                .and_then(|child| node_text(child, source))
+                .map(normalize_tree_sitter_signature)
+                .filter(|value| !value.is_empty())?;
+            Some((
+                alias.clone(),
+                format!("from {module_name} import {import_name} as {alias}"),
+            ))
+        }
+        "dotted_name" => {
+            let import_name = node_text(node, source)
+                .map(normalize_tree_sitter_signature)
+                .filter(|value| !value.is_empty())?;
+            let binding_name = import_name
+                .rsplit('.')
+                .next()
+                .map(ToString::to_string)
+                .filter(|value| !value.is_empty())?;
+            Some((
+                binding_name,
+                format!("from {module_name} import {import_name}"),
+            ))
+        }
+        _ => None,
+    }
 }
 
 fn extend_python_class_namespace(

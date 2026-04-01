@@ -2270,6 +2270,150 @@ mod tests {
     }
 
     #[test]
+    fn tree_sitter_captures_python_all_composition_via_aliases_and_augmented_assignments() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("api.py"),
+            r#"
+            API_VERSION: str = "v1"
+            CORE_EXPORTS = ("login",)
+            EXTRA_EXPORTS = ["Worker"]
+            TYPE_EXPORT = "SessionToken"
+            ALL_EXPORTS = CORE_EXPORTS + EXTRA_EXPORTS
+            ALL_EXPORTS += (TYPE_EXPORT,)
+            __all__ = ALL_EXPORTS
+
+            type SessionToken = str
+            type _InternalToken = str
+
+            class Worker:
+                STATUS: str = "ready"
+
+                def run_job(name: str) -> str:
+                    return name
+
+            def login(username: str) -> str:
+                return username
+
+            def _internal() -> str:
+                return "hidden"
+        "#,
+        )
+        .expect("failed to write python fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:const __all__"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:class Worker"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:const Worker.STATUS: str"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:def Worker.run_job(name: str) -> str"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:def login(username: str) -> str"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:type SessionToken = str"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("API_VERSION")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("CORE_EXPORTS")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("EXTRA_EXPORTS")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("TYPE_EXPORT")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("_internal")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("_InternalToken")));
+    }
+
+    #[test]
+    fn tree_sitter_captures_python_explicit_import_reexports_and_splat_exports() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("api.py"),
+            r#"
+            CORE_EXPORTS = ("authorize",)
+            __all__ = [*CORE_EXPORTS, "Worker", "tokens"]
+
+            from auth.core import login as authorize
+            from auth.models import Worker
+            import auth.tokens as tokens
+            import typing as _typing
+
+            def _internal() -> str:
+                return "hidden"
+        "#,
+        )
+        .expect("failed to write python fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:const __all__"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:from auth.core import login as authorize"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:from auth.models import Worker"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:import auth.tokens as tokens"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("CORE_EXPORTS")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("_typing")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("_internal")));
+    }
+
+    #[test]
     fn tree_sitter_python_falls_back_when_all_is_not_parseable() {
         let workspace = TempWorkspace::new();
         let src = workspace.path().join("src");
@@ -3253,15 +3397,15 @@ mod tests {
                 # @mvs-feature("python_bridge")
                 # @mvs-protocol("python-api-v1")
                 API_VERSION: str = "v1"
-                __all__ = ("login", "Worker")
+                CORE_EXPORTS = ("authorize",)
+                __all__ = [*CORE_EXPORTS, "Worker"]
                 type SessionToken = str
+
+                from auth.core import login as authorize
 
                 class Worker:
                     STATUS: str = "ready"
                     pass
-
-                def login(username: str) -> str:
-                    return username
 
                 def _hidden() -> str:
                     return "hidden"
@@ -3272,9 +3416,15 @@ mod tests {
                     "python:const __all__",
                     "python:class Worker",
                     "python:const Worker.STATUS: str",
-                    "python:def login(username: str) -> str",
+                    "python:from auth.core import login as authorize",
                 ],
-                rejected_public_api_fragments: &["_hidden", "API_VERSION", "SessionToken"],
+                rejected_public_api_fragments: &[
+                    "_hidden",
+                    "API_VERSION",
+                    "SessionToken",
+                    "CORE_EXPORTS",
+                    "typing",
+                ],
             },
             ParserAdapterCase {
                 file_name: "AuthApi.java",
