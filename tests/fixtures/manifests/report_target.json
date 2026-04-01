@@ -1,0 +1,69 @@
+{
+  "$schema": "https://mvs.dev/schema/v1",
+  "identity": {
+    "mvs": "0.2.2-cli",
+    "arch": 0,
+    "feat": 2,
+    "prot": 2,
+    "cont": "cli"
+  },
+  "compatibility": {
+    "host_range": { "min_prot": 2, "max_prot": 2 },
+    "extension_range": { "min_prot": 1, "max_prot": 2 },
+    "legacy_shims": [
+      { "from_prot": 1, "to_prot": 2, "adapter": "auth_v1_to_v2" }
+    ]
+  },
+  "capabilities": {
+    "offline_storage": true,
+    "streaming": true
+  },
+  "ai_contract": {
+    "tool_schema_version": 2,
+    "tool_schema_hash": "schema-v2",
+    "required_model_capabilities": ["tool_calling", "json_schema"],
+    "provided_model_capabilities": ["tool_calling", "json_schema"],
+    "prompt_contract_id": "prompt-v2"
+  },
+  "environment": {
+    "profiles": ["cli", "edge"],
+    "runtime_constraints": {
+      "node": "20+",
+      "rust": "1.74+"
+    }
+  },
+  "scan_policy": {
+    "public_api_roots": ["src/api.ts"],
+    "ts_export_following": "relative_only",
+    "public_api_includes": ["ts/js:function login*"],
+    "public_api_excludes": ["ts/js:const buildSession"]
+  },
+  "evidence": {
+    "feature_hash": "feature-v2",
+    "protocol_hash": "protocol-v2",
+    "public_api_hash": "api-v2",
+    "feature_inventory": ["auth_flow", "offline_storage"],
+    "protocol_inventory": ["auth-api-v1", "token_handshake"],
+    "public_api_inventory": [
+      {
+        "file": "src/api.ts",
+        "signature": "ts/js:function login(username: string): Promise<string>"
+      },
+      {
+        "file": "src/api.ts",
+        "signature": "ts/js:interface Session"
+      }
+    ]
+  },
+  "history": [
+    {
+      "mvs": "0.2.2-cli",
+      "arch": 0,
+      "feat": 2,
+      "prot": 2,
+      "cont": "cli",
+      "reasons": ["Protocol incremented due to token handshake changes."],
+      "changed_at_unix": 1700001000
+    }
+  ]
+}

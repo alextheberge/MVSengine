@@ -61,13 +61,13 @@ pub struct Compatibility {
     pub legacy_shims: Vec<LegacyShim>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, Eq, PartialEq)]
 pub struct ProtocolRange {
     pub min_prot: u64,
     pub max_prot: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
 pub struct LegacyShim {
     pub from_prot: u64,
     pub to_prot: u64,

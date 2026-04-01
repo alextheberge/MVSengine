@@ -3,3 +3,4 @@ pub mod generator;
 pub mod linter;
 mod output;
 pub mod reader;
+pub mod report;

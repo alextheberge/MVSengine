@@ -1,0 +1,142 @@
+{
+  "command": "report",
+  "status": "changed",
+  "exit_code": 0,
+  "base_manifest": "<BASE_MANIFEST>",
+  "target_manifest": "<TARGET_MANIFEST>",
+  "change_count": 21,
+  "changed_sections": [
+    "identity",
+    "compatibility",
+    "capabilities",
+    "ai_contract",
+    "environment",
+    "scan_policy",
+    "evidence"
+  ],
+  "comparison": {
+    "identity": {
+      "base": "0.1.1-cli",
+      "target": "0.2.2-cli",
+      "arch_delta": 0,
+      "feat_delta": 1,
+      "prot_delta": 1,
+      "context_changed": false
+    },
+    "compatibility": {
+      "host_range_changed": true,
+      "extension_range_changed": true,
+      "base_host_range": {
+        "min_prot": 1,
+        "max_prot": 1
+      },
+      "target_host_range": {
+        "min_prot": 2,
+        "max_prot": 2
+      },
+      "base_extension_range": {
+        "min_prot": 1,
+        "max_prot": 1
+      },
+      "target_extension_range": {
+        "min_prot": 1,
+        "max_prot": 2
+      },
+      "added_legacy_shims": [
+        {
+          "from_prot": 1,
+          "to_prot": 2,
+          "adapter": "auth_v1_to_v2"
+        }
+      ],
+      "removed_legacy_shims": []
+    },
+    "capabilities": {
+      "changes": [
+        {
+          "field": "streaming",
+          "target": true
+        }
+      ]
+    },
+    "ai_contract": {
+      "tool_schema_version_changed": true,
+      "tool_schema_hash_changed": true,
+      "prompt_contract_id_changed": true,
+      "base_tool_schema_version": 1,
+      "target_tool_schema_version": 2,
+      "base_tool_schema_hash": "schema-v1",
+      "target_tool_schema_hash": "schema-v2",
+      "base_prompt_contract_id": "prompt-v1",
+      "target_prompt_contract_id": "prompt-v2",
+      "required_model_capabilities": {
+        "added": [
+          "json_schema"
+        ],
+        "removed": []
+      },
+      "provided_model_capabilities": {
+        "added": [
+          "json_schema"
+        ],
+        "removed": []
+      }
+    },
+    "environment": {
+      "profiles": {
+        "added": [
+          "edge"
+        ],
+        "removed": []
+      },
+      "runtime_constraints": [
+        {
+          "field": "node",
+          "target": "20+"
+        }
+      ]
+    },
+    "scan_policy": {
+      "changes": [
+        {
+          "field": "public_api_excludes",
+          "target": [
+            "ts/js:const buildSession"
+          ]
+        },
+        {
+          "field": "ts_export_following",
+          "target": "relative_only"
+        }
+      ]
+    },
+    "evidence": {
+      "feature_hash_changed": true,
+      "protocol_hash_changed": true,
+      "public_api_hash_changed": true,
+      "diff": {
+        "features": {
+          "added": [
+            "offline_storage"
+          ],
+          "removed": []
+        },
+        "protocols": {
+          "added": [
+            "token_handshake"
+          ],
+          "removed": []
+        },
+        "public_api": {
+          "added": [
+            {
+              "file": "src/api.ts",
+              "signature": "ts/js:interface Session"
+            }
+          ],
+          "removed": []
+        }
+      }
+    }
+  }
+}

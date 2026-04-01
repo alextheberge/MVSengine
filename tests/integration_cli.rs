@@ -48,6 +48,8 @@ fn normalize_contract_output(payload: &mut Value) {
     replace_string_field(payload, "root", "<ROOT>");
     replace_string_field(payload, "host_manifest", "<HOST_MANIFEST>");
     replace_string_field(payload, "extension_manifest", "<EXTENSION_MANIFEST>");
+    replace_string_field(payload, "base_manifest", "<BASE_MANIFEST>");
+    replace_string_field(payload, "target_manifest", "<TARGET_MANIFEST>");
 }
 
 fn normalize_contract_manifest(manifest: &mut Value) {
@@ -615,6 +617,69 @@ fn validate_json_degraded_matches_golden_contract_fixture() {
     normalize_contract_output(&mut payload);
 
     assert_eq!(payload, load_contract_json("validate_degraded.json"));
+}
+
+#[test]
+fn report_json_returns_stable_manifest_diff_shape() {
+    let base = fixtures_root().join("manifests/report_base.json");
+    let target = fixtures_root().join("manifests/report_target.json");
+
+    let mut report = binary_cmd();
+    let assert = report
+        .args([
+            "report",
+            "--base-manifest",
+            base.to_str().expect("non-utf8 path"),
+            "--target-manifest",
+            target.to_str().expect("non-utf8 path"),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())
+        .expect("report output should be utf8");
+    let payload: Value = serde_json::from_str(&stdout).expect("report json output should parse");
+
+    assert_eq!(payload["command"], "report");
+    assert_eq!(payload["status"], "changed");
+    assert_eq!(payload["exit_code"], 0);
+    assert_eq!(payload["change_count"], 21);
+    let sections = payload["changed_sections"]
+        .as_array()
+        .expect("changed sections should be an array");
+    assert!(sections.iter().any(|item| item == "identity"));
+    assert!(sections.iter().any(|item| item == "scan_policy"));
+    assert!(sections.iter().any(|item| item == "evidence"));
+}
+
+#[test]
+fn report_json_matches_golden_contract_fixture() {
+    let base = fixtures_root().join("manifests/report_base.json");
+    let target = fixtures_root().join("manifests/report_target.json");
+
+    let mut report = binary_cmd();
+    let assert = report
+        .args([
+            "report",
+            "--base-manifest",
+            base.to_str().expect("non-utf8 path"),
+            "--target-manifest",
+            target.to_str().expect("non-utf8 path"),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())
+        .expect("report output should be utf8");
+    let mut payload: Value =
+        serde_json::from_str(&stdout).expect("report json output should parse");
+    normalize_contract_output(&mut payload);
+
+    assert_eq!(payload, load_contract_json("report_manifest_diff.json"));
 }
 
 #[test]

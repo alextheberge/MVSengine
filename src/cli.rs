@@ -15,6 +15,7 @@ pub const EXIT_LINT_FAILED: i32 = 20;
 pub const EXIT_LINT_ERROR: i32 = 21;
 pub const EXIT_VALIDATE_INCOMPATIBLE: i32 = 30;
 pub const EXIT_MANIFEST_ERROR: i32 = 40;
+pub const EXIT_REPORT_ERROR: i32 = 50;
 pub const EXIT_OUTPUT_ERROR: i32 = 70;
 
 #[derive(Debug, Parser)]
@@ -29,6 +30,7 @@ enum Command {
     Generate(GenerateArgs),
     Lint(LintArgs),
     Validate(ValidateArgs),
+    Report(ReportArgs),
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum)]
@@ -241,6 +243,18 @@ pub struct ValidateArgs {
     pub format: OutputFormat,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct ReportArgs {
+    #[arg(long)]
+    pub base_manifest: PathBuf,
+
+    #[arg(long)]
+    pub target_manifest: PathBuf,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
 pub fn run() -> i32 {
     let cli = Cli::parse();
 
@@ -248,5 +262,6 @@ pub fn run() -> i32 {
         Command::Generate(args) => commands::generator::run(args),
         Command::Lint(args) => commands::linter::run(args),
         Command::Validate(args) => commands::reader::run(args),
+        Command::Report(args) => commands::report::run(args),
     }
 }

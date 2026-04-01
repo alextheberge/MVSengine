@@ -115,6 +115,8 @@ mvs-manager lint --root . --manifest mvs.json --available-model-capabilities too
 mvs-manager validate --host-manifest host.json --extension-manifest extension.json
 mvs-manager validate --host-manifest host.json --extension-manifest extension.json --format json
 mvs-manager validate --host-manifest host.json --extension-manifest extension.json --host-model-capabilities tool_calling,reasoning-v1
+mvs-manager report --base-manifest old-mvs.json --target-manifest new-mvs.json
+mvs-manager report --base-manifest old-mvs.json --target-manifest new-mvs.json --format json
 ```
 
 `mvs.json` persists version-change rationale in `history`, enabling compatibility reports to explain protocol breaks (for example, auth-flow changes tied to a specific `PROT`).
@@ -335,6 +337,12 @@ When scan policy actively shapes the public API boundary, `lint --format json` a
 - `degraded_count`
 - `checks`: structured compatibility checks with stable `axis`, `status`, and `code` values
 
+`report --format json` also includes:
+
+- `change_count`
+- `changed_sections`
+- `comparison`: structured manifest-to-manifest deltas across identity, compatibility, capabilities, AI contract, environment, scan policy, and evidence inventories
+
 Example `lint --format json` failure shape:
 
 ```json
@@ -382,6 +390,22 @@ Example `validate --format json` incompatibility shape:
   ],
   "reasons": [
     "Protocol range mismatch: extension requires host 1-1, host exposes 2-2 and is at PROT 2."
+  ]
+}
+```
+
+Example `report --format json` shape:
+
+```json
+{
+  "command": "report",
+  "status": "changed",
+  "exit_code": 0,
+  "change_count": 21,
+  "changed_sections": [
+    "identity",
+    "compatibility",
+    "evidence"
   ]
 }
 ```

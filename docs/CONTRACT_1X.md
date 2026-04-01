@@ -239,6 +239,81 @@ Stable `status` values:
 - `degraded`
 - `fail`
 
+### `report --format json`
+
+Stable fields:
+
+- `base_manifest`
+- `target_manifest`
+- `change_count`
+- `changed_sections`
+- `comparison`
+
+Stable `status` values:
+
+- `changed`
+- `unchanged`
+
+Stable `comparison.identity` fields:
+
+- `base`
+- `target`
+- `arch_delta`
+- `feat_delta`
+- `prot_delta`
+- `context_changed`
+
+Stable `comparison.compatibility` fields:
+
+- `host_range_changed`
+- `extension_range_changed`
+- `base_host_range`
+- `target_host_range`
+- `base_extension_range`
+- `target_extension_range`
+- `added_legacy_shims`
+- `removed_legacy_shims`
+
+Stable `comparison.capabilities.changes[]` fields:
+
+- `field`
+- `base`
+- `target`
+
+Stable `comparison.ai_contract` fields:
+
+- `tool_schema_version_changed`
+- `tool_schema_hash_changed`
+- `prompt_contract_id_changed`
+- `base_tool_schema_version`
+- `target_tool_schema_version`
+- `base_tool_schema_hash`
+- `target_tool_schema_hash`
+- `base_prompt_contract_id`
+- `target_prompt_contract_id`
+- `required_model_capabilities`
+- `provided_model_capabilities`
+
+Stable `comparison.environment` fields:
+
+- `profiles`
+- `runtime_constraints[].field`
+- `runtime_constraints[].base`
+- `runtime_constraints[].target`
+
+Stable `comparison.scan_policy.changes[]` fields:
+
+- `field`
+- `base`
+- `target`
+
+Stable `comparison.evidence` fields:
+
+- `feature_hash_changed`
+- `protocol_hash_changed`
+- `public_api_hash_changed`
+- `diff`
+
 Current stable `code` values include:
 
 - `protocol_range_ok`

@@ -105,6 +105,32 @@ mvs-manager validate \
   --host-model-capabilities tool_calling,reasoning-v1
 ```
 
+## 4) Compare two manifests directly
+
+```bash
+mvs-manager report --base-manifest old-mvs.json --target-manifest new-mvs.json
+```
+
+Machine-readable output:
+
+```bash
+mvs-manager report --base-manifest old-mvs.json --target-manifest new-mvs.json --format json
+```
+
+`report --format json` is the manifest-to-manifest diff command for bots and release automation. It reports:
+
+- `change_count`
+- `changed_sections`
+- `comparison.identity`
+- `comparison.compatibility`
+- `comparison.capabilities`
+- `comparison.ai_contract`
+- `comparison.environment`
+- `comparison.scan_policy`
+- `comparison.evidence`
+
+This is different from `lint`: `lint` compares code against the current manifest, while `report` compares one manifest against another manifest without crawling source.
+
 ## Makefile shortcuts
 
 ```bash

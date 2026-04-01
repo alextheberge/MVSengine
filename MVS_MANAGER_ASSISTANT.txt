@@ -10,6 +10,7 @@ Public contract note:
 
 - The stable `1.x` manifest and command-output contract is documented in `docs/CONTRACT_1X.md`.
 - Golden fixtures under `tests/fixtures/contracts/` are the review gate for changes to canonical manifest shape and machine-readable output.
+- Use `mvs-manager report --base-manifest <old> --target-manifest <new> --format json` when you need a manifest-to-manifest compatibility diff for release automation or review.
 
 1. Initialize or refresh the manifest.
    - If `mvs.json` does not exist, create it by running:

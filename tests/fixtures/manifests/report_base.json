@@ -1,0 +1,59 @@
+{
+  "$schema": "https://mvs.dev/schema/v1",
+  "identity": {
+    "mvs": "0.1.1-cli",
+    "arch": 0,
+    "feat": 1,
+    "prot": 1,
+    "cont": "cli"
+  },
+  "compatibility": {
+    "host_range": { "min_prot": 1, "max_prot": 1 },
+    "extension_range": { "min_prot": 1, "max_prot": 1 },
+    "legacy_shims": []
+  },
+  "capabilities": {
+    "offline_storage": true
+  },
+  "ai_contract": {
+    "tool_schema_version": 1,
+    "tool_schema_hash": "schema-v1",
+    "required_model_capabilities": ["tool_calling"],
+    "provided_model_capabilities": ["tool_calling"],
+    "prompt_contract_id": "prompt-v1"
+  },
+  "environment": {
+    "profiles": ["cli"],
+    "runtime_constraints": {
+      "rust": "1.74+"
+    }
+  },
+  "scan_policy": {
+    "public_api_roots": ["src/api.ts"],
+    "public_api_includes": ["ts/js:function login*"]
+  },
+  "evidence": {
+    "feature_hash": "feature-v1",
+    "protocol_hash": "protocol-v1",
+    "public_api_hash": "api-v1",
+    "feature_inventory": ["auth_flow"],
+    "protocol_inventory": ["auth-api-v1"],
+    "public_api_inventory": [
+      {
+        "file": "src/api.ts",
+        "signature": "ts/js:function login(username: string): Promise<string>"
+      }
+    ]
+  },
+  "history": [
+    {
+      "mvs": "0.1.1-cli",
+      "arch": 0,
+      "feat": 1,
+      "prot": 1,
+      "cont": "cli",
+      "reasons": ["Initial contract snapshot."],
+      "changed_at_unix": 1700000000
+    }
+  ]
+}
