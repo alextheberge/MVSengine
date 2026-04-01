@@ -18,6 +18,7 @@ pub(super) enum SourceLanguage {
     Php,
     Ruby,
     Swift,
+    Lua,
     Luau,
 }
 
@@ -27,7 +28,7 @@ pub(super) enum LexStrategy {
     Python,
     Php,
     Ruby,
-    Luau,
+    LuaFamily,
 }
 
 impl SourceLanguage {
@@ -46,6 +47,7 @@ impl SourceLanguage {
             Some("php") => Some(Self::Php),
             Some("rb") => Some(Self::Ruby),
             Some("swift") => Some(Self::Swift),
+            Some("lua") => Some(Self::Lua),
             Some("luau") => Some(Self::Luau),
             _ => None,
         }
@@ -66,6 +68,7 @@ impl SourceLanguage {
             Self::Php => "php",
             Self::Ruby => "rb",
             Self::Swift => "swift",
+            Self::Lua => "lua",
             Self::Luau => "luau",
         }
     }
@@ -75,7 +78,7 @@ impl SourceLanguage {
             Self::Python => LexStrategy::Python,
             Self::Php => LexStrategy::Php,
             Self::Ruby => LexStrategy::Ruby,
-            Self::Luau => LexStrategy::Luau,
+            Self::Lua | Self::Luau => LexStrategy::LuaFamily,
             _ => LexStrategy::CStyle,
         }
     }
@@ -94,6 +97,7 @@ impl SourceLanguage {
             Self::Php => Some(tree_sitter_php::LANGUAGE_PHP.into()),
             Self::Ruby => Some(tree_sitter_ruby::LANGUAGE.into()),
             Self::Swift => Some(tree_sitter_swift::LANGUAGE.into()),
+            Self::Lua => Some(tree_sitter_lua::LANGUAGE.into()),
             Self::Luau => Some(tree_sitter_luau::LANGUAGE.into()),
             Self::TypeScript => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
             Self::Tsx => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),

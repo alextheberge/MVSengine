@@ -637,6 +637,7 @@ fn extract_regex_public_api(
             | SourceLanguage::Php
             | SourceLanguage::Ruby
             | SourceLanguage::Swift
+            | SourceLanguage::Lua
             | SourceLanguage::Luau => {}
             SourceLanguage::Go => {
                 if let Some(capture) = regex.go_func.captures(trimmed) {
@@ -752,7 +753,7 @@ fn lex_source(source: &str, language: SourceLanguage) -> LexedSource {
         LexStrategy::Python => lex_python_source(source),
         LexStrategy::Php => lex_php_source(source),
         LexStrategy::Ruby => lex_ruby_source(source),
-        LexStrategy::Luau => lex_luau_source(source),
+        LexStrategy::LuaFamily => lex_lua_family_source(source),
     }
 }
 
@@ -905,14 +906,14 @@ fn lex_php_source(source: &str) -> LexedSource {
     }
 }
 
-fn lex_luau_source(source: &str) -> LexedSource {
+fn lex_lua_family_source(source: &str) -> LexedSource {
     let bytes = source.as_bytes();
     let mut masked = bytes.to_vec();
     let mut comments = Vec::new();
     let mut i = 0;
 
     while i < bytes.len() {
-        if let Some((_, _, end)) = skip_luau_long_bracket(bytes, i) {
+        if let Some((_, _, end)) = skip_lua_long_bracket(bytes, i) {
             mask_range(&mut masked, bytes, i, end);
             i = end;
             continue;
@@ -926,7 +927,7 @@ fn lex_luau_source(source: &str) -> LexedSource {
         }
 
         if bytes[i] == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
-            if let Some((content_start, content_end, end)) = skip_luau_long_bracket(bytes, i + 2) {
+            if let Some((content_start, content_end, end)) = skip_lua_long_bracket(bytes, i + 2) {
                 comments.push(source[content_start..content_end].to_string());
                 mask_range(&mut masked, bytes, i, end);
                 i = end;
@@ -1299,7 +1300,7 @@ fn skip_ruby_heredoc(source: &str, bytes: &[u8], start: usize) -> Option<usize> 
     Some(bytes.len())
 }
 
-fn skip_luau_long_bracket(bytes: &[u8], start: usize) -> Option<(usize, usize, usize)> {
+fn skip_lua_long_bracket(bytes: &[u8], start: usize) -> Option<(usize, usize, usize)> {
     if bytes.get(start) != Some(&b'[') {
         return None;
     }
@@ -1667,7 +1668,7 @@ fn is_comment_line(line: &str, extension: &str) -> bool {
         "py" => line.starts_with('#'),
         "php" => line.starts_with('#') || line.starts_with("//") || line.starts_with("/*"),
         "rb" => line.starts_with('#') || line.starts_with("=begin"),
-        "luau" => line.starts_with("--"),
+        "lua" | "luau" => line.starts_with("--"),
         _ => line.starts_with("//") || line.starts_with("/*") || line.starts_with('*'),
     }
 }
@@ -2587,6 +2588,93 @@ mod tests {
     }
 
     #[test]
+    fn tree_sitter_captures_lua_global_functions_and_module_exports() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("Api.lua"),
+            r#"
+            local fixture = [[
+            -- @mvs-feature("fake_feature")
+            -- @mvs-protocol("fake_protocol")
+            ]]
+
+            -- @mvs-feature("lua_bridge")
+            -- @mvs-protocol("lua-module-v1")
+            function connect(target)
+                return target ~= ""
+            end
+
+            local Api = {
+                ping = function(target)
+                    return target ~= ""
+                end,
+                version = "v1",
+            }
+
+            Api.connect = function(target)
+                return target ~= ""
+            end
+
+            function Api:refresh(token)
+                return token ~= ""
+            end
+
+            local Internal = {}
+
+            function Internal.hidden()
+                return false
+            end
+
+            local function hidden()
+                return false
+            end
+
+            return Api
+        "#,
+        )
+        .expect("failed to write lua fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report.feature_tags.contains("lua_bridge"));
+        assert!(report.protocol_tags.contains("lua-module-v1"));
+        assert!(!report.feature_tags.contains("fake_feature"));
+        assert!(!report.protocol_tags.contains("fake_protocol"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "lua:function Api.ping(target)"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "lua:field Api.version"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "lua:function Api.connect(target)"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "lua:function Api:refresh(token)"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "lua:function connect(target)"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("hidden")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("Internal.hidden")));
+    }
+
+    #[test]
     fn tree_sitter_captures_luau_global_functions_module_exports_and_export_types() {
         let workspace = TempWorkspace::new();
         let src = workspace.path().join("src");
@@ -2907,6 +2995,29 @@ mod tests {
                     "swift:public let token: String",
                 ],
                 rejected_public_api_fragments: &["fake_feature"],
+            },
+            ParserAdapterCase {
+                file_name: "Api.lua",
+                source: r#"
+                local fixture = [[
+                -- @mvs-feature("fake_feature")
+                -- @mvs-protocol("fake_protocol")
+                ]]
+
+                -- @mvs-feature("lua_bridge")
+                -- @mvs-protocol("lua-api-v1")
+                function connect(target)
+                    return target ~= ""
+                end
+
+                local function hidden()
+                    return false
+                end
+            "#,
+                expected_feature: "lua_bridge",
+                expected_protocol: "lua-api-v1",
+                expected_public_api: &["lua:function connect(target)"],
+                rejected_public_api_fragments: &["hidden"],
             },
             ParserAdapterCase {
                 file_name: "Api.luau",

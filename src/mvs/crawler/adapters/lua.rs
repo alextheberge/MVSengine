@@ -4,5 +4,5 @@ use tree_sitter::Node;
 use super::lua_family::{self, LuaDialect};
 
 pub(super) fn extract(root: Node<'_>, source: &str) -> Vec<String> {
-    lua_family::extract(root, source, LuaDialect::Luau)
+    lua_family::extract(root, source, LuaDialect::Lua)
 }
