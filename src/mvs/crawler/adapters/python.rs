@@ -8,16 +8,85 @@ use super::super::{
     named_children, node_text, normalize_tree_sitter_signature,
 };
 
-pub(super) fn extract(root: Node<'_>, source: &str) -> Vec<String> {
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub(crate) struct PythonModuleIndex {
+    exports_by_module: BTreeMap<String, BTreeSet<String>>,
+}
+
+pub(crate) struct PythonModuleSource<'a> {
+    pub rel_path: &'a str,
+    pub source: &'a str,
+}
+
+#[derive(Default)]
+struct PythonImportContext {
+    imported_export_sets: BTreeMap<String, BTreeSet<String>>,
+    imported_module_exports: BTreeMap<String, BTreeSet<String>>,
+    wildcard_imports: Vec<PythonWildcardImport>,
+}
+
+#[derive(Clone, Copy)]
+struct PythonExtractionContext<'a> {
+    explicit_exports: Option<&'a BTreeSet<String>>,
+    import_context: &'a PythonImportContext,
+    top_level_bindings: &'a BTreeSet<String>,
+}
+
+#[derive(Clone)]
+struct PythonWildcardImport {
+    module_name: String,
+    exports: BTreeSet<String>,
+}
+
+pub(super) fn build_module_index(files: &[PythonModuleSource<'_>]) -> PythonModuleIndex {
+    let mut index = PythonModuleIndex::default();
+
+    for _ in 0..4 {
+        let mut next = PythonModuleIndex::default();
+
+        for file in files {
+            let Some(exports) = summarize_python_module_exports(file.source, &index) else {
+                continue;
+            };
+            for module_name in python_module_name_candidates(file.rel_path) {
+                next.exports_by_module
+                    .entry(module_name)
+                    .or_default()
+                    .extend(exports.iter().cloned());
+            }
+        }
+
+        if next == index {
+            break;
+        }
+        index = next;
+    }
+
+    index
+}
+
+pub(super) fn extract(
+    root: Node<'_>,
+    source: &str,
+    _rel_path: &str,
+    module_index: Option<&PythonModuleIndex>,
+) -> Vec<String> {
     let mut signatures = Vec::new();
-    let explicit_exports = extract_python_explicit_exports(root, source);
+    let import_context = build_python_import_context(root, source, module_index);
+    let explicit_exports = extract_python_explicit_exports(root, source, &import_context);
+    let top_level_bindings = collect_python_top_level_bindings(root, source);
+    let extraction_context = PythonExtractionContext {
+        explicit_exports: explicit_exports.as_ref(),
+        import_context: &import_context,
+        top_level_bindings: &top_level_bindings,
+    };
     collect_public_api(
         root,
         source,
         &mut signatures,
         false,
         &[],
-        explicit_exports.as_ref(),
+        extraction_context,
     );
     signatures
 }
@@ -28,7 +97,7 @@ fn collect_public_api(
     signatures: &mut Vec<String>,
     inside_callable: bool,
     class_namespace: &[String],
-    explicit_exports: Option<&BTreeSet<String>>,
+    extraction_context: PythonExtractionContext<'_>,
 ) {
     for child in named_children(node) {
         collect_definition(
@@ -37,7 +106,7 @@ fn collect_public_api(
             signatures,
             inside_callable,
             class_namespace,
-            explicit_exports,
+            extraction_context,
         );
     }
 }
@@ -48,7 +117,7 @@ fn collect_definition(
     signatures: &mut Vec<String>,
     inside_callable: bool,
     class_namespace: &[String],
-    explicit_exports: Option<&BTreeSet<String>>,
+    extraction_context: PythonExtractionContext<'_>,
 ) {
     match node.kind() {
         "function_definition" => {
@@ -62,7 +131,7 @@ fn collect_definition(
             if !python_should_include_name(
                 &name,
                 class_namespace,
-                explicit_exports,
+                extraction_context.explicit_exports,
                 is_public_python_name(node, source),
             ) {
                 return;
@@ -86,7 +155,7 @@ fn collect_definition(
             if !python_should_include_name(
                 &name,
                 class_namespace,
-                explicit_exports,
+                extraction_context.explicit_exports,
                 is_public_python_name(node, source),
             ) {
                 return;
@@ -103,7 +172,7 @@ fn collect_definition(
                     signatures,
                     false,
                     &next_namespace,
-                    explicit_exports,
+                    extraction_context,
                 );
             }
         }
@@ -111,13 +180,19 @@ fn collect_definition(
             if !inside_callable {
                 let is_explicit_export = extract_python_assignment_name(node, source)
                     .as_deref()
-                    .map(|name| python_is_explicit_export(name, class_namespace, explicit_exports))
+                    .map(|name| {
+                        python_is_explicit_export(
+                            name,
+                            class_namespace,
+                            extraction_context.explicit_exports,
+                        )
+                    })
                     .unwrap_or(false);
                 if let Some(signature) = extract_python_constant_signature(
                     node,
                     source,
                     class_namespace,
-                    explicit_exports,
+                    extraction_context.explicit_exports,
                     is_explicit_export,
                 ) {
                     signatures.push(format!("python:{signature}"));
@@ -133,13 +208,19 @@ fn collect_definition(
                     .and_then(|left| python_type_alias_name(&left).map(ToString::to_string));
                 let is_explicit_export = alias_name
                     .as_deref()
-                    .map(|name| python_is_explicit_export(name, class_namespace, explicit_exports))
+                    .map(|name| {
+                        python_is_explicit_export(
+                            name,
+                            class_namespace,
+                            extraction_context.explicit_exports,
+                        )
+                    })
                     .unwrap_or(false);
                 if let Some(signature) = extract_python_type_alias_signature(
                     node,
                     source,
                     class_namespace,
-                    explicit_exports,
+                    extraction_context.explicit_exports,
                     is_explicit_export,
                 ) {
                     signatures.push(format!("python:{signature}"));
@@ -154,7 +235,7 @@ fn collect_definition(
                     signatures,
                     inside_callable,
                     class_namespace,
-                    explicit_exports,
+                    extraction_context,
                 );
             }
         }
@@ -164,9 +245,15 @@ fn collect_definition(
             }
 
             signatures.extend(
-                extract_python_import_reexport_signatures(node, source, explicit_exports)
-                    .into_iter()
-                    .map(|signature| format!("python:{signature}")),
+                extract_python_import_reexport_signatures(
+                    node,
+                    source,
+                    extraction_context.explicit_exports,
+                    extraction_context.import_context,
+                    extraction_context.top_level_bindings,
+                )
+                .into_iter()
+                .map(|signature| format!("python:{signature}")),
             );
         }
         "expression_statement" | "module" | "block" => collect_public_api(
@@ -175,21 +262,28 @@ fn collect_definition(
             signatures,
             inside_callable,
             class_namespace,
-            explicit_exports,
+            extraction_context,
         ),
         _ => {}
     }
 }
 
-fn extract_python_explicit_exports(root: Node<'_>, source: &str) -> Option<BTreeSet<String>> {
+fn extract_python_explicit_exports(
+    root: Node<'_>,
+    source: &str,
+    import_context: &PythonImportContext,
+) -> Option<BTreeSet<String>> {
     let mut exports = BTreeSet::new();
     let mut bindings = BTreeMap::new();
+    let mut module_aliases = BTreeMap::new();
     let mut found_explicit_boundary = false;
     if !collect_python_explicit_exports(
         root,
         source,
         &mut exports,
         &mut bindings,
+        &mut module_aliases,
+        import_context,
         &mut found_explicit_boundary,
     ) {
         return None;
@@ -203,6 +297,8 @@ fn collect_python_explicit_exports(
     source: &str,
     exports: &mut BTreeSet<String>,
     bindings: &mut BTreeMap<String, BTreeSet<String>>,
+    module_aliases: &mut BTreeMap<String, BTreeSet<String>>,
+    import_context: &PythonImportContext,
     found_explicit_boundary: &mut bool,
 ) -> bool {
     match node.kind() {
@@ -212,6 +308,8 @@ fn collect_python_explicit_exports(
                 source,
                 exports,
                 bindings,
+                module_aliases,
+                import_context,
                 found_explicit_boundary,
             )
         }),
@@ -223,7 +321,9 @@ fn collect_python_explicit_exports(
             let Some(right) = node.child_by_field_name("right") else {
                 return name != "__all__";
             };
-            let Some(names) = extract_python_explicit_export_names(right, source, bindings) else {
+            let Some(names) =
+                extract_python_explicit_export_names(right, source, bindings, module_aliases)
+            else {
                 bindings.remove(&name);
                 return name != "__all__";
             };
@@ -249,7 +349,9 @@ fn collect_python_explicit_exports(
             let Some(right) = node.child_by_field_name("right") else {
                 return name != "__all__";
             };
-            let Some(names) = extract_python_explicit_export_names(right, source, bindings) else {
+            let Some(names) =
+                extract_python_explicit_export_names(right, source, bindings, module_aliases)
+            else {
                 bindings.remove(&name);
                 return name != "__all__";
             };
@@ -263,6 +365,16 @@ fn collect_python_explicit_exports(
             };
             true
         }
+        "import_statement" | "import_from_statement" => {
+            apply_python_import_bindings_from_context(
+                node,
+                source,
+                bindings,
+                module_aliases,
+                import_context,
+            );
+            true
+        }
         _ => true,
     }
 }
@@ -271,21 +383,25 @@ fn extract_python_explicit_export_names(
     node: Node<'_>,
     source: &str,
     bindings: &BTreeMap<String, BTreeSet<String>>,
+    module_aliases: &BTreeMap<String, BTreeSet<String>>,
 ) -> Option<BTreeSet<String>> {
     match node.kind() {
-        "parenthesized_expression" => named_children(node)
-            .into_iter()
-            .next()
-            .and_then(|child| extract_python_explicit_export_names(child, source, bindings)),
-        "list_splat" | "parenthesized_list_splat" => named_children(node)
-            .into_iter()
-            .next()
-            .and_then(|child| extract_python_explicit_export_names(child, source, bindings)),
+        "parenthesized_expression" => named_children(node).into_iter().next().and_then(|child| {
+            extract_python_explicit_export_names(child, source, bindings, module_aliases)
+        }),
+        "list_splat" | "parenthesized_list_splat" => {
+            named_children(node).into_iter().next().and_then(|child| {
+                extract_python_explicit_export_names(child, source, bindings, module_aliases)
+            })
+        }
         "list" | "tuple" | "set" | "expression_list" => {
             let mut exports = BTreeSet::new();
             for child in named_children(node) {
                 exports.extend(extract_python_explicit_export_names(
-                    child, source, bindings,
+                    child,
+                    source,
+                    bindings,
+                    module_aliases,
                 )?);
             }
             Some(exports)
@@ -293,11 +409,20 @@ fn extract_python_explicit_export_names(
         "binary_operator" => {
             let left = node.child_by_field_name("left")?;
             let right = node.child_by_field_name("right")?;
-            let mut exports = extract_python_explicit_export_names(left, source, bindings)?;
+            let mut exports =
+                extract_python_explicit_export_names(left, source, bindings, module_aliases)?;
             exports.extend(extract_python_explicit_export_names(
-                right, source, bindings,
+                right,
+                source,
+                bindings,
+                module_aliases,
             )?);
             Some(exports)
+        }
+        "attribute" => {
+            let text = node_text(node, source).map(normalize_tree_sitter_signature)?;
+            let (module_alias, attr_name) = text.rsplit_once('.')?;
+            (attr_name == "__all__").then(|| module_aliases.get(module_alias).cloned())?
         }
         "identifier" => node_text(node, source)
             .map(normalize_tree_sitter_signature)
@@ -340,18 +465,46 @@ fn extract_python_import_reexport_signatures(
     node: Node<'_>,
     source: &str,
     explicit_exports: Option<&BTreeSet<String>>,
+    import_context: &PythonImportContext,
+    top_level_bindings: &BTreeSet<String>,
 ) -> Vec<String> {
-    if explicit_exports.is_none() {
+    let Some(explicit_exports) = explicit_exports else {
         return Vec::new();
+    };
+
+    let mut signatures: Vec<String> = extract_python_import_bindings(node, source)
+        .into_iter()
+        .filter(|(binding_name, _)| explicit_exports.contains(binding_name))
+        .map(|(_, signature)| signature)
+        .collect();
+
+    if node.kind() == "import_from_statement" && node.child_by_field_name("name").is_none() {
+        let Some(module_name) = node
+            .child_by_field_name("module_name")
+            .and_then(|child| node_text(child, source))
+            .map(normalize_tree_sitter_signature)
+            .filter(|value| !value.is_empty())
+        else {
+            return signatures;
+        };
+
+        let Some(wildcard) = import_context
+            .wildcard_imports
+            .iter()
+            .find(|import| import.module_name == module_name)
+        else {
+            return signatures;
+        };
+
+        for export_name in explicit_exports {
+            if top_level_bindings.contains(export_name) || !wildcard.exports.contains(export_name) {
+                continue;
+            }
+            signatures.push(format!("from {module_name} import {export_name}"));
+        }
     }
 
-    extract_python_import_bindings(node, source)
-        .into_iter()
-        .filter(|(binding_name, _)| {
-            python_should_include_name(binding_name, &[], explicit_exports, false)
-        })
-        .map(|(_, signature)| signature)
-        .collect()
+    signatures
 }
 
 fn extract_python_import_bindings(node: Node<'_>, source: &str) -> Vec<(String, String)> {
@@ -446,6 +599,377 @@ fn extract_python_from_import_binding(
             ))
         }
         _ => None,
+    }
+}
+
+fn build_python_import_context(
+    root: Node<'_>,
+    source: &str,
+    module_index: Option<&PythonModuleIndex>,
+) -> PythonImportContext {
+    let Some(module_index) = module_index else {
+        return PythonImportContext::default();
+    };
+
+    let mut context = PythonImportContext::default();
+    for child in named_children(root) {
+        collect_python_import_context(child, source, module_index, &mut context);
+    }
+    context
+}
+
+fn collect_python_import_context(
+    node: Node<'_>,
+    source: &str,
+    module_index: &PythonModuleIndex,
+    context: &mut PythonImportContext,
+) {
+    match node.kind() {
+        "module" | "expression_statement" => {
+            for child in named_children(node) {
+                collect_python_import_context(child, source, module_index, context);
+            }
+        }
+        "import_statement" | "import_from_statement" => {
+            collect_python_import_context_from_module_index(node, source, context, module_index);
+        }
+        _ => {}
+    }
+}
+
+fn apply_python_import_bindings_from_context(
+    node: Node<'_>,
+    source: &str,
+    bindings: &mut BTreeMap<String, BTreeSet<String>>,
+    module_aliases: &mut BTreeMap<String, BTreeSet<String>>,
+    import_context: &PythonImportContext,
+) {
+    match node.kind() {
+        "import_statement" => {
+            for child in children_by_field_name(node, "name") {
+                if let Some((alias, _module_name)) =
+                    extract_python_module_alias_binding(child, source)
+                {
+                    if let Some(exports) = import_context.imported_module_exports.get(&alias) {
+                        module_aliases.insert(alias, exports.clone());
+                    }
+                }
+            }
+        }
+        "import_from_statement" => {
+            for child in children_by_field_name(node, "name") {
+                if let Some((binding_name, imported_name)) =
+                    extract_python_from_import_name(child, source)
+                {
+                    if imported_name == "__all__" {
+                        if let Some(exports) =
+                            import_context.imported_export_sets.get(&binding_name)
+                        {
+                            bindings.insert(binding_name, exports.clone());
+                        }
+                    } else if import_context
+                        .imported_export_sets
+                        .contains_key(&binding_name)
+                    {
+                        let mut export_names = BTreeSet::new();
+                        export_names.insert(binding_name.clone());
+                        bindings.insert(binding_name, export_names);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_python_import_context_from_module_index(
+    node: Node<'_>,
+    source: &str,
+    context: &mut PythonImportContext,
+    module_index: &PythonModuleIndex,
+) {
+    match node.kind() {
+        "import_statement" => {
+            for child in children_by_field_name(node, "name") {
+                if let Some((alias, module_name)) =
+                    extract_python_module_alias_binding(child, source)
+                {
+                    if let Some(exports) = module_index.exports_by_module.get(&module_name) {
+                        context
+                            .imported_module_exports
+                            .insert(alias, exports.clone());
+                    }
+                }
+            }
+        }
+        "import_from_statement" => {
+            let Some(module_name) = node
+                .child_by_field_name("module_name")
+                .and_then(|child| node_text(child, source))
+                .map(normalize_tree_sitter_signature)
+                .filter(|value| !value.is_empty())
+            else {
+                return;
+            };
+
+            let Some(module_exports) = module_index.exports_by_module.get(&module_name).cloned()
+            else {
+                return;
+            };
+
+            if node.child_by_field_name("name").is_none() {
+                context.wildcard_imports.push(PythonWildcardImport {
+                    module_name,
+                    exports: module_exports,
+                });
+                return;
+            }
+
+            for child in children_by_field_name(node, "name") {
+                if let Some((binding_name, imported_name)) =
+                    extract_python_from_import_name(child, source)
+                {
+                    if imported_name == "__all__" {
+                        context
+                            .imported_export_sets
+                            .insert(binding_name, module_exports.clone());
+                    } else if module_exports.contains(&imported_name) {
+                        let mut export_names = BTreeSet::new();
+                        export_names.insert(binding_name.clone());
+                        context
+                            .imported_export_sets
+                            .insert(binding_name, export_names);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn extract_python_module_alias_binding(node: Node<'_>, source: &str) -> Option<(String, String)> {
+    match node.kind() {
+        "aliased_import" => {
+            let module_name = node
+                .child_by_field_name("name")
+                .and_then(|child| node_text(child, source))
+                .map(normalize_tree_sitter_signature)
+                .filter(|value| !value.is_empty())?;
+            let alias = node
+                .child_by_field_name("alias")
+                .and_then(|child| node_text(child, source))
+                .map(normalize_tree_sitter_signature)
+                .filter(|value| !value.is_empty())?;
+            Some((alias, module_name))
+        }
+        "dotted_name" => {
+            let module_name = node_text(node, source)
+                .map(normalize_tree_sitter_signature)
+                .filter(|value| !value.is_empty())?;
+            let binding_name = module_name
+                .split('.')
+                .next()
+                .map(ToString::to_string)
+                .filter(|value| !value.is_empty())?;
+            Some((binding_name, module_name))
+        }
+        _ => None,
+    }
+}
+
+fn extract_python_from_import_name(node: Node<'_>, source: &str) -> Option<(String, String)> {
+    match node.kind() {
+        "aliased_import" => {
+            let import_name = node
+                .child_by_field_name("name")
+                .and_then(|child| node_text(child, source))
+                .map(normalize_tree_sitter_signature)
+                .filter(|value| !value.is_empty())?;
+            let alias = node
+                .child_by_field_name("alias")
+                .and_then(|child| node_text(child, source))
+                .map(normalize_tree_sitter_signature)
+                .filter(|value| !value.is_empty())?;
+            Some((alias, import_name))
+        }
+        "dotted_name" => {
+            let import_name = node_text(node, source)
+                .map(normalize_tree_sitter_signature)
+                .filter(|value| !value.is_empty())?;
+            let binding_name = import_name
+                .rsplit('.')
+                .next()
+                .map(ToString::to_string)
+                .filter(|value| !value.is_empty())?;
+            Some((binding_name, import_name))
+        }
+        _ => None,
+    }
+}
+
+fn summarize_python_module_exports(
+    source: &str,
+    module_index: &PythonModuleIndex,
+) -> Option<BTreeSet<String>> {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_python::LANGUAGE.into())
+        .ok()?;
+    let tree = parser.parse(source, None)?;
+    let signatures = extract(tree.root_node(), source, "", Some(module_index));
+    Some(extract_python_export_names_from_signatures(&signatures))
+}
+
+fn python_module_name_candidates(rel_path: &str) -> Vec<String> {
+    let normalized = rel_path.replace('\\', "/");
+    let Some(stripped) = normalized.strip_suffix(".py") else {
+        return Vec::new();
+    };
+
+    let mut parts: Vec<&str> = stripped
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    if parts.last() == Some(&"__init__") {
+        parts.pop();
+    }
+    if parts.is_empty() {
+        return Vec::new();
+    }
+
+    let mut candidates = vec![parts.join(".")];
+    if matches!(parts.first().copied(), Some("src" | "lib" | "python")) && parts.len() > 1 {
+        candidates.push(parts[1..].join("."));
+    }
+    candidates.sort();
+    candidates.dedup();
+    candidates
+}
+
+fn extract_python_export_names_from_signatures(signatures: &[String]) -> BTreeSet<String> {
+    let mut exports = BTreeSet::new();
+
+    for signature in signatures {
+        if let Some(name) = python_export_name_from_signature(signature) {
+            exports.insert(name);
+        }
+    }
+
+    exports
+}
+
+fn python_export_name_from_signature(signature: &str) -> Option<String> {
+    if let Some(rest) = signature.strip_prefix("python:class ") {
+        return rest
+            .split(['(', ':', ' '])
+            .next()
+            .map(ToString::to_string)
+            .filter(|value| !value.is_empty());
+    }
+
+    if let Some(rest) = signature.strip_prefix("python:def ") {
+        let name = rest.split('(').next()?.trim();
+        return (!name.contains('.'))
+            .then(|| name.to_string())
+            .filter(|value| !value.is_empty());
+    }
+
+    if let Some(rest) = signature.strip_prefix("python:type ") {
+        let name = rest.split('=').next()?.trim();
+        return (!name.contains('.'))
+            .then(|| name.to_string())
+            .filter(|value| !value.is_empty());
+    }
+
+    if let Some(rest) = signature.strip_prefix("python:const ") {
+        let name = rest.split(':').next()?.trim();
+        return (!name.contains('.') && name != "__all__")
+            .then(|| name.to_string())
+            .filter(|value| !value.is_empty());
+    }
+
+    if let Some(rest) = signature.strip_prefix("python:from ") {
+        let import_name = rest.split(" import ").nth(1)?;
+        let binding = import_name
+            .split(" as ")
+            .last()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        return Some(binding.to_string());
+    }
+
+    if let Some(rest) = signature.strip_prefix("python:import ") {
+        let binding = rest
+            .split(" as ")
+            .nth(1)
+            .or_else(|| rest.split('.').next())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        return Some(binding.to_string());
+    }
+
+    None
+}
+
+fn collect_python_top_level_bindings(root: Node<'_>, source: &str) -> BTreeSet<String> {
+    let mut bindings = BTreeSet::new();
+    collect_python_top_level_bindings_into(root, source, &mut bindings);
+    bindings
+}
+
+fn collect_python_top_level_bindings_into(
+    node: Node<'_>,
+    source: &str,
+    bindings: &mut BTreeSet<String>,
+) {
+    match node.kind() {
+        "module" | "expression_statement" => {
+            for child in named_children(node) {
+                collect_python_top_level_bindings_into(child, source, bindings);
+            }
+        }
+        "function_definition" | "class_definition" => {
+            if let Some(name) = python_definition_name(node, source) {
+                bindings.insert(name);
+            }
+        }
+        "assignment" => {
+            if let Some(name) = extract_python_assignment_name(node, source) {
+                bindings.insert(name);
+            }
+        }
+        "type_alias_statement" => {
+            let alias_name = node
+                .child_by_field_name("left")
+                .and_then(|child| node_text(child, source))
+                .map(normalize_tree_sitter_signature)
+                .and_then(|left| python_type_alias_name(&left).map(ToString::to_string));
+            if let Some(name) = alias_name {
+                bindings.insert(name);
+            }
+        }
+        "decorated_definition" => {
+            if let Some(definition) = node.child_by_field_name("definition") {
+                collect_python_top_level_bindings_into(definition, source, bindings);
+            }
+        }
+        "import_statement" => {
+            for child in children_by_field_name(node, "name") {
+                if let Some((binding_name, _)) = extract_python_import_binding(child, source) {
+                    bindings.insert(binding_name);
+                }
+            }
+        }
+        "import_from_statement" => {
+            for child in children_by_field_name(node, "name") {
+                if let Some((binding_name, _)) =
+                    extract_python_from_import_binding(child, source, "")
+                {
+                    bindings.insert(binding_name);
+                }
+            }
+        }
+        _ => {}
     }
 }
 

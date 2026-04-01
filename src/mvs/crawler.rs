@@ -46,6 +46,13 @@ struct LexedSource {
     masked_code: String,
 }
 
+struct SourceFileInput {
+    rel: String,
+    language: SourceLanguage,
+    source: String,
+    lexed: LexedSource,
+}
+
 struct ApiRegexPack {
     go_func: Regex,
     py_def: Regex,
@@ -101,6 +108,7 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
     )
     .context("failed to compile protocol regex")?;
     let api_pack = ApiRegexPack::new()?;
+    let mut source_files = Vec::new();
 
     let mut report = CrawlReport::default();
 
@@ -128,30 +136,56 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
         };
         let lexed = lex_source(&source, language);
 
-        for tag in extract_named_tags(&lexed.comments, &feature_re, "name", "name2") {
+        source_files.push(SourceFileInput {
+            rel,
+            language,
+            source,
+            lexed,
+        });
+    }
+
+    let python_module_sources: Vec<_> = source_files
+        .iter()
+        .filter(|file| file.language == SourceLanguage::Python)
+        .map(|file| adapters::PythonModuleSource {
+            rel_path: &file.rel,
+            source: &file.source,
+        })
+        .collect();
+    let python_module_index = adapters::build_python_module_index(&python_module_sources);
+
+    for file in source_files {
+        for tag in extract_named_tags(&file.lexed.comments, &feature_re, "name", "name2") {
             report.feature_tags.insert(tag.clone());
             report.feature_occurrences.push(TagOccurrence {
                 name: tag,
-                file: rel.clone(),
+                file: file.rel.clone(),
             });
         }
 
-        for tag in extract_named_tags(&lexed.comments, &protocol_re, "surface", "surface2") {
+        for tag in extract_named_tags(&file.lexed.comments, &protocol_re, "surface", "surface2") {
             report.protocol_tags.insert(tag.clone());
             report.protocol_occurrences.push(TagOccurrence {
                 name: tag,
-                file: rel.clone(),
+                file: file.rel.clone(),
             });
         }
 
-        if scan_policy.includes_public_api(&rel) {
-            let signatures = extract_public_api(language, &source, &lexed.masked_code, &api_pack);
+        if scan_policy.includes_public_api(&file.rel) {
+            let signatures = extract_public_api(
+                file.language,
+                &file.rel,
+                &file.source,
+                &file.lexed.masked_code,
+                &api_pack,
+                &python_module_index,
+            );
             for signature in signatures {
-                if !scan_policy.includes_public_api_item(&rel, &signature) {
+                if !scan_policy.includes_public_api_item(&file.rel, &signature) {
                     continue;
                 }
                 report.public_api.push(ApiSignature {
-                    file: rel.clone(),
+                    file: file.rel.clone(),
                     signature,
                 });
             }
@@ -193,9 +227,11 @@ fn extract_named_tags(
 
 fn extract_public_api(
     language: SourceLanguage,
+    rel_path: &str,
     source: &str,
     masked_code: &str,
     regex: &ApiRegexPack,
+    python_module_index: &adapters::PythonModuleIndex,
 ) -> Vec<String> {
     if language == SourceLanguage::Rust {
         if let Some(ast_signatures) = extract_rust_public_api(source) {
@@ -205,21 +241,34 @@ fn extract_public_api(
         }
     }
 
-    if let Some(tree_sitter_signatures) = extract_tree_sitter_public_api(language, source) {
+    if let Some(tree_sitter_signatures) =
+        extract_tree_sitter_public_api(language, rel_path, source, python_module_index)
+    {
         return tree_sitter_signatures;
     }
 
     extract_regex_public_api(language, masked_code, regex)
 }
 
-fn extract_tree_sitter_public_api(language: SourceLanguage, source: &str) -> Option<Vec<String>> {
+fn extract_tree_sitter_public_api(
+    language: SourceLanguage,
+    rel_path: &str,
+    source: &str,
+    python_module_index: &adapters::PythonModuleIndex,
+) -> Option<Vec<String>> {
     let grammar = language.tree_sitter_language()?;
     let mut parser = TreeSitterParser::new();
     parser.set_language(&grammar).ok()?;
     let tree = parser.parse(source, None)?;
     let root = tree.root_node();
 
-    let mut signatures = adapters::extract_tree_sitter_public_api(language, root, source);
+    let mut signatures = adapters::extract_tree_sitter_public_api(
+        language,
+        root,
+        source,
+        rel_path,
+        Some(python_module_index),
+    );
     signatures.sort();
     signatures.dedup();
     Some(signatures)
@@ -2411,6 +2460,75 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("_internal")));
+    }
+
+    #[test]
+    fn tree_sitter_captures_python_cross_module_all_aliases_and_wildcard_reexports() {
+        let workspace = TempWorkspace::new();
+        let auth = workspace.path().join("auth");
+        fs::create_dir_all(&auth).expect("failed to create auth package");
+
+        fs::write(
+            auth.join("core.py"),
+            r#"
+            __all__ = ("login", "SessionToken")
+
+            type SessionToken = str
+
+            def login(username: str) -> str:
+                return username
+
+            def _hidden() -> str:
+                return "hidden"
+        "#,
+        )
+        .expect("failed to write auth core fixture");
+
+        fs::write(
+            workspace.path().join("api.py"),
+            r#"
+            from auth.core import __all__ as CORE_EXPORTS
+            from auth.core import *
+
+            __all__ = [*CORE_EXPORTS, "Worker"]
+
+            class Worker:
+                STATUS: str = "ready"
+        "#,
+        )
+        .expect("failed to write python facade fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:const __all__"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:class Worker"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:const Worker.STATUS: str"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:from auth.core import login"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:from auth.core import SessionToken"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("CORE_EXPORTS")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("_hidden")));
     }
 
     #[test]
