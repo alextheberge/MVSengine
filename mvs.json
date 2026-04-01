@@ -1,8 +1,8 @@
 {
   "$schema": "https://mvs.dev/schema/v1",
   "identity": {
-    "mvs": "0.3.7-cli",
-    "arch": 0,
+    "mvs": "1.3.7-cli",
+    "arch": 1,
     "feat": 3,
     "prot": 7,
     "cont": "cli"
@@ -129,6 +129,17 @@
         "Protocol incremented due to public API signature drift (example source: src/cli.rs)."
       ],
       "changed_at_unix": 1774996752
+    },
+    {
+      "mvs": "1.3.7-cli",
+      "arch": 1,
+      "feat": 3,
+      "prot": 7,
+      "cont": "cli",
+      "reasons": [
+        "Architecture incremented due to declared data/system break: 1.x public contract freeze and first stable release"
+      ],
+      "changed_at_unix": 1775082921
     }
   ]
 }
