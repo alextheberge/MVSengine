@@ -25,7 +25,7 @@ This document tracks the work required to move `mvs-manager` from the current fe
   - Document compatibility guarantees for canonical signature inventories and JSON command output.
 - Finish the remaining explicit-export boundary gaps.
   - Rust: multi-crate workspace policy so a crate facade can intentionally include or exclude workspace-member crates.
-  - TypeScript/JavaScript: clarify whether `package.json#imports` and monorepo self-references are in or out for `1.0`.
+  - TypeScript/JavaScript: clarify whether monorepo self-references are in or out for `1.0`.
 - Tighten validation semantics.
   - Make `validate` return machine-usable failing axes, not only free-text reasons.
   - Publish a stable exit-code matrix for success, degraded compatibility, incompatibility, invalid manifest, and internal failure.
@@ -67,7 +67,7 @@ This document tracks the work required to move `mvs-manager` from the current fe
 
 ### TypeScript / JavaScript
 
-- Decision on `imports` maps and monorepo package self-references.
+- Decision on monorepo package self-references.
 
 ### Python
 

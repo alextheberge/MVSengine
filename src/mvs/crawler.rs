@@ -3562,6 +3562,99 @@ mod tests {
     }
 
     #[test]
+    fn ts_export_following_workspace_only_resolves_package_imports_maps() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(src.join("internal/features")).expect("failed to create src/internal");
+        fs::create_dir_all(workspace.path().join("dist/internal/features"))
+            .expect("failed to create dist/internal/features");
+
+        fs::write(
+            workspace.path().join("package.json"),
+            r##"
+            {
+              "name": "@demo/sdk",
+              "imports": {
+                "#core": {
+                  "default": "./dist/internal/core.js",
+                  "import": "./src/internal/core.ts"
+                },
+                "#features/*": {
+                  "default": "./dist/internal/features/*.js",
+                  "import": "./src/internal/features/*.ts"
+                }
+              }
+            }
+        "##,
+        )
+        .expect("failed to write package.json");
+
+        fs::write(
+            src.join("internal/core.ts"),
+            r#"
+            export function boot(target: string): string {
+              return target;
+            }
+        "#,
+        )
+        .expect("failed to write core fixture");
+
+        fs::write(
+            src.join("internal/features/session.ts"),
+            r#"
+            export interface InternalSession {
+              token: string;
+            }
+        "#,
+        )
+        .expect("failed to write feature fixture");
+
+        fs::write(
+            src.join("index.ts"),
+            r##"
+            export { boot } from "#core";
+            export * from "#features/session";
+        "##,
+        )
+        .expect("failed to write index fixture");
+
+        let report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["src/index.ts".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::WorkspaceOnly,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ts/js:function boot(target: string): string"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ts/js:interface InternalSession"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ts/js:export { boot } from \"#core\""));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ts/js:export * from \"#features/session\""));
+    }
+
+    #[test]
     fn go_export_following_package_only_expands_file_roots_to_same_package_siblings() {
         let workspace = TempWorkspace::new();
         let src = workspace.path().join("src");

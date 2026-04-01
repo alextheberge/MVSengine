@@ -136,7 +136,7 @@ The parser-backed path is organized as per-language adapters, so expanding or ti
 
 For class-like languages, stored member signatures are owner-qualified so collisions between similarly named methods or properties stay visible in `public_api_inventory`. Java, C#, and Kotlin also include declared package or namespace context in both type and member signatures.
 
-- TypeScript/JavaScript: multiline exports, named export clauses, re-exports, and default exports are parser-backed; `scan_policy.ts_export_following` or `--ts-export-following relative-only` can follow same-workspace relative barrel re-exports, and `workspace-only` also follows same-workspace `package.json` export maps, including wildcard subpaths and multi-condition entries, plus root `tsconfig.json` or `jsconfig.json` `baseUrl` and `paths`
+- TypeScript/JavaScript: multiline exports, named export clauses, re-exports, and default exports are parser-backed; `scan_policy.ts_export_following` or `--ts-export-following relative-only` can follow same-workspace relative barrel re-exports, and `workspace-only` also follows same-workspace `package.json` export maps and `imports` maps, including wildcard subpaths and multi-condition entries, plus root `tsconfig.json` or `jsconfig.json` `baseUrl` and `paths`
 - Go: exported `func` declarations, exported methods, exported named types, exported struct fields, exported embedded struct fields, exported interface methods, embedded interface type elements, exported constants, and exported package `var` declarations are parser-backed, and `scan_policy.go_export_following` or `--go-export-following package-only` can expand a rooted `.go` file to same-package sibling source files while skipping `_test.go` files
 - Rust: AST-normalized `pub fn`, `pub struct`, `pub enum`, `pub trait`, `pub type`, `pub const`, `pub static`, and `pub` impl methods are parser-backed, and `scan_policy.rust_export_following` or `--rust-export-following public-modules` can expand a rooted Rust facade such as `src/lib.rs` across same-crate `pub mod` graphs, including nested inline public modules, while leaving private-module files out; direct and chained same-crate `pub use` facades, including grouped and glob reexports that stay inside the crate, are also resolved onto their public alias names, including associated inherent methods
 - Python: public `class` declarations, non-underscore `def` declarations, public `type` aliases, and module-level or class-level constants such as `API_VERSION`, `__all__`, or `Worker.STATUS` are parser-backed without promoting nested local helpers or private class bodies; parseable `__all__` becomes the top-level export boundary, including common alias, unpacking, and `+=` composition patterns built from parseable literals, explicit import re-exports are stored in canonical forms such as `python:from auth.core import login as authorize`, same-workspace `from ... import *` or imported `__all__` aliases resolve when the upstream module export graph is static and parseable, and `scan_policy.python_export_following` plus `scan_policy.python_module_roots` or `--python-module-root` can pin how cross-module facade resolution behaves
@@ -179,8 +179,8 @@ This is especially useful when:
 - that facade file still contains public constants or argument structs that are not real consumer contract
 - a library has an explicit `public/` or `index.ts` export layer
 - a TypeScript or JavaScript repo uses barrel files and wants `index.ts` to contribute the followed concrete contract instead of raw re-export statements
-- that TypeScript or JavaScript facade also depends on same-workspace `package.json` export maps or `tsconfig` / `jsconfig` path aliases
-- that `package.json` export map uses wildcard subpaths or multiple conditions and the repo wants workspace source targets to win over dist fallbacks
+- that TypeScript or JavaScript facade also depends on same-workspace `package.json` export maps, `imports` maps, or `tsconfig` / `jsconfig` path aliases
+- that `package.json` export or import maps use wildcard subpaths or multiple conditions and the repo wants workspace source targets to win over dist fallbacks
 - a Go repo treats one `.go` file as the visible entrypoint but wants the whole same-package surface to count without importing `_test.go` helpers
 - a Rust repo treats `src/lib.rs` or a workspace member crate facade as the contract root and wants same-crate `pub mod` files to count without scanning private-module files
 - a Ruby repo wants file-local declarations without `module_function` or `extend self` promotion
@@ -191,7 +191,7 @@ This is especially useful when:
 
 Flags passed to `generate` persist into `mvs.json.scan_policy`, so later `lint` runs use the same boundary automatically.
 
-For `workspace_only`, package export targets are tried in this order when multiple conditions exist: `types`, `import`, `module`, `browser`, `node`, `default`, `require`, then any remaining custom conditions in key order. Root `tsconfig.json` is preferred over `jsconfig.json` when both exist.
+For `workspace_only`, package export and import targets are tried in this order when multiple conditions exist: `types`, `import`, `module`, `browser`, `node`, `default`, `require`, then any remaining custom conditions in key order. Root `tsconfig.json` is preferred over `jsconfig.json` when both exist.
 
 Example:
 

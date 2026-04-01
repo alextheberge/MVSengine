@@ -177,11 +177,12 @@ fn load_package_json_workspace_config(root: &Path, workspace_config: &mut TsWork
     let Some(package_name) = parsed.get("name").and_then(Value::as_str) else {
         return;
     };
-    let Some(exports) = parsed.get("exports") else {
-        return;
-    };
-
-    collect_package_export_rules(package_name, None, exports, workspace_config);
+    if let Some(exports) = parsed.get("exports") {
+        collect_package_export_rules(package_name, None, exports, workspace_config);
+    }
+    if let Some(imports) = parsed.get("imports") {
+        collect_package_import_rules(None, imports, workspace_config);
+    }
 }
 
 fn collect_package_export_rules(
@@ -270,6 +271,80 @@ fn collect_package_condition_rules(
             continue;
         };
         collect_package_export_rules(package_name, export_key, value, workspace_config);
+    }
+}
+
+fn collect_package_import_rules(
+    import_key: Option<&str>,
+    value: &Value,
+    workspace_config: &mut TsWorkspaceConfig,
+) {
+    match value {
+        Value::String(target) => {
+            let Some(specifier) = import_key.map(str::trim).filter(|key| !key.is_empty()) else {
+                return;
+            };
+            register_workspace_specifier(
+                workspace_config,
+                specifier,
+                &normalize_workspace_target(target),
+            );
+        }
+        Value::Array(values) => {
+            for value in values {
+                collect_package_import_rules(import_key, value, workspace_config);
+            }
+        }
+        Value::Object(map) => {
+            let import_keys: Vec<&str> = map
+                .keys()
+                .map(String::as_str)
+                .filter(|key| key.starts_with('#'))
+                .collect();
+
+            if import_key.is_none() && !import_keys.is_empty() {
+                for nested_key in &import_keys {
+                    let Some(nested_value) = map.get(*nested_key) else {
+                        continue;
+                    };
+                    collect_package_import_rules(Some(nested_key), nested_value, workspace_config);
+                }
+                if import_keys.len() == map.len() {
+                    return;
+                }
+            }
+
+            collect_package_import_condition_rules(import_key, map, &import_keys, workspace_config);
+        }
+        _ => {}
+    }
+}
+
+fn collect_package_import_condition_rules(
+    import_key: Option<&str>,
+    map: &serde_json::Map<String, Value>,
+    import_keys: &[&str],
+    workspace_config: &mut TsWorkspaceConfig,
+) {
+    for condition in TS_EXPORT_CONDITION_PRIORITY {
+        let Some(value) = map.get(*condition) else {
+            continue;
+        };
+        collect_package_import_rules(import_key, value, workspace_config);
+    }
+
+    let mut remaining_keys: Vec<&str> = map
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !import_keys.contains(key) && !TS_EXPORT_CONDITION_PRIORITY.contains(key))
+        .collect();
+    remaining_keys.sort();
+
+    for key in remaining_keys {
+        let Some(value) = map.get(key) else {
+            continue;
+        };
+        collect_package_import_rules(import_key, value, workspace_config);
     }
 }
 

@@ -806,6 +806,119 @@ fn ts_export_following_workspace_only_prefers_conditioned_root_and_wildcard_expo
 }
 
 #[test]
+fn ts_export_following_workspace_only_resolves_package_imports_maps() {
+    let temp = TempWorkspace::new();
+    let project_root = temp.path().join("project");
+    fs::create_dir_all(project_root.join("src/internal/features"))
+        .expect("failed to create src/internal/features");
+    fs::create_dir_all(project_root.join("dist/internal/features"))
+        .expect("failed to create dist/internal/features");
+
+    fs::write(
+        project_root.join("package.json"),
+        r##"
+        {
+          "name": "@demo/sdk",
+          "imports": {
+            "#core": {
+              "default": "./dist/internal/core.js",
+              "import": "./src/internal/core.ts"
+            },
+            "#features/*": {
+              "default": "./dist/internal/features/*.js",
+              "import": "./src/internal/features/*.ts"
+            }
+          }
+        }
+    "##,
+    )
+    .expect("failed to write package.json");
+
+    fs::write(
+        project_root.join("src/internal/core.ts"),
+        r#"
+        export function boot(target: string): string {
+          return target;
+        }
+    "#,
+    )
+    .expect("failed to write core fixture");
+
+    fs::write(
+        project_root.join("src/internal/features/session.ts"),
+        r#"
+        export interface InternalSession {
+          token: string;
+        }
+    "#,
+    )
+    .expect("failed to write feature fixture");
+
+    fs::write(
+        project_root.join("src/index.ts"),
+        r##"
+        export { boot } from "#core";
+        export * from "#features/session";
+    "##,
+    )
+    .expect("failed to write barrel fixture");
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "src/index.ts",
+            "--ts-export-following",
+            "workspace-only",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("TS/JS export following"));
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+
+    let inventory = generated["evidence"]["public_api_inventory"]
+        .as_array()
+        .expect("public api inventory should be an array");
+    assert!(inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ts/js:function boot(target: string): string"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ts/js:interface InternalSession"
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ts/js:export { boot } from \"#core\""
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ts/js:export * from \"#features/session\""
+    }));
+}
+
+#[test]
 fn go_export_following_package_only_persists_and_expands_package_siblings() {
     let temp = TempWorkspace::new();
     let project_root = temp.path().join("project");
