@@ -29,8 +29,9 @@ impl LuaDialect {
 
 pub(super) fn extract(root: Node<'_>, source: &str, dialect: LuaDialect) -> Vec<String> {
     let mut signatures = Vec::new();
-    collect_global_public_api(root, source, dialect, &mut signatures);
-    collect_module_exports(root, source, dialect, &mut signatures);
+    let returned_roots = extract_returned_root_names(root, source);
+    collect_global_public_api(root, source, dialect, &returned_roots, &mut signatures);
+    collect_module_exports(root, source, dialect, &returned_roots, &mut signatures);
     signatures
 }
 
@@ -38,16 +39,28 @@ fn collect_global_public_api(
     node: Node<'_>,
     source: &str,
     dialect: LuaDialect,
+    returned_roots: &BTreeSet<String>,
     signatures: &mut Vec<String>,
 ) {
     for child in named_children(node) {
         match child.kind() {
-            "chunk" | "statement" => collect_global_public_api(child, source, dialect, signatures),
+            "chunk" | "statement" => {
+                collect_global_public_api(child, source, dialect, returned_roots, signatures)
+            }
             "function_declaration" => {
                 let Some(name) = child.child_by_field_name("name") else {
                     continue;
                 };
                 if name.kind() != "identifier" {
+                    continue;
+                }
+                let Some(function_name) = node_text(name, source).map(str::trim) else {
+                    continue;
+                };
+                if function_name.is_empty() {
+                    continue;
+                }
+                if !returned_roots.is_empty() && !returned_roots.contains(function_name) {
                     continue;
                 }
 
@@ -74,10 +87,10 @@ fn collect_module_exports(
     root: Node<'_>,
     source: &str,
     dialect: LuaDialect,
+    returned_roots: &BTreeSet<String>,
     signatures: &mut Vec<String>,
 ) {
-    let module_names = extract_returned_module_names(root, source);
-    if module_names.is_empty() {
+    if returned_roots.is_empty() {
         return;
     }
 
@@ -90,16 +103,16 @@ fn collect_module_exports(
                 else {
                     continue;
                 };
-                collect_assignment_exports(assignment, source, dialect, &module_names, signatures);
+                collect_assignment_exports(assignment, source, dialect, returned_roots, signatures);
             }
             "assignment_statement" => {
-                collect_assignment_exports(item, source, dialect, &module_names, signatures);
+                collect_assignment_exports(item, source, dialect, returned_roots, signatures);
             }
             "function_declaration" => {
                 let Some(name) = item.child_by_field_name("name") else {
                     continue;
                 };
-                if extract_module_member_name(name, source, &module_names).is_none() {
+                if extract_module_member_name(name, source, returned_roots).is_none() {
                     continue;
                 }
 
@@ -117,18 +130,18 @@ fn collect_assignment_exports(
     assignment: Node<'_>,
     source: &str,
     dialect: LuaDialect,
-    module_names: &BTreeSet<String>,
+    returned_roots: &BTreeSet<String>,
     signatures: &mut Vec<String>,
 ) {
     for (target, value) in extract_assignment_pairs(assignment) {
         if let Some(module_name) = extract_identifier_name(target, source) {
-            if module_names.contains(module_name) && value.kind() == "table_constructor" {
+            if returned_roots.contains(module_name) && value.kind() == "table_constructor" {
                 collect_table_constructor_exports(module_name, value, source, dialect, signatures);
             }
             continue;
         }
 
-        let Some(member_name) = extract_module_member_name(target, source, module_names) else {
+        let Some(member_name) = extract_module_member_name(target, source, returned_roots) else {
             continue;
         };
 
@@ -186,8 +199,8 @@ fn collect_table_constructor_exports(
     }
 }
 
-fn extract_returned_module_names(root: Node<'_>, source: &str) -> BTreeSet<String> {
-    let mut module_names = BTreeSet::new();
+fn extract_returned_root_names(root: Node<'_>, source: &str) -> BTreeSet<String> {
+    let mut returned_roots = BTreeSet::new();
 
     for item in top_level_items(root) {
         if item.kind() != "return_statement" {
@@ -203,12 +216,12 @@ fn extract_returned_module_names(root: Node<'_>, source: &str) -> BTreeSet<Strin
 
         for expression in named_children(expression_list) {
             if let Some(name) = extract_identifier_name(expression, source) {
-                module_names.insert(name.to_string());
+                returned_roots.insert(name.to_string());
             }
         }
     }
 
-    module_names
+    returned_roots
 }
 
 fn top_level_items(node: Node<'_>) -> Vec<Node<'_>> {

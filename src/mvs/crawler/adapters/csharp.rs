@@ -19,6 +19,7 @@ fn collect_public_api(
     type_namespace: &[String],
     inside_interface_like: bool,
 ) {
+    let mut active_namespace = type_namespace.to_vec();
     for child in named_children(node) {
         match child.kind() {
             "class_declaration"
@@ -27,15 +28,18 @@ fn collect_public_api(
             | "record_declaration"
             | "struct_declaration" => {
                 let next_inside_interface_like = child.kind() == "interface_declaration";
-                if let Some(signature) =
-                    extract_csharp_type_signature(child, source, inside_interface_like)
-                {
+                if let Some(signature) = extract_csharp_type_signature(
+                    child,
+                    source,
+                    &active_namespace,
+                    inside_interface_like,
+                ) {
                     signatures.push(format!("csharp:{signature}"));
                 }
 
                 if let Some(body) = child.child_by_field_name("body") {
                     let next_namespace =
-                        extend_csharp_type_namespace(type_namespace, child, source);
+                        extend_csharp_type_namespace(&active_namespace, child, source);
                     collect_public_api(
                         body,
                         source,
@@ -49,7 +53,7 @@ fn collect_public_api(
                 if let Some(signature) = extract_csharp_method_signature(
                     child,
                     source,
-                    type_namespace,
+                    &active_namespace,
                     inside_interface_like,
                 ) {
                     signatures.push(format!("csharp:{signature}"));
@@ -58,31 +62,35 @@ fn collect_public_api(
             "property_declaration" => signatures.extend(extract_csharp_property_signatures(
                 child,
                 source,
-                type_namespace,
+                &active_namespace,
                 inside_interface_like,
             )),
             "field_declaration" => signatures.extend(extract_csharp_field_signatures(
                 child,
                 source,
-                type_namespace,
+                &active_namespace,
             )),
             "namespace_declaration" => {
+                let next_namespace = extend_csharp_namespace(&active_namespace, child, source);
                 if let Some(body) = child.child_by_field_name("body") {
                     collect_public_api(
                         body,
                         source,
                         signatures,
-                        type_namespace,
+                        &next_namespace,
                         inside_interface_like,
                     );
                 }
             }
-            "compilation_unit" | "declaration_list" | "file_scoped_namespace_declaration" => {
+            "file_scoped_namespace_declaration" => {
+                active_namespace = extend_csharp_namespace(&active_namespace, child, source);
+            }
+            "compilation_unit" | "declaration_list" => {
                 collect_public_api(
                     child,
                     source,
                     signatures,
-                    type_namespace,
+                    &active_namespace,
                     inside_interface_like,
                 );
             }
@@ -93,6 +101,15 @@ fn collect_public_api(
 
 fn extend_csharp_type_namespace(namespace: &[String], node: Node<'_>, source: &str) -> Vec<String> {
     let mut next = namespace.to_vec();
+    let Some(name) = csharp_declaration_name(node, source) else {
+        return next;
+    };
+    next.push(name);
+    next
+}
+
+fn extend_csharp_namespace(namespace: &[String], node: Node<'_>, source: &str) -> Vec<String> {
+    let mut next = namespace.to_vec();
     let Some(name) = node
         .child_by_field_name("name")
         .and_then(|child| node_text(child, source))
@@ -101,8 +118,15 @@ fn extend_csharp_type_namespace(namespace: &[String], node: Node<'_>, source: &s
     else {
         return next;
     };
-    next.push(name);
+    next.extend(split_qualified_path(&name));
     next
+}
+
+fn csharp_declaration_name(node: Node<'_>, source: &str) -> Option<String> {
+    node.child_by_field_name("name")
+        .and_then(|child| node_text(child, source))
+        .map(normalize_tree_sitter_signature)
+        .filter(|value| !value.is_empty())
 }
 
 fn qualify_csharp_method_signature(
@@ -116,23 +140,17 @@ fn qualify_csharp_method_signature(
         return signature.to_string();
     }
 
-    let Some(name) = node
-        .child_by_field_name("name")
-        .and_then(|child| node_text(child, source))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
+    let Some(name) = csharp_declaration_name(node, source) else {
         return signature.to_string();
     };
 
-    let needle = format!(" {name}(");
-    let replacement = format!(" {owner}.{name}(");
-    signature.replacen(&needle, &replacement, 1)
+    qualify_named_signature(signature, &name, &format!("{owner}.{name}"))
 }
 
 fn extract_csharp_type_signature(
     node: Node<'_>,
     source: &str,
+    namespace: &[String],
     inside_interface_like: bool,
 ) -> Option<String> {
     let raw = extract_tree_sitter_prefix_signature(node, source, "body")?;
@@ -146,7 +164,10 @@ fn extract_csharp_type_signature(
         return None;
     };
 
-    Some(format!("type {signature}"))
+    Some(format!(
+        "type {}",
+        qualify_csharp_type_signature(&signature, node, source, namespace)
+    ))
 }
 
 fn extract_csharp_method_signature(
@@ -229,6 +250,23 @@ fn extract_csharp_property_signatures(
     }
 
     vec![format!("csharp:{}", parts.join(" "))]
+}
+
+fn qualify_csharp_type_signature(
+    signature: &str,
+    node: Node<'_>,
+    source: &str,
+    namespace: &[String],
+) -> String {
+    let Some(name) = csharp_declaration_name(node, source) else {
+        return signature.to_string();
+    };
+    let qualified_name = qualify_name(namespace, &name);
+    if qualified_name == name {
+        return signature.to_string();
+    }
+
+    qualify_named_signature(signature, &name, &qualified_name)
 }
 
 fn extract_csharp_field_signatures(
@@ -362,6 +400,33 @@ fn csharp_has_child_kind(node: Node<'_>, kind: &str) -> bool {
     named_children(node)
         .into_iter()
         .any(|child| child.kind() == kind)
+}
+
+fn qualify_named_signature(signature: &str, name: &str, qualified_name: &str) -> String {
+    let needle = format!(" {name}(");
+    if signature.contains(&needle) {
+        return signature.replacen(&needle, &format!(" {qualified_name}("), 1);
+    }
+
+    let needle = format!(" {name}");
+    signature.replacen(&needle, &format!(" {qualified_name}"), 1)
+}
+
+fn qualify_name(namespace: &[String], name: &str) -> String {
+    if namespace.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}.{}", namespace.join("."), name)
+    }
+}
+
+fn split_qualified_path(value: &str) -> Vec<String> {
+    value
+        .split('.')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .map(ToString::to_string)
+        .collect()
 }
 
 fn csharp_owner_name(type_namespace: &[String]) -> String {

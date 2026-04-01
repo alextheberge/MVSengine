@@ -8,7 +8,8 @@ use super::super::{
 
 pub(super) fn extract(root: Node<'_>, source: &str) -> Vec<String> {
     let mut signatures = Vec::new();
-    collect_public_api(root, source, &mut signatures, &[]);
+    let namespace = kotlin_package_namespace(root, source);
+    collect_public_api(root, source, &mut signatures, &namespace);
     signatures
 }
 
@@ -21,12 +22,8 @@ fn collect_public_api(
     for child in named_children(node) {
         match child.kind() {
             "class_declaration" | "object_declaration" => {
-                if let Some(signature) = extract_tree_sitter_prefix_before_named_child(
-                    child,
-                    source,
-                    &["class_body", "enum_class_body"],
-                )
-                .and_then(|value| normalize_kotlin_signature(&value))
+                if let Some(signature) =
+                    extract_kotlin_type_signature(child, source, type_namespace)
                 {
                     signatures.push(format!("kotlin:{signature}"));
                 }
@@ -69,16 +66,53 @@ fn collect_public_api(
 
 fn extend_kotlin_type_namespace(namespace: &[String], node: Node<'_>, source: &str) -> Vec<String> {
     let mut next = namespace.to_vec();
-    let Some(name) = node
-        .child_by_field_name("name")
-        .and_then(|child| node_text(child, source))
-        .map(normalize_tree_sitter_signature)
-        .filter(|value| !value.is_empty())
-    else {
+    let Some(name) = kotlin_declaration_name(node, source) else {
         return next;
     };
     next.push(name);
     next
+}
+
+fn kotlin_package_namespace(root: Node<'_>, source: &str) -> Vec<String> {
+    named_children(root)
+        .into_iter()
+        .find(|child| child.kind() == "package_header")
+        .and_then(|child| kotlin_package_name(child, source))
+        .map(|qualified| split_qualified_path(&qualified))
+        .unwrap_or_default()
+}
+
+fn kotlin_package_name(node: Node<'_>, source: &str) -> Option<String> {
+    named_children(node)
+        .into_iter()
+        .find(|child| child.kind() == "qualified_identifier")
+        .and_then(|child| node_text(child, source))
+        .map(normalize_tree_sitter_signature)
+        .filter(|value| !value.is_empty())
+}
+
+fn kotlin_declaration_name(node: Node<'_>, source: &str) -> Option<String> {
+    node.child_by_field_name("name")
+        .and_then(|child| node_text(child, source))
+        .map(normalize_tree_sitter_signature)
+        .filter(|value| !value.is_empty())
+}
+
+fn extract_kotlin_type_signature(
+    node: Node<'_>,
+    source: &str,
+    namespace: &[String],
+) -> Option<String> {
+    let signature = extract_tree_sitter_prefix_before_named_child(
+        node,
+        source,
+        &["class_body", "enum_class_body"],
+    )
+    .and_then(|value| normalize_kotlin_signature(&value))?;
+
+    Some(qualify_kotlin_type_signature(
+        &signature, node, source, namespace,
+    ))
 }
 
 fn qualify_kotlin_function_signature(
@@ -92,18 +126,28 @@ fn qualify_kotlin_function_signature(
         return signature.to_string();
     }
 
-    let Some(name) = node
-        .child_by_field_name("name")
-        .and_then(|child| node_text(child, source))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
+    let Some(name) = kotlin_declaration_name(node, source) else {
         return signature.to_string();
     };
 
-    let needle = format!(" {name}(");
-    let replacement = format!(" {owner}.{name}(");
-    signature.replacen(&needle, &replacement, 1)
+    qualify_named_signature(signature, &name, &format!("{owner}.{name}"))
+}
+
+fn qualify_kotlin_type_signature(
+    signature: &str,
+    node: Node<'_>,
+    source: &str,
+    namespace: &[String],
+) -> String {
+    let Some(name) = kotlin_declaration_name(node, source) else {
+        return signature.to_string();
+    };
+    let qualified_name = qualify_name(namespace, &name);
+    if qualified_name == name {
+        return signature.to_string();
+    }
+
+    qualify_named_signature(signature, &name, &qualified_name)
 }
 
 fn extract_kotlin_property_signatures(
@@ -190,4 +234,31 @@ fn contains_keyword(signature: &str, keyword: &str) -> bool {
     signature
         .split(|char: char| !char.is_ascii_alphanumeric() && char != '_')
         .any(|token| token == keyword)
+}
+
+fn qualify_named_signature(signature: &str, name: &str, qualified_name: &str) -> String {
+    let needle = format!(" {name}(");
+    if signature.contains(&needle) {
+        return signature.replacen(&needle, &format!(" {qualified_name}("), 1);
+    }
+
+    let needle = format!(" {name}");
+    signature.replacen(&needle, &format!(" {qualified_name}"), 1)
+}
+
+fn qualify_name(namespace: &[String], name: &str) -> String {
+    if namespace.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}.{}", namespace.join("."), name)
+    }
+}
+
+fn split_qualified_path(value: &str) -> Vec<String> {
+    value
+        .split('.')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .map(ToString::to_string)
+        .collect()
 }

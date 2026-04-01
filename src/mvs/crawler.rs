@@ -2165,7 +2165,7 @@ mod tests {
     }
 
     #[test]
-    fn tree_sitter_captures_python_public_defs_without_decorators_or_nested_locals() {
+    fn tree_sitter_captures_python_public_defs_and_respects_all() {
         let workspace = TempWorkspace::new();
         let src = workspace.path().join("src");
         fs::create_dir_all(&src).expect("failed to create src");
@@ -2214,15 +2214,7 @@ mod tests {
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "python:const API_VERSION: str"));
-        assert!(report
-            .public_api
-            .iter()
             .any(|entry| entry.signature == "python:const __all__"));
-        assert!(report
-            .public_api
-            .iter()
-            .any(|entry| entry.signature == "python:type SessionToken = str"));
         assert!(report
             .public_api
             .iter()
@@ -2239,6 +2231,14 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature == "python:def login(username: str) -> str"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("API_VERSION")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("SessionToken")));
         assert!(!report
             .public_api
             .iter()
@@ -2267,6 +2267,71 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("_HIDDEN_STATUS")));
+    }
+
+    #[test]
+    fn tree_sitter_python_falls_back_when_all_is_not_parseable() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("api.py"),
+            r#"
+            API_VERSION: str = "v1"
+            __all__ = _build_exports()
+            type SessionToken = str
+
+            def _build_exports():
+                return ("login", "Worker")
+
+            class Worker:
+                STATUS: str = "ready"
+
+                def run_job(name: str) -> str:
+                    return name
+
+            def login(username: str) -> str:
+                return username
+        "#,
+        )
+        .expect("failed to write python fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:const API_VERSION: str"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:const __all__"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:type SessionToken = str"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:class Worker"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:const Worker.STATUS: str"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:def Worker.run_job(name: str) -> str"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:def login(username: str) -> str"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("_build_exports")));
     }
 
     #[test]
@@ -2311,36 +2376,36 @@ mod tests {
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "java:type public record Session(String token)"));
+            .any(|entry| entry.signature == "java:type public record demo.Session(String token)"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "java:type public class AuthApi"));
+            .any(|entry| entry.signature == "java:type public class demo.AuthApi"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "java:type public static class Nested"));
+            .any(|entry| entry.signature == "java:type public static class demo.AuthApi.Nested"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "java:type public interface Contract"));
-        assert!(report.public_api.iter().any(
-            |entry| entry.signature == "java:field public static final String AuthApi.VERSION"
-        ));
-        assert!(report
-            .public_api
-            .iter()
-            .any(|entry| entry.signature == "java:field public String AuthApi.status"));
+            .any(|entry| entry.signature == "java:type public interface demo.AuthApi.Contract"));
         assert!(report
             .public_api
             .iter()
             .any(|entry| entry.signature
-                == "java:method public String AuthApi.login(String username)"));
+                == "java:field public static final String demo.AuthApi.VERSION"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "java:field public String demo.AuthApi.status"));
+        assert!(report.public_api.iter().any(|entry| entry.signature
+            == "java:method public String demo.AuthApi.login(String username)"));
         assert!(report.public_api.iter().any(|entry| {
-            entry.signature == "java:method public String AuthApi.Contract.sync(String username)"
+            entry.signature
+                == "java:method public String demo.AuthApi.Contract.sync(String username)"
         }));
         assert!(report.public_api.iter().any(|entry| entry.signature
-            == "java:const public static final String AuthApi.Contract.STATE"));
+            == "java:const public static final String demo.AuthApi.Contract.STATE"));
         assert!(!report
             .public_api
             .iter()
@@ -2360,6 +2425,8 @@ mod tests {
         fs::write(
             src.join("api.kt"),
             r#"
+            package demo.auth
+
             const val API_VERSION: String = "v1"
 
             public class AuthApi {
@@ -2402,47 +2469,45 @@ mod tests {
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "kotlin:public class AuthApi"));
+            .any(|entry| entry.signature == "kotlin:public class demo.auth.AuthApi"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "kotlin:const val API_VERSION: String"));
+            .any(|entry| entry.signature == "kotlin:const val demo.auth.API_VERSION: String"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "kotlin:val AuthApi.token: String"));
+            .any(|entry| entry.signature == "kotlin:val demo.auth.AuthApi.token: String"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "kotlin:var AuthApi.status: String"));
+            .any(|entry| entry.signature == "kotlin:var demo.auth.AuthApi.status: String"));
+        assert!(report.public_api.iter().any(|entry| entry.signature
+            == "kotlin:fun demo.auth.AuthApi.login(username: String): String"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "kotlin:fun AuthApi.login(username: String): String"));
+            .any(|entry| entry.signature == "kotlin:interface demo.auth.AuthApi.Contract"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "kotlin:interface Contract"));
+            .any(|entry| entry.signature
+                == "kotlin:val demo.auth.AuthApi.Contract.sessionToken: String"));
+        assert!(report.public_api.iter().any(|entry| entry.signature
+            == "kotlin:data class demo.auth.AuthApi.Session(val token: String)"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "kotlin:val AuthApi.Contract.sessionToken: String"));
+            .any(|entry| entry.signature
+                == "kotlin:suspend fun demo.auth.load(token: String): String"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "kotlin:data class Session(val token: String)"));
+            .any(|entry| entry.signature == "kotlin:object demo.auth.Defaults"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "kotlin:suspend fun load(token: String): String"));
-        assert!(report
-            .public_api
-            .iter()
-            .any(|entry| entry.signature == "kotlin:object Defaults"));
-        assert!(report
-            .public_api
-            .iter()
-            .any(|entry| entry.signature == "kotlin:val Defaults.timeout: Int"));
+            .any(|entry| entry.signature == "kotlin:val demo.auth.Defaults.timeout: Int"));
         assert!(!report
             .public_api
             .iter()
@@ -2497,40 +2562,48 @@ mod tests {
         let report =
             crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
 
+        assert!(
+            report
+                .public_api
+                .iter()
+                .any(|entry| entry.signature
+                    == "csharp:type public record Demo.Session(string Token)")
+        );
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "csharp:type public record Session(string Token)"));
+            .any(|entry| entry.signature == "csharp:type public class Demo.AuthApi"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "csharp:type public class AuthApi"));
+            .any(|entry| entry.signature == "csharp:type public interface Demo.AuthApi.Contract"));
         assert!(report
             .public_api
             .iter()
-            .any(|entry| entry.signature == "csharp:type public interface Contract"));
-        assert!(report
-            .public_api
-            .iter()
-            .any(|entry| entry.signature == "csharp:type public struct Result"));
+            .any(|entry| entry.signature == "csharp:type public struct Demo.AuthApi.Result"));
         assert!(report.public_api.iter().any(|entry| {
-            entry.signature == "csharp:field public static readonly string AuthApi.Version"
+            entry.signature == "csharp:field public static readonly string Demo.AuthApi.Version"
         }));
-        assert!(report
-            .public_api
-            .iter()
-            .any(|entry| entry.signature == "csharp:const public string AuthApi.STATUS_READY"));
+        assert!(
+            report
+                .public_api
+                .iter()
+                .any(|entry| entry.signature
+                    == "csharp:const public string Demo.AuthApi.STATUS_READY")
+        );
         assert!(report.public_api.iter().any(|entry| {
-            entry.signature == "csharp:property public string AuthApi.DisplayName { get }"
+            entry.signature == "csharp:property public string Demo.AuthApi.DisplayName { get }"
         }));
         assert!(report.public_api.iter().any(|entry| {
-            entry.signature == "csharp:method public static string AuthApi.Login(string username)"
+            entry.signature
+                == "csharp:method public static string Demo.AuthApi.Login(string username)"
         }));
         assert!(report.public_api.iter().any(|entry| {
-            entry.signature == "csharp:method public string AuthApi.Contract.Sync(string username)"
+            entry.signature
+                == "csharp:method public string Demo.AuthApi.Contract.Sync(string username)"
         }));
         assert!(report.public_api.iter().any(|entry| {
-            entry.signature == "csharp:property public string AuthApi.Contract.State { get }"
+            entry.signature == "csharp:property public string Demo.AuthApi.Contract.State { get }"
         }));
         assert!(!report
             .public_api
@@ -2913,10 +2986,6 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature == "lua:function Api:refresh(token)"));
-        assert!(report
-            .public_api
-            .iter()
-            .any(|entry| entry.signature == "lua:function connect(target)"));
         assert!(!report
             .public_api
             .iter()
@@ -2925,6 +2994,45 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("Internal.hidden")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "lua:function connect(target)"));
+    }
+
+    #[test]
+    fn tree_sitter_captures_lua_returned_function_identifier_as_export() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("Api.lua"),
+            r#"
+            function connect(target)
+                return target ~= ""
+            end
+
+            function hidden(target)
+                return target == ""
+            end
+
+            return connect
+        "#,
+        )
+        .expect("failed to write lua fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "lua:function connect(target)"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("hidden")));
     }
 
     #[test]
@@ -3006,10 +3114,6 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature == "luau:function Api:refresh(token: string): boolean"));
-        assert!(report
-            .public_api
-            .iter()
-            .any(|entry| entry.signature == "luau:function connect(target: string): boolean"));
         assert!(!report
             .public_api
             .iter()
@@ -3018,6 +3122,10 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("Internal.hidden")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "luau:function connect(target: string): boolean"));
     }
 
     #[test]
@@ -3099,6 +3207,7 @@ mod tests {
                 # @mvs-feature("python_bridge")
                 # @mvs-protocol("python-api-v1")
                 API_VERSION: str = "v1"
+                __all__ = ("login", "Worker")
                 type SessionToken = str
 
                 class Worker:
@@ -3114,13 +3223,12 @@ mod tests {
                 expected_feature: "python_bridge",
                 expected_protocol: "python-api-v1",
                 expected_public_api: &[
-                    "python:const API_VERSION: str",
-                    "python:type SessionToken = str",
+                    "python:const __all__",
                     "python:class Worker",
                     "python:const Worker.STATUS: str",
                     "python:def login(username: str) -> str",
                 ],
-                rejected_public_api_fragments: &["_hidden"],
+                rejected_public_api_fragments: &["_hidden", "API_VERSION", "SessionToken"],
             },
             ParserAdapterCase {
                 file_name: "AuthApi.java",
@@ -3155,17 +3263,19 @@ mod tests {
                 expected_feature: "java_bridge",
                 expected_protocol: "java-api-v1",
                 expected_public_api: &[
-                    "java:type public class AuthApi",
-                    "java:field public static final String AuthApi.VERSION",
-                    "java:method public String AuthApi.login(String username)",
-                    "java:type public interface Contract",
-                    "java:method public String AuthApi.Contract.sync(String username)",
+                    "java:type public class demo.AuthApi",
+                    "java:field public static final String demo.AuthApi.VERSION",
+                    "java:method public String demo.AuthApi.login(String username)",
+                    "java:type public interface demo.AuthApi.Contract",
+                    "java:method public String demo.AuthApi.Contract.sync(String username)",
                 ],
                 rejected_public_api_fragments: &["hidden"],
             },
             ParserAdapterCase {
                 file_name: "api.kt",
                 source: r#"
+                package demo.auth
+
                 val fixture = """
                 // @mvs-feature("fake_feature")
                 // @mvs-protocol("fake_protocol")
@@ -3190,16 +3300,18 @@ mod tests {
                 expected_feature: "kotlin_bridge",
                 expected_protocol: "kotlin-api-v1",
                 expected_public_api: &[
-                    "kotlin:const val API_VERSION: String",
-                    "kotlin:class AuthApi",
-                    "kotlin:val AuthApi.token: String",
-                    "kotlin:fun AuthApi.login(username: String): String",
+                    "kotlin:const val demo.auth.API_VERSION: String",
+                    "kotlin:class demo.auth.AuthApi",
+                    "kotlin:val demo.auth.AuthApi.token: String",
+                    "kotlin:fun demo.auth.AuthApi.login(username: String): String",
                 ],
                 rejected_public_api_fragments: &["hidden"],
             },
             ParserAdapterCase {
                 file_name: "Api.cs",
                 source: r#"
+                namespace Demo;
+
                 var fixture = @"
                 // @mvs-feature(""fake_feature"")
                 // @mvs-protocol(""fake_protocol"")
@@ -3223,10 +3335,10 @@ mod tests {
                 expected_feature: "csharp_bridge",
                 expected_protocol: "csharp-api-v1",
                 expected_public_api: &[
-                    "csharp:type public class AuthApi",
-                    "csharp:field public static readonly string AuthApi.Version",
-                    "csharp:property public string AuthApi.DisplayName { get }",
-                    "csharp:method public static string AuthApi.Login(string username)",
+                    "csharp:type public class Demo.AuthApi",
+                    "csharp:field public static readonly string Demo.AuthApi.Version",
+                    "csharp:property public string Demo.AuthApi.DisplayName { get }",
+                    "csharp:method public static string Demo.AuthApi.Login(string username)",
                 ],
                 rejected_public_api_fragments: &["Hidden"],
             },

@@ -9,7 +9,8 @@ use super::super::{
 
 pub(super) fn extract(root: Node<'_>, source: &str) -> Vec<String> {
     let mut signatures = Vec::new();
-    collect_public_api(root, source, &mut signatures, &[], false);
+    let namespace = java_package_namespace(root, source);
+    collect_public_api(root, source, &mut signatures, &namespace, false);
     signatures
 }
 
@@ -31,14 +32,13 @@ fn collect_public_api(
                     child.kind(),
                     "interface_declaration" | "annotation_type_declaration"
                 );
-                if has_tree_sitter_keyword(child, source, "body", "public") || inside_interface_like
-                {
-                    if let Some(signature) =
-                        extract_tree_sitter_prefix_signature(child, source, "body")
-                            .and_then(|value| trim_signature_to_keywords(&value, &["public"]))
-                    {
-                        signatures.push(format!("java:type {signature}"));
-                    }
+                if let Some(signature) = extract_java_type_signature(
+                    child,
+                    source,
+                    type_namespace,
+                    inside_interface_like,
+                ) {
+                    signatures.push(format!("java:{signature}"));
                 }
 
                 if let Some(body) = child.child_by_field_name("body") {
@@ -87,16 +87,57 @@ fn collect_public_api(
 
 fn extend_java_type_namespace(namespace: &[String], node: Node<'_>, source: &str) -> Vec<String> {
     let mut next = namespace.to_vec();
-    let Some(name) = node
-        .child_by_field_name("name")
-        .and_then(|child| node_text(child, source))
-        .map(normalize_tree_sitter_signature)
-        .filter(|value| !value.is_empty())
-    else {
+    let Some(name) = java_declaration_name(node, source) else {
         return next;
     };
     next.push(name);
     next
+}
+
+fn java_package_namespace(root: Node<'_>, source: &str) -> Vec<String> {
+    named_children(root)
+        .into_iter()
+        .find(|child| child.kind() == "package_declaration")
+        .and_then(|child| java_package_name(child, source))
+        .map(|qualified| split_qualified_path(&qualified))
+        .unwrap_or_default()
+}
+
+fn java_package_name(node: Node<'_>, source: &str) -> Option<String> {
+    named_children(node)
+        .into_iter()
+        .find(|child| matches!(child.kind(), "identifier" | "scoped_identifier"))
+        .and_then(|child| node_text(child, source))
+        .map(normalize_tree_sitter_signature)
+        .filter(|value| !value.is_empty())
+}
+
+fn java_declaration_name(node: Node<'_>, source: &str) -> Option<String> {
+    node.child_by_field_name("name")
+        .and_then(|child| node_text(child, source))
+        .map(normalize_tree_sitter_signature)
+        .filter(|value| !value.is_empty())
+}
+
+fn extract_java_type_signature(
+    node: Node<'_>,
+    source: &str,
+    namespace: &[String],
+    inside_interface_like: bool,
+) -> Option<String> {
+    let raw = extract_tree_sitter_prefix_signature(node, source, "body")?;
+    let signature = if has_tree_sitter_keyword(node, source, "body", "public") {
+        trim_signature_to_keywords(&raw, &["public"])?
+    } else if inside_interface_like {
+        format!("public {}", normalize_tree_sitter_signature(&raw))
+    } else {
+        return None;
+    };
+
+    Some(format!(
+        "type {}",
+        qualify_java_type_signature(&signature, node, source, namespace)
+    ))
 }
 
 fn qualify_java_method_signature(
@@ -110,22 +151,38 @@ fn qualify_java_method_signature(
         return signature.to_string();
     }
 
-    let Some(name) = node
-        .child_by_field_name("name")
-        .and_then(|child| node_text(child, source))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
+    let Some(name) = java_declaration_name(node, source) else {
         return signature.to_string();
     };
 
-    qualify_named_callable_signature(signature, name, &owner)
+    qualify_named_signature(signature, &name, &format!("{owner}.{name}"))
 }
 
-fn qualify_named_callable_signature(signature: &str, name: &str, owner: &str) -> String {
+fn qualify_java_type_signature(
+    signature: &str,
+    node: Node<'_>,
+    source: &str,
+    namespace: &[String],
+) -> String {
+    let Some(name) = java_declaration_name(node, source) else {
+        return signature.to_string();
+    };
+    let qualified_name = qualify_name(namespace, &name);
+    if qualified_name == name {
+        return signature.to_string();
+    }
+
+    qualify_named_signature(signature, &name, &qualified_name)
+}
+
+fn qualify_named_signature(signature: &str, name: &str, qualified_name: &str) -> String {
     let needle = format!(" {name}(");
-    let replacement = format!(" {owner}.{name}(");
-    signature.replacen(&needle, &replacement, 1)
+    if signature.contains(&needle) {
+        return signature.replacen(&needle, &format!(" {qualified_name}("), 1);
+    }
+
+    let needle = format!(" {name}");
+    signature.replacen(&needle, &format!(" {qualified_name}"), 1)
 }
 
 fn extract_java_method_signature(
@@ -260,4 +317,21 @@ fn java_owner_name(type_namespace: &[String]) -> Option<String> {
     } else {
         Some(type_namespace.join("."))
     }
+}
+
+fn qualify_name(namespace: &[String], name: &str) -> String {
+    if namespace.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}.{}", namespace.join("."), name)
+    }
+}
+
+fn split_qualified_path(value: &str) -> Vec<String> {
+    value
+        .split('.')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .map(ToString::to_string)
+        .collect()
 }
