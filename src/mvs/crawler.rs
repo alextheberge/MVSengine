@@ -3,7 +3,7 @@ mod adapters;
 mod language;
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -11,11 +11,11 @@ use std::{
 use anyhow::{Context, Result};
 use quote::ToTokens;
 use regex::Regex;
-use syn::{FnArg, ImplItem, Item, ReturnType, Signature, TraitItem, Visibility};
+use syn::{FnArg, ImplItem, Item, ReturnType, Signature, TraitItem, Type, UseTree, Visibility};
 use tree_sitter::{Node, Parser as TreeSitterParser};
 use walkdir::{DirEntry, WalkDir};
 
-use crate::mvs::manifest::{GoExportFollowing, ScanPolicy};
+use crate::mvs::manifest::{GoExportFollowing, RustExportFollowing, ScanPolicy};
 
 use self::language::{LexStrategy, SourceLanguage};
 
@@ -53,6 +53,28 @@ struct SourceFileInput {
     lexed: LexedSource,
 }
 
+#[derive(Debug, Clone, Default)]
+struct RustModuleIndex {
+    public_module_files_by_rel_path: BTreeMap<String, Vec<String>>,
+    reexported_signatures_by_file: BTreeMap<String, Vec<String>>,
+}
+
+impl RustModuleIndex {
+    fn public_module_files_for<'a>(&'a self, rel_path: &str) -> &'a [String] {
+        self.public_module_files_by_rel_path
+            .get(rel_path)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    fn reexported_signatures_for<'a>(&'a self, rel_path: &str) -> &'a [String] {
+        self.reexported_signatures_by_file
+            .get(rel_path)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+}
+
 struct ApiRegexPack {
     go_func: Regex,
     py_def: Regex,
@@ -66,6 +88,7 @@ struct ApiRegexPack {
 struct PublicApiExtractionContext<'a> {
     regex: &'a ApiRegexPack,
     scan_policy: &'a ScanPolicy,
+    rust_module_index: &'a RustModuleIndex,
     ts_module_index: &'a adapters::TsModuleIndex,
     python_module_index: &'a adapters::PythonModuleIndex,
 }
@@ -159,6 +182,8 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
             source: &file.source,
         })
         .collect();
+    let rust_module_index =
+        build_rust_module_index(&source_files, scan_policy.rust_export_following);
     let go_package_sources: Vec<_> = source_files
         .iter()
         .filter(|file| file.language == SourceLanguage::Go)
@@ -193,8 +218,12 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
         scan_policy.python_export_following,
         &scan_policy.python_module_roots,
     );
-    let effective_public_api_files =
-        build_effective_public_api_files(&source_files, scan_policy, &go_package_index);
+    let effective_public_api_files = build_effective_public_api_files(
+        &source_files,
+        scan_policy,
+        &go_package_index,
+        &rust_module_index,
+    );
 
     for file in source_files {
         for tag in extract_named_tags(&file.lexed.comments, &feature_re, "name", "name2") {
@@ -222,6 +251,7 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
                 PublicApiExtractionContext {
                     regex: &api_pack,
                     scan_policy,
+                    rust_module_index: &rust_module_index,
                     ts_module_index: &ts_module_index,
                     python_module_index: &python_module_index,
                 },
@@ -250,6 +280,7 @@ fn build_effective_public_api_files(
     source_files: &[SourceFileInput],
     scan_policy: &ScanPolicy,
     go_package_index: &adapters::GoPackageIndex,
+    rust_module_index: &RustModuleIndex,
 ) -> Option<BTreeSet<String>> {
     if scan_policy.public_api_roots.is_empty() {
         return None;
@@ -272,6 +303,16 @@ fn build_effective_public_api_files(
                     .cloned(),
             );
         }
+        if file.language == SourceLanguage::Rust
+            && scan_policy.rust_export_following == RustExportFollowing::PublicModules
+        {
+            files.extend(
+                rust_module_index
+                    .public_module_files_for(&file.rel)
+                    .iter()
+                    .cloned(),
+            );
+        }
     }
 
     Some(files)
@@ -285,6 +326,570 @@ fn includes_effective_public_api(
         Some(files) => files.contains(relative_path),
         None => true,
     }
+}
+
+fn build_rust_module_index(
+    source_files: &[SourceFileInput],
+    export_following: RustExportFollowing,
+) -> RustModuleIndex {
+    if export_following == RustExportFollowing::Off {
+        return RustModuleIndex::default();
+    }
+
+    let rust_files: Vec<&SourceFileInput> = source_files
+        .iter()
+        .filter(|file| file.language == SourceLanguage::Rust)
+        .collect();
+    let known_rust_files: BTreeSet<String> =
+        rust_files.iter().map(|file| file.rel.clone()).collect();
+    let mut edges_by_file: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut symbol_signatures_by_path: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+    for file in &rust_files {
+        let Ok(parsed) = syn::parse_file(&file.source) else {
+            continue;
+        };
+        let module_dir = rust_module_directory(Path::new(&file.rel));
+        let module_path = rust_file_module_path(Path::new(&file.rel));
+        let mut edges = BTreeSet::new();
+        collect_rust_public_module_edges(&parsed.items, &module_dir, &known_rust_files, &mut edges);
+        collect_rust_symbol_signatures(&parsed.items, &module_path, &mut symbol_signatures_by_path);
+        if !edges.is_empty() {
+            edges_by_file.insert(file.rel.clone(), edges.into_iter().collect());
+        }
+    }
+
+    let mut index = RustModuleIndex::default();
+    for rel_path in known_rust_files {
+        let mut visited = BTreeSet::new();
+        let mut stack = edges_by_file.get(&rel_path).cloned().unwrap_or_default();
+        while let Some(next) = stack.pop() {
+            if !visited.insert(next.clone()) {
+                continue;
+            }
+            if let Some(children) = edges_by_file.get(&next) {
+                stack.extend(children.iter().cloned());
+            }
+        }
+        if !visited.is_empty() {
+            index
+                .public_module_files_by_rel_path
+                .insert(rel_path, visited.into_iter().collect());
+        }
+    }
+
+    for file in &rust_files {
+        let Ok(parsed) = syn::parse_file(&file.source) else {
+            continue;
+        };
+        let current_module = rust_file_module_path(Path::new(&file.rel));
+        let mut signatures = BTreeSet::new();
+        collect_rust_reexported_signatures(
+            &parsed.items,
+            &current_module,
+            true,
+            &symbol_signatures_by_path,
+            &mut signatures,
+        );
+        if !signatures.is_empty() {
+            index
+                .reexported_signatures_by_file
+                .insert(file.rel.clone(), signatures.into_iter().collect());
+        }
+    }
+
+    index
+}
+
+fn collect_rust_symbol_signatures(
+    items: &[Item],
+    module_path: &[String],
+    symbol_signatures_by_path: &mut BTreeMap<String, Vec<String>>,
+) {
+    let module_prefix = rust_module_prefix(module_path);
+
+    for item in items {
+        match item {
+            Item::Fn(item_fn) if is_public(&item_fn.vis) => {
+                let signature = format!(
+                    "rust:fn {module_prefix}{}",
+                    format_rust_signature(&item_fn.sig)
+                );
+                let symbol_path = join_module_path(module_path, &item_fn.sig.ident.to_string());
+                insert_rust_symbol_signature(symbol_signatures_by_path, &symbol_path, signature);
+            }
+            Item::Struct(item_struct) if is_public(&item_struct.vis) => {
+                let signature = format!(
+                    "rust:struct {module_prefix}{}{}",
+                    item_struct.ident,
+                    normalize_signature(&item_struct.generics.to_token_stream().to_string())
+                );
+                let symbol_path = join_module_path(module_path, &item_struct.ident.to_string());
+                insert_rust_symbol_signature(symbol_signatures_by_path, &symbol_path, signature);
+            }
+            Item::Enum(item_enum) if is_public(&item_enum.vis) => {
+                let signature = format!(
+                    "rust:enum {module_prefix}{}{}",
+                    item_enum.ident,
+                    normalize_signature(&item_enum.generics.to_token_stream().to_string())
+                );
+                let symbol_path = join_module_path(module_path, &item_enum.ident.to_string());
+                insert_rust_symbol_signature(symbol_signatures_by_path, &symbol_path, signature);
+            }
+            Item::Trait(item_trait) if is_public(&item_trait.vis) => {
+                let symbol_path = join_module_path(module_path, &item_trait.ident.to_string());
+                insert_rust_symbol_signature(
+                    symbol_signatures_by_path,
+                    &symbol_path,
+                    format!("rust:trait {symbol_path}"),
+                );
+                for trait_item in &item_trait.items {
+                    if let TraitItem::Fn(method) = trait_item {
+                        insert_rust_symbol_signature(
+                            symbol_signatures_by_path,
+                            &symbol_path,
+                            format!(
+                                "rust:trait-fn {symbol_path}::{}",
+                                format_rust_signature(&method.sig)
+                            ),
+                        );
+                    }
+                }
+            }
+            Item::Type(item_type) if is_public(&item_type.vis) => {
+                let symbol_path = join_module_path(module_path, &item_type.ident.to_string());
+                let ty = normalize_signature(&item_type.ty.to_token_stream().to_string());
+                insert_rust_symbol_signature(
+                    symbol_signatures_by_path,
+                    &symbol_path,
+                    format!("rust:type {symbol_path}={ty}"),
+                );
+            }
+            Item::Const(item_const) if is_public(&item_const.vis) => {
+                let symbol_path = join_module_path(module_path, &item_const.ident.to_string());
+                let ty = normalize_signature(&item_const.ty.to_token_stream().to_string());
+                insert_rust_symbol_signature(
+                    symbol_signatures_by_path,
+                    &symbol_path,
+                    format!("rust:const {symbol_path}:{ty}"),
+                );
+            }
+            Item::Static(item_static) if is_public(&item_static.vis) => {
+                let symbol_path = join_module_path(module_path, &item_static.ident.to_string());
+                let ty = normalize_signature(&item_static.ty.to_token_stream().to_string());
+                insert_rust_symbol_signature(
+                    symbol_signatures_by_path,
+                    &symbol_path,
+                    format!("rust:static {symbol_path}:{ty}"),
+                );
+            }
+            Item::Impl(item_impl) => {
+                let Some(symbol_path) =
+                    resolve_rust_type_symbol_path(module_path, &item_impl.self_ty)
+                else {
+                    continue;
+                };
+                for impl_item in &item_impl.items {
+                    if let ImplItem::Fn(method) = impl_item {
+                        if !is_public(&method.vis) {
+                            continue;
+                        }
+                        insert_rust_symbol_signature(
+                            symbol_signatures_by_path,
+                            &symbol_path,
+                            format!(
+                                "rust:impl-fn {}::{}",
+                                render_rust_impl_scope(&symbol_path, &item_impl.self_ty),
+                                format_rust_signature(&method.sig)
+                            ),
+                        );
+                    }
+                }
+            }
+            Item::Mod(item_mod) => {
+                let mut nested_module = module_path.to_vec();
+                nested_module.push(item_mod.ident.to_string());
+                if let Some((_, nested_items)) = &item_mod.content {
+                    collect_rust_symbol_signatures(
+                        nested_items,
+                        &nested_module,
+                        symbol_signatures_by_path,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_rust_reexported_signatures(
+    items: &[Item],
+    current_module: &[String],
+    current_module_public: bool,
+    symbol_signatures_by_path: &BTreeMap<String, Vec<String>>,
+    signatures: &mut BTreeSet<String>,
+) {
+    for item in items {
+        match item {
+            Item::Use(item_use) if current_module_public && is_public(&item_use.vis) => {
+                collect_rust_use_tree_signatures(
+                    &item_use.tree,
+                    &[],
+                    current_module,
+                    symbol_signatures_by_path,
+                    signatures,
+                );
+            }
+            Item::Mod(item_mod) if current_module_public => {
+                let mut nested_module = current_module.to_vec();
+                nested_module.push(item_mod.ident.to_string());
+                if let Some((_, nested_items)) = &item_mod.content {
+                    collect_rust_reexported_signatures(
+                        nested_items,
+                        &nested_module,
+                        is_public(&item_mod.vis),
+                        symbol_signatures_by_path,
+                        signatures,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_rust_use_tree_signatures(
+    tree: &UseTree,
+    prefix: &[String],
+    current_module: &[String],
+    symbol_signatures_by_path: &BTreeMap<String, Vec<String>>,
+    signatures: &mut BTreeSet<String>,
+) {
+    match tree {
+        UseTree::Path(path) => {
+            let mut next = prefix.to_vec();
+            next.push(path.ident.to_string());
+            collect_rust_use_tree_signatures(
+                &path.tree,
+                &next,
+                current_module,
+                symbol_signatures_by_path,
+                signatures,
+            );
+        }
+        UseTree::Name(name) => {
+            if name.ident == "self" {
+                return;
+            }
+            let mut source = prefix.to_vec();
+            source.push(name.ident.to_string());
+            resolve_rust_reexport_target(
+                &source,
+                None,
+                false,
+                current_module,
+                symbol_signatures_by_path,
+                signatures,
+            );
+        }
+        UseTree::Rename(rename) => {
+            let mut source = prefix.to_vec();
+            source.push(rename.ident.to_string());
+            resolve_rust_reexport_target(
+                &source,
+                Some(rename.rename.to_string()),
+                false,
+                current_module,
+                symbol_signatures_by_path,
+                signatures,
+            );
+        }
+        UseTree::Glob(_) => {
+            resolve_rust_reexport_target(
+                prefix,
+                None,
+                true,
+                current_module,
+                symbol_signatures_by_path,
+                signatures,
+            );
+        }
+        UseTree::Group(group) => {
+            for item in &group.items {
+                collect_rust_use_tree_signatures(
+                    item,
+                    prefix,
+                    current_module,
+                    symbol_signatures_by_path,
+                    signatures,
+                );
+            }
+        }
+    }
+}
+
+fn resolve_rust_reexport_target(
+    source: &[String],
+    alias: Option<String>,
+    is_glob: bool,
+    current_module: &[String],
+    symbol_signatures_by_path: &BTreeMap<String, Vec<String>>,
+    signatures: &mut BTreeSet<String>,
+) {
+    let Some(resolved_source) = resolve_rust_path(current_module, source) else {
+        return;
+    };
+    let source_path = resolved_source.join("::");
+
+    if is_glob {
+        let prefix = format!("{source_path}::");
+        for (symbol_path, symbol_signatures) in symbol_signatures_by_path {
+            if !(symbol_path == &source_path || symbol_path.starts_with(&prefix)) {
+                continue;
+            }
+            let remainder = symbol_path
+                .strip_prefix(&prefix)
+                .or_else(|| symbol_path.strip_prefix(&source_path))
+                .unwrap_or(symbol_path)
+                .trim_start_matches("::");
+            if remainder.is_empty() {
+                continue;
+            }
+            let export_path = join_module_path(current_module, remainder);
+            emit_rust_reexported_signatures(
+                symbol_path,
+                &export_path,
+                symbol_signatures,
+                signatures,
+            );
+        }
+        return;
+    }
+
+    let export_name = alias.unwrap_or_else(|| {
+        resolved_source
+            .last()
+            .cloned()
+            .unwrap_or_else(|| source_path.clone())
+    });
+    let export_path = join_module_path(current_module, &export_name);
+    let Some(symbol_signatures) = symbol_signatures_by_path.get(&source_path) else {
+        return;
+    };
+    emit_rust_reexported_signatures(&source_path, &export_path, symbol_signatures, signatures);
+}
+
+fn emit_rust_reexported_signatures(
+    source_path: &str,
+    export_path: &str,
+    symbol_signatures: &[String],
+    signatures: &mut BTreeSet<String>,
+) {
+    for signature in symbol_signatures {
+        signatures.insert(signature.replacen(source_path, export_path, 1));
+    }
+}
+
+fn insert_rust_symbol_signature(
+    symbol_signatures_by_path: &mut BTreeMap<String, Vec<String>>,
+    symbol_path: &str,
+    signature: String,
+) {
+    symbol_signatures_by_path
+        .entry(symbol_path.to_string())
+        .or_default()
+        .push(signature);
+}
+
+fn collect_rust_public_module_edges(
+    items: &[Item],
+    module_dir: &str,
+    known_rust_files: &BTreeSet<String>,
+    edges: &mut BTreeSet<String>,
+) {
+    for item in items {
+        let Item::Mod(item_mod) = item else {
+            continue;
+        };
+        if !is_public(&item_mod.vis) {
+            continue;
+        }
+
+        let module_name = item_mod.ident.to_string();
+        let nested_module_dir = join_rust_module_dir(module_dir, &module_name);
+        if let Some((_, nested_items)) = &item_mod.content {
+            collect_rust_public_module_edges(
+                nested_items,
+                &nested_module_dir,
+                known_rust_files,
+                edges,
+            );
+            continue;
+        }
+
+        if let Some(rel_path) =
+            resolve_rust_external_module_file(module_dir, &module_name, known_rust_files)
+        {
+            edges.insert(rel_path);
+        }
+    }
+}
+
+fn resolve_rust_external_module_file(
+    module_dir: &str,
+    module_name: &str,
+    known_rust_files: &BTreeSet<String>,
+) -> Option<String> {
+    let base_dir = if module_dir.is_empty() {
+        PathBuf::new()
+    } else {
+        PathBuf::from(module_dir)
+    };
+    let direct_file = normalize_relative_path(&base_dir.join(format!("{module_name}.rs")));
+    if known_rust_files.contains(&direct_file) {
+        return Some(direct_file);
+    }
+
+    let mod_file = normalize_relative_path(&base_dir.join(module_name).join("mod.rs"));
+    if known_rust_files.contains(&mod_file) {
+        return Some(mod_file);
+    }
+
+    None
+}
+
+fn rust_module_directory(rel_path: &Path) -> String {
+    let parent = rel_path.parent().unwrap_or_else(|| Path::new(""));
+    let file_name = rel_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let stem = rel_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let module_dir = if matches!(file_name, "lib.rs" | "main.rs" | "mod.rs") {
+        parent.to_path_buf()
+    } else {
+        parent.join(stem)
+    };
+    normalize_relative_path(&module_dir)
+}
+
+fn rust_file_module_path(rel_path: &Path) -> Vec<String> {
+    let crate_relative = rust_path_after_source_root(rel_path);
+    let file_name = crate_relative
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let mut parts: Vec<String> = crate_relative
+        .parent()
+        .into_iter()
+        .flat_map(|parent| parent.iter())
+        .filter_map(|component| component.to_str().map(str::to_string))
+        .collect();
+
+    if matches!(file_name, "lib.rs" | "main.rs" | "mod.rs") {
+        return parts;
+    }
+
+    if let Some(stem) = crate_relative.file_stem().and_then(|name| name.to_str()) {
+        parts.push(stem.to_string());
+    }
+    parts
+}
+
+fn rust_path_after_source_root(rel_path: &Path) -> PathBuf {
+    let components: Vec<String> = rel_path
+        .iter()
+        .filter_map(|component| component.to_str().map(str::to_string))
+        .collect();
+    if let Some(index) = components.iter().rposition(|component| component == "src") {
+        return components[index + 1..].iter().collect();
+    }
+    components.iter().collect()
+}
+
+fn join_rust_module_dir(module_dir: &str, module_name: &str) -> String {
+    if module_dir.is_empty() {
+        module_name.to_string()
+    } else {
+        format!("{module_dir}/{module_name}")
+    }
+}
+
+fn rust_module_prefix(module_path: &[String]) -> String {
+    if module_path.is_empty() {
+        String::new()
+    } else {
+        format!("{}::", module_path.join("::"))
+    }
+}
+
+fn join_module_path(module_path: &[String], name: &str) -> String {
+    if module_path.is_empty() {
+        name.to_string()
+    } else if name.is_empty() {
+        module_path.join("::")
+    } else {
+        format!("{}::{name}", module_path.join("::"))
+    }
+}
+
+fn resolve_rust_type_symbol_path(module_path: &[String], ty: &Type) -> Option<String> {
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
+    if type_path.qself.is_some() {
+        return None;
+    }
+
+    let segments: Vec<String> = type_path
+        .path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect();
+    let resolved = resolve_rust_path(module_path, &segments)?;
+    Some(resolved.join("::"))
+}
+
+fn resolve_rust_path(current_module: &[String], source: &[String]) -> Option<Vec<String>> {
+    let mut resolved = current_module.to_vec();
+    let mut index = 0usize;
+
+    if source.first().map(String::as_str) == Some("crate") {
+        resolved.clear();
+        index = 1;
+    } else {
+        while source.get(index).map(String::as_str) == Some("super") {
+            resolved.pop()?;
+            index += 1;
+        }
+        if source.get(index).map(String::as_str) == Some("self") {
+            index += 1;
+        }
+    }
+
+    resolved.extend(source[index..].iter().cloned());
+    Some(resolved)
+}
+
+fn render_rust_impl_scope(symbol_path: &str, self_ty: &Type) -> String {
+    let rendered = normalize_signature(&self_ty.to_token_stream().to_string());
+    let simple_name = symbol_path.rsplit("::").next().unwrap_or(symbol_path);
+    if simple_name.is_empty() {
+        rendered
+    } else {
+        rendered.replacen(simple_name, symbol_path, 1)
+    }
+}
+
+fn normalize_relative_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .trim_matches('/')
+        .to_string()
 }
 
 fn extract_named_tags(
@@ -320,10 +925,20 @@ fn extract_public_api(
     context: PublicApiExtractionContext<'_>,
 ) -> Vec<String> {
     if language == SourceLanguage::Rust {
-        if let Some(ast_signatures) = extract_rust_public_api(source) {
-            if !ast_signatures.is_empty() {
-                return ast_signatures;
-            }
+        let mut signatures = extract_rust_public_api(source).unwrap_or_default();
+        if context.scan_policy.rust_export_following == RustExportFollowing::PublicModules {
+            signatures.extend(
+                context
+                    .rust_module_index
+                    .reexported_signatures_for(rel_path)
+                    .iter()
+                    .cloned(),
+            );
+        }
+        signatures.sort();
+        signatures.dedup();
+        if !signatures.is_empty() {
+            return signatures;
         }
     }
 
@@ -2049,6 +2664,186 @@ mod tests {
     }
 
     #[test]
+    fn rust_export_following_public_modules_expands_rooted_lib_rs_across_public_modules() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(src.join("facade")).expect("failed to create facade dir");
+
+        fs::write(
+            src.join("lib.rs"),
+            r#"
+            pub fn handshake(version: u32) -> bool { version > 0 }
+
+            pub mod api;
+            mod internal;
+
+            pub mod facade {
+                pub mod http;
+            }
+        "#,
+        )
+        .expect("failed to write rust root fixture");
+
+        fs::write(
+            src.join("api.rs"),
+            r#"
+            pub struct Session;
+        "#,
+        )
+        .expect("failed to write rust api fixture");
+
+        fs::write(
+            src.join("internal.rs"),
+            r#"
+            pub struct Hidden;
+        "#,
+        )
+        .expect("failed to write rust internal fixture");
+
+        fs::write(
+            src.join("facade/http.rs"),
+            r#"
+            pub fn respond(status: u16) -> bool { status > 0 }
+        "#,
+        )
+        .expect("failed to write rust nested fixture");
+
+        let default_report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["src/lib.rs".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(default_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "rust:fn handshake(version: u32) -> bool"));
+        assert!(!default_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "rust:struct Session"));
+        assert!(!default_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "rust:fn respond(status: u16) -> bool"));
+
+        let followed_report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["src/lib.rs".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::PublicModules,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(followed_report.public_api.iter().any(|entry| {
+            entry.file == "src/api.rs" && entry.signature == "rust:struct Session"
+        }));
+        assert!(followed_report.public_api.iter().any(|entry| {
+            entry.file == "src/facade/http.rs"
+                && entry.signature == "rust:fn respond(status: u16) -> bool"
+        }));
+        assert!(!followed_report
+            .public_api
+            .iter()
+            .any(|entry| entry.file == "src/internal.rs"));
+    }
+
+    #[test]
+    fn rust_export_following_public_modules_resolves_direct_pub_use_from_private_modules() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("lib.rs"),
+            r#"
+            pub use internal::{Hidden as Visible, connect as open};
+
+            mod internal;
+        "#,
+        )
+        .expect("failed to write rust root fixture");
+
+        fs::write(
+            src.join("internal.rs"),
+            r#"
+            pub struct Hidden;
+
+            impl Hidden {
+                pub fn ping(&self) -> bool { true }
+            }
+
+            pub fn connect(target: u32) -> bool { target > 0 }
+
+            pub struct Other;
+        "#,
+        )
+        .expect("failed to write rust internal fixture");
+
+        let report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["src/lib.rs".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::PublicModules,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.file == "src/lib.rs" && entry.signature == "rust:struct Visible"));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.file == "src/lib.rs"
+                && entry.signature == "rust:impl-fn Visible::ping(&self) -> bool"
+        }));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.file == "src/lib.rs"
+                && entry.signature == "rust:fn open(target: u32) -> bool"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("Hidden")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("Other")));
+    }
+
+    #[test]
     fn excludes_tests_directory_by_default() {
         let workspace = TempWorkspace::new();
         let tests_dir = workspace.path().join("tests");
@@ -2198,6 +2993,7 @@ mod tests {
                 public_api_roots: vec!["src/index.ts".to_string()],
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -2227,6 +3023,7 @@ mod tests {
                 public_api_roots: vec!["src/index.ts".to_string()],
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::RelativeOnly,
                 go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -2309,6 +3106,7 @@ mod tests {
                 public_api_roots: vec!["src/api.go".to_string()],
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -2335,6 +3133,7 @@ mod tests {
                 public_api_roots: vec!["src/api.go".to_string()],
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 go_export_following: crate::mvs::manifest::GoExportFollowing::PackageOnly,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -2872,6 +3671,7 @@ mod tests {
                 public_api_roots: Vec::new(),
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -2923,6 +3723,7 @@ mod tests {
                 public_api_roots: Vec::new(),
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Off,
@@ -3680,6 +4481,7 @@ mod tests {
                 public_api_roots: Vec::new(),
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Off,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -3834,6 +4636,7 @@ mod tests {
                 public_api_roots: Vec::new(),
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Off,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -4013,6 +4816,7 @@ mod tests {
                 public_api_roots: Vec::new(),
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::ReturnedRootOnly,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -4450,6 +5254,7 @@ mod tests {
                 public_api_roots: vec!["src/api.ts".to_string()],
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -4499,6 +5304,7 @@ mod tests {
                 public_api_roots: Vec::new(),
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
@@ -4580,6 +5386,7 @@ mod tests {
                 public_api_roots: vec!["src/api.ts".to_string()],
                 ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
                 go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
                 ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
                 lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,

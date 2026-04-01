@@ -661,6 +661,207 @@ fn go_export_following_package_only_persists_and_expands_package_siblings() {
 }
 
 #[test]
+fn rust_export_following_public_modules_persists_and_expands_rooted_lib_rs_modules() {
+    let temp = TempWorkspace::new();
+    let project_root = temp.path().join("project");
+    fs::create_dir_all(project_root.join("src/facade")).expect("failed to create rust facade dir");
+
+    fs::write(
+        project_root.join("src/lib.rs"),
+        r#"
+        pub fn handshake(version: u32) -> bool { version > 0 }
+
+        pub mod api;
+        mod internal;
+
+        pub mod facade {
+            pub mod http;
+        }
+    "#,
+    )
+    .expect("failed to write rust root fixture");
+
+    fs::write(
+        project_root.join("src/api.rs"),
+        r#"
+        pub struct Session;
+    "#,
+    )
+    .expect("failed to write rust api fixture");
+
+    fs::write(
+        project_root.join("src/internal.rs"),
+        r#"
+        pub struct Hidden;
+    "#,
+    )
+    .expect("failed to write rust internal fixture");
+
+    fs::write(
+        project_root.join("src/facade/http.rs"),
+        r#"
+        pub fn respond(status: u16) -> bool { status > 0 }
+    "#,
+    )
+    .expect("failed to write rust nested fixture");
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "src/lib.rs",
+            "--rust-export-following",
+            "public-modules",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Rust export following"));
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+    assert_eq!(
+        generated["scan_policy"]["rust_export_following"],
+        "public_modules"
+    );
+
+    let inventory = generated["evidence"]["public_api_inventory"]
+        .as_array()
+        .expect("public api inventory should be an array");
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "src/api.rs"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "rust:struct Session"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "src/facade/http.rs"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "rust:fn respond(status: u16) -> bool"
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "src/internal.rs"
+    }));
+
+    let mut lint = binary_cmd();
+    lint.args([
+        "lint",
+        "--root",
+        project_root.to_str().expect("non-utf8 path"),
+        "--manifest",
+        manifest_path.to_str().expect("non-utf8 path"),
+    ])
+    .assert()
+    .success()
+    .stdout(contains("Rust export following"))
+    .stdout(contains("Lint passed"));
+}
+
+#[test]
+fn rust_export_following_public_modules_resolves_direct_pub_use_facades() {
+    let temp = TempWorkspace::new();
+    let project_root = temp.path().join("project");
+    fs::create_dir_all(project_root.join("src")).expect("failed to create rust src dir");
+
+    fs::write(
+        project_root.join("src/lib.rs"),
+        r#"
+        pub use internal::{Hidden as Visible, connect as open};
+
+        mod internal;
+    "#,
+    )
+    .expect("failed to write rust root fixture");
+
+    fs::write(
+        project_root.join("src/internal.rs"),
+        r#"
+        pub struct Hidden;
+
+        impl Hidden {
+            pub fn ping(&self) -> bool { true }
+        }
+
+        pub fn connect(target: u32) -> bool { target > 0 }
+    "#,
+    )
+    .expect("failed to write rust internal fixture");
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "src/lib.rs",
+            "--rust-export-following",
+            "public-modules",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Rust export following"));
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+
+    let inventory = generated["evidence"]["public_api_inventory"]
+        .as_array()
+        .expect("public api inventory should be an array");
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "src/lib.rs"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "rust:struct Visible"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "src/lib.rs"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "rust:impl-fn Visible::ping(&self) -> bool"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "src/lib.rs"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "rust:fn open(target: u32) -> bool"
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            .contains("Hidden")
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "src/internal.rs"
+    }));
+}
+
+#[test]
 fn python_module_roots_persist_and_enable_cross_module_python_exports() {
     let temp = TempWorkspace::new();
     let project_root = temp.path().join("project");

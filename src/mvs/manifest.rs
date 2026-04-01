@@ -103,6 +103,8 @@ pub struct ScanPolicy {
     pub ts_export_following: TsExportFollowing,
     #[serde(default, skip_serializing_if = "GoExportFollowing::is_default")]
     pub go_export_following: GoExportFollowing,
+    #[serde(default, skip_serializing_if = "RustExportFollowing::is_default")]
+    pub rust_export_following: RustExportFollowing,
     #[serde(default, skip_serializing_if = "RubyExportFollowing::is_default")]
     pub ruby_export_following: RubyExportFollowing,
     #[serde(default, skip_serializing_if = "LuaExportFollowing::is_default")]
@@ -140,6 +142,14 @@ pub enum GoExportFollowing {
     #[default]
     Off,
     PackageOnly,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum RustExportFollowing {
+    #[default]
+    Off,
+    PublicModules,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, Eq, PartialEq)]
@@ -359,6 +369,7 @@ impl ScanPolicy {
             && self.public_api_roots.is_empty()
             && self.ts_export_following.is_default()
             && self.go_export_following.is_default()
+            && self.rust_export_following.is_default()
             && self.ruby_export_following.is_default()
             && self.lua_export_following.is_default()
             && self.python_export_following.is_default()
@@ -450,6 +461,19 @@ impl GoExportFollowing {
         match self {
             Self::Off => "off",
             Self::PackageOnly => "package_only",
+        }
+    }
+}
+
+impl RustExportFollowing {
+    pub fn is_default(&self) -> bool {
+        *self == Self::Off
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::PublicModules => "public_modules",
         }
     }
 }
@@ -732,8 +756,8 @@ fn current_unix_timestamp() -> u64 {
 mod tests {
     use super::{
         Evidence, GoExportFollowing, LuaExportFollowing, Manifest, ProtocolRange,
-        PublicApiSnapshot, PythonExportFollowing, RubyExportFollowing, ScanPolicy,
-        TsExportFollowing,
+        PublicApiSnapshot, PythonExportFollowing, RubyExportFollowing, RustExportFollowing,
+        ScanPolicy, TsExportFollowing,
     };
 
     #[test]
@@ -817,6 +841,7 @@ mod tests {
             public_api_roots: vec!["src/cli.rs".to_string(), "src/facade".to_string()],
             ts_export_following: TsExportFollowing::Off,
             go_export_following: GoExportFollowing::Off,
+            rust_export_following: RustExportFollowing::Off,
             ruby_export_following: RubyExportFollowing::Heuristic,
             lua_export_following: LuaExportFollowing::Heuristic,
             python_export_following: PythonExportFollowing::Heuristic,
@@ -847,6 +872,7 @@ mod tests {
             public_api_roots: vec!["src/cli.rs".to_string()],
             ts_export_following: TsExportFollowing::Off,
             go_export_following: GoExportFollowing::Off,
+            rust_export_following: RustExportFollowing::Off,
             ruby_export_following: RubyExportFollowing::Heuristic,
             lua_export_following: LuaExportFollowing::Heuristic,
             python_export_following: PythonExportFollowing::Heuristic,

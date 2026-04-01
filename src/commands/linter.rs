@@ -271,6 +271,12 @@ fn render_scan_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) {
             scan_policy.go_export_following.as_str()
         );
     }
+    if !scan_policy.rust_export_following.is_default() {
+        println!(
+            "- Rust export following: {}",
+            scan_policy.rust_export_following.as_str()
+        );
+    }
     if !scan_policy.ruby_export_following.is_default() {
         println!(
             "- Ruby export following: {}",
