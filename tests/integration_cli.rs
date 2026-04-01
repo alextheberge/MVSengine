@@ -549,6 +549,124 @@ fn python_module_roots_persist_and_enable_cross_module_python_exports() {
 }
 
 #[test]
+fn ruby_and_lua_export_following_modes_persist_and_shape_runtime_exports() {
+    let temp = TempWorkspace::new();
+    let project_root = temp.path().join("project");
+    fs::create_dir_all(project_root.join("src")).expect("failed to create src");
+
+    fs::write(
+        project_root.join("src/api.rb"),
+        r#"
+        module Demo
+          SECRET = "hidden"
+          private_constant :SECRET
+
+          module_function
+
+          def build(token)
+            token
+          end
+        end
+    "#,
+    )
+    .expect("failed to write ruby fixture");
+
+    fs::write(
+        project_root.join("src/api.luau"),
+        r#"
+        export type Session = {
+            token: string,
+        }
+
+        function connect(target: string): boolean
+            return target ~= ""
+        end
+    "#,
+    )
+    .expect("failed to write luau fixture");
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--ruby-export-following",
+            "off",
+            "--lua-export-following",
+            "returned-root-only",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Ruby export following"))
+        .stdout(contains("Lua export following"));
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+    assert_eq!(generated["scan_policy"]["ruby_export_following"], "off");
+    assert_eq!(
+        generated["scan_policy"]["lua_export_following"],
+        "returned_root_only"
+    );
+
+    let inventory = generated["evidence"]["public_api_inventory"]
+        .as_array()
+        .expect("public api inventory should be an array");
+    assert!(inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ruby:const Demo::SECRET"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ruby:def Demo#build(token)"
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ruby:def Demo.build(token)"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "luau:export type Session={ token: string }"
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "luau:function connect(target: string): boolean"
+    }));
+
+    let mut lint = binary_cmd();
+    lint.args([
+        "lint",
+        "--root",
+        project_root.to_str().expect("non-utf8 path"),
+        "--manifest",
+        manifest_path.to_str().expect("non-utf8 path"),
+    ])
+    .assert()
+    .success()
+    .stdout(contains("Ruby export following"))
+    .stdout(contains("Lua export following"))
+    .stdout(contains("Lint passed"));
+}
+
+#[test]
 fn lint_accepts_legacy_rust_signature_format_and_generate_rewrites_it() {
     let temp = TempWorkspace::new();
     let fixture_project = fixtures_root().join("generator_project");

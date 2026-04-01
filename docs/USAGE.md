@@ -143,8 +143,8 @@ For class-like languages, stored member signatures are owner-qualified so collis
 - C#: public types, public fields, public constants, public properties, and public or interface methods are parser-backed; stored signatures drop leading attributes and preserve namespace plus nesting context as `csharp:type public class Demo.AuthApi`, `csharp:field public static readonly string Demo.AuthApi.Version`, `csharp:const public string Demo.AuthApi.STATUS_READY`, `csharp:property public string Demo.AuthApi.DisplayName { get }`, and `csharp:method public static string Demo.AuthApi.Login(...)`
 - Kotlin: public or default-visible `class`, `interface`, `object`, `fun`, `val`, `var`, and top-level `const val` declarations are parser-backed, while `private`, `protected`, and `internal` declarations are skipped; stored signatures preserve package plus nesting context as `kotlin:public class demo.auth.AuthApi`, `kotlin:const val demo.auth.API_VERSION: String`, `kotlin:fun demo.auth.AuthApi.login(...)`, and `kotlin:val demo.auth.AuthApi.token: String`
 - PHP: top-level functions and constants, classes, interfaces, traits, enums, public properties, public or interface constants, and public or interface methods are parser-backed; `#` comments count for decorators, attributes are ignored in stored signatures, and class/interface members are owner-qualified as `AuthApi.run(...)`, `AuthApi.$token`, and `AuthApi::STATUS_READY`
-- Ruby: `class`, `module`, public `def`, singleton methods, `class << self` method bodies, public `attr_reader`/`attr_writer`/`attr_accessor` macros, and namespace constants are parser-backed; `private_constant` hides constants until `public_constant` re-exposes them, `module_function` plus `extend self` surface module singleton exports, `private_class_method` hides singleton methods, `#` comments count for decorators, heredocs plus non-public methods are ignored, and member signatures use Ruby owner forms such as `Demo::AuthApi#login(...)`
-- Lua: global `function` declarations and returned module-table exports are parser-backed, `--` plus long-bracket comments are recognized during decorator scans, and `return Api`-style module roots become the explicit runtime export boundary
+- Ruby: `class`, `module`, public `def`, singleton methods, `class << self` method bodies, public `attr_reader`/`attr_writer`/`attr_accessor` macros, and namespace constants are parser-backed; `private_constant` hides constants until `public_constant` re-exposes them, `module_function` plus `extend self` surface module singleton exports, `private_class_method` hides singleton methods, `#` comments count for decorators, heredocs plus non-public methods are ignored, member signatures use Ruby owner forms such as `Demo::AuthApi#login(...)`, and `scan_policy.ruby_export_following` or `--ruby-export-following` can disable macro-driven export shaping
+- Lua: global `function` declarations and returned module-table exports are parser-backed, `--` plus long-bracket comments are recognized during decorator scans, `return Api`-style module roots become the explicit runtime export boundary, and `scan_policy.lua_export_following` or `--lua-export-following` can disable returned-root following or require an explicit returned root before runtime exports are inferred
 - Swift: `public` and `open` types, functions, properties, and inherited protocol requirements are parser-backed, multiline Swift string literals are masked during decorator scans, and type/protocol members are owner-qualified as `swift:public func AuthApi.login(...)` and `swift:public var SessionContract.token: ...`
 - Luau: global `function` declarations, `export type` definitions, and returned module-table exports are parser-backed, `--` plus long-bracket comments are recognized during decorator scans, and `return Api`-style module roots become the explicit runtime export boundary while `export type` stays explicit API
 
@@ -161,6 +161,8 @@ Rust API signatures are AST-normalized before they are persisted. Typical entrie
 `mvs.json.scan_policy` lets you narrow API evidence to real contract boundaries:
 
 - `public_api_roots`: relative file or directory prefixes that define the public API surface
+- `ruby_export_following`: Ruby export-shaping mode: `heuristic` or `off`
+- `lua_export_following`: Lua/Luau runtime export mode: `heuristic`, `returned_root_only`, or `off`
 - `python_export_following`: Python cross-module export resolution mode: `heuristic`, `roots_only`, or `off`
 - `public_api_includes`: wildcard rules for declarations that count as public API
 - `public_api_excludes`: wildcard rules for declarations that should be ignored
@@ -172,6 +174,8 @@ This is especially useful when:
 - a CLI project exposes one facade file but keeps many internal `pub` helpers
 - that facade file still contains public constants or argument structs that are not real consumer contract
 - a library has an explicit `public/` or `index.ts` export layer
+- a Ruby repo wants file-local declarations without `module_function` or `extend self` promotion
+- a Lua or Luau repo wants explicit returned module roots before runtime exports count, or wants returned-root following disabled
 - a Python repo keeps importable modules under a nonstandard root such as `app/` or `services/`
 - a Python repo wants strict facade following under declared roots only, or wants cross-file export following disabled entirely
 - generated code sits under the normal source root
@@ -181,6 +185,8 @@ Flags passed to `generate` persist into `mvs.json.scan_policy`, so later `lint` 
 Example:
 
 ```bash
+mvs-manager generate --root . --manifest mvs.json --context server --ruby-export-following off
+mvs-manager generate --root . --manifest mvs.json --context server --lua-export-following returned-root-only
 mvs-manager generate --root . --manifest mvs.json --context server --python-module-root app
 mvs-manager generate --root . --manifest mvs.json --context server --python-export-following roots-only --python-module-root app
 ```

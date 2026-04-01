@@ -259,6 +259,18 @@ fn render_scan_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) {
             scan_policy.public_api_includes.join(", ")
         );
     }
+    if !scan_policy.ruby_export_following.is_default() {
+        println!(
+            "- Ruby export following: {}",
+            scan_policy.ruby_export_following.as_str()
+        );
+    }
+    if !scan_policy.lua_export_following.is_default() {
+        println!(
+            "- Lua export following: {}",
+            scan_policy.lua_export_following.as_str()
+        );
+    }
     if !scan_policy.python_export_following.is_default() {
         println!(
             "- Python export following: {}",

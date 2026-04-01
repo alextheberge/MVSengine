@@ -7,6 +7,7 @@ use super::super::{
     extract_tree_sitter_prefix_signature, named_children, node_text,
     normalize_tree_sitter_signature, trim_signature_to_keywords,
 };
+use crate::mvs::manifest::RubyExportFollowing;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum Visibility {
@@ -17,6 +18,7 @@ enum Visibility {
 
 #[derive(Default)]
 struct RubyExportState {
+    export_following: RubyExportFollowing,
     declared_constants: HashSet<String>,
     hidden_constants: HashSet<String>,
     hidden_singleton_methods: HashSet<String>,
@@ -25,9 +27,16 @@ struct RubyExportState {
     extend_self_owners: HashSet<String>,
 }
 
-pub(super) fn extract(root: Node<'_>, source: &str) -> Vec<String> {
+pub(super) fn extract(
+    root: Node<'_>,
+    source: &str,
+    export_following: RubyExportFollowing,
+) -> Vec<String> {
     let mut signatures = Vec::new();
-    let mut state = RubyExportState::default();
+    let mut state = RubyExportState {
+        export_following,
+        ..RubyExportState::default()
+    };
     collect_public_api(
         root,
         source,
@@ -118,15 +127,17 @@ fn collect_public_api(
             }
         }
         "call" => {
-            apply_ruby_constant_visibility(node, source, signatures, state, namespace);
-            apply_ruby_singleton_export_controls(
-                node,
-                source,
-                signatures,
-                state,
-                singleton_receiver,
-                namespace,
-            );
+            if state.export_following == RubyExportFollowing::Heuristic {
+                apply_ruby_constant_visibility(node, source, signatures, state, namespace);
+                apply_ruby_singleton_export_controls(
+                    node,
+                    source,
+                    signatures,
+                    state,
+                    singleton_receiver,
+                    namespace,
+                );
+            }
 
             if visibility == Visibility::Public && singleton_receiver.is_none() {
                 signatures.extend(
@@ -227,7 +238,9 @@ fn push_ruby_method_signature(
         return;
     };
 
-    if ruby_module_function_applies(state, &owner, &name) {
+    if state.export_following == RubyExportFollowing::Heuristic
+        && ruby_module_function_applies(state, &owner, &name)
+    {
         if state
             .hidden_singleton_methods
             .contains(&ruby_singleton_method_key(&owner, &name))
@@ -244,7 +257,8 @@ fn push_ruby_method_signature(
 
     push_unique(signatures, format!("ruby:{signature}"));
 
-    if state.extend_self_owners.contains(&owner)
+    if state.export_following == RubyExportFollowing::Heuristic
+        && state.extend_self_owners.contains(&owner)
         && !state
             .hidden_singleton_methods
             .contains(&ruby_singleton_method_key(&owner, &name))

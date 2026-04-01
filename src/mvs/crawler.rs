@@ -182,6 +182,7 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
                 &file.source,
                 &file.lexed.masked_code,
                 &api_pack,
+                scan_policy,
                 &python_module_index,
             );
             for signature in signatures {
@@ -235,6 +236,7 @@ fn extract_public_api(
     source: &str,
     masked_code: &str,
     regex: &ApiRegexPack,
+    scan_policy: &ScanPolicy,
     python_module_index: &adapters::PythonModuleIndex,
 ) -> Vec<String> {
     if language == SourceLanguage::Rust {
@@ -246,7 +248,7 @@ fn extract_public_api(
     }
 
     if let Some(tree_sitter_signatures) =
-        extract_tree_sitter_public_api(language, rel_path, source, python_module_index)
+        extract_tree_sitter_public_api(language, rel_path, source, scan_policy, python_module_index)
     {
         return tree_sitter_signatures;
     }
@@ -258,6 +260,7 @@ fn extract_tree_sitter_public_api(
     language: SourceLanguage,
     rel_path: &str,
     source: &str,
+    scan_policy: &ScanPolicy,
     python_module_index: &adapters::PythonModuleIndex,
 ) -> Option<Vec<String>> {
     let grammar = language.tree_sitter_language()?;
@@ -272,6 +275,8 @@ fn extract_tree_sitter_public_api(
         source,
         rel_path,
         Some(python_module_index),
+        scan_policy.ruby_export_following,
+        scan_policy.lua_export_following,
     );
     signatures.sort();
     signatures.dedup();
@@ -2575,6 +2580,8 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: Vec::new(),
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: vec!["app".to_string()],
                 public_api_includes: Vec::new(),
@@ -2622,6 +2629,8 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: Vec::new(),
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Off,
                 python_module_roots: vec!["app".to_string()],
                 public_api_includes: Vec::new(),
@@ -3327,6 +3336,87 @@ mod tests {
     }
 
     #[test]
+    fn ruby_export_following_off_keeps_file_local_visibility_without_macro_promotion() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("api.rb"),
+            r#"
+            module Demo
+              SECRET = "hidden"
+              private_constant :SECRET
+
+              module_function
+
+              def build(token)
+                token
+              end
+
+              extend self
+
+              def ping(target)
+                target
+              end
+            end
+        "#,
+        )
+        .expect("failed to write ruby fixture");
+
+        let heuristic_report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+        assert!(!heuristic_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:const Demo::SECRET"));
+        assert!(heuristic_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:def Demo.build(token)"));
+        assert!(heuristic_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:def Demo.ping(target)"));
+
+        let off_report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: Vec::new(),
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Off,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(off_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:const Demo::SECRET"));
+        assert!(off_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:def Demo#build(token)"));
+        assert!(off_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:def Demo#ping(target)"));
+        assert!(!off_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:def Demo.build(token)"));
+        assert!(!off_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:def Demo.ping(target)"));
+    }
+
+    #[test]
     fn tree_sitter_captures_lua_global_functions_and_module_exports() {
         let workspace = TempWorkspace::new();
         let src = workspace.path().join("src");
@@ -3411,6 +3501,63 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature == "lua:function connect(target)"));
+    }
+
+    #[test]
+    fn lua_export_following_off_disables_returned_root_module_following() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("Api.lua"),
+            r#"
+            function connect(target)
+                return target ~= ""
+            end
+
+            local Api = {
+                ping = function(target)
+                    return target ~= ""
+                end,
+            }
+
+            Api.connect = function(target)
+                return target ~= ""
+            end
+
+            return Api
+        "#,
+        )
+        .expect("failed to write lua fixture");
+
+        let report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: Vec::new(),
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Off,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "lua:function connect(target)"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "lua:function Api.ping(target)"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "lua:function Api.connect(target)"));
     }
 
     #[test]
@@ -3535,6 +3682,51 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("Internal.hidden")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "luau:function connect(target: string): boolean"));
+    }
+
+    #[test]
+    fn lua_export_following_returned_root_only_requires_runtime_return_boundary() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("Api.luau"),
+            r#"
+            export type Session = {
+                token: string,
+            }
+
+            function connect(target: string): boolean
+                return target ~= ""
+            end
+        "#,
+        )
+        .expect("failed to write luau fixture");
+
+        let report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: Vec::new(),
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::ReturnedRootOnly,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "luau:export type Session={ token: string }"));
         assert!(!report
             .public_api
             .iter()
@@ -3956,6 +4148,8 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: vec!["src/api.ts".to_string()],
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
                 public_api_includes: Vec::new(),
@@ -4001,6 +4195,8 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: vec!["src/generated".to_string()],
                 public_api_roots: Vec::new(),
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
                 public_api_includes: Vec::new(),
@@ -4078,6 +4274,8 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: vec!["src/api.ts".to_string()],
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
                 python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
                 public_api_includes: vec!["ts/js:function login*".to_string()],

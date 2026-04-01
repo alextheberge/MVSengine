@@ -15,7 +15,7 @@ mod ts_js;
 use tree_sitter::Node;
 
 use super::language::SourceLanguage;
-use crate::mvs::manifest::PythonExportFollowing;
+use crate::mvs::manifest::{LuaExportFollowing, PythonExportFollowing, RubyExportFollowing};
 
 pub(super) use python::{PythonModuleIndex, PythonModuleSource};
 
@@ -33,6 +33,8 @@ pub(super) fn extract_tree_sitter_public_api(
     source: &str,
     rel_path: &str,
     python_module_index: Option<&PythonModuleIndex>,
+    ruby_export_following: RubyExportFollowing,
+    lua_export_following: LuaExportFollowing,
 ) -> Vec<String> {
     match language {
         SourceLanguage::TypeScript
@@ -45,10 +47,10 @@ pub(super) fn extract_tree_sitter_public_api(
         SourceLanguage::Kotlin => kotlin::extract(root, source),
         SourceLanguage::Csharp => csharp::extract(root, source),
         SourceLanguage::Php => php::extract(root, source),
-        SourceLanguage::Ruby => ruby::extract(root, source),
+        SourceLanguage::Ruby => ruby::extract(root, source, ruby_export_following),
         SourceLanguage::Swift => swift::extract(root, source),
-        SourceLanguage::Lua => lua::extract(root, source),
-        SourceLanguage::Luau => luau::extract(root, source),
+        SourceLanguage::Lua => lua::extract(root, source, lua_export_following),
+        SourceLanguage::Luau => luau::extract(root, source, lua_export_following),
         SourceLanguage::Rust => Vec::new(),
     }
 }

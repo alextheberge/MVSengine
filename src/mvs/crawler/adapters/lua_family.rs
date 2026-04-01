@@ -7,6 +7,7 @@ use super::super::{
     extract_tree_sitter_prefix_signature, named_children, node_text, normalize_signature,
     normalize_tree_sitter_signature,
 };
+use crate::mvs::manifest::LuaExportFollowing;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum LuaDialect {
@@ -27,11 +28,33 @@ impl LuaDialect {
     }
 }
 
-pub(super) fn extract(root: Node<'_>, source: &str, dialect: LuaDialect) -> Vec<String> {
+pub(super) fn extract(
+    root: Node<'_>,
+    source: &str,
+    dialect: LuaDialect,
+    export_following: LuaExportFollowing,
+) -> Vec<String> {
     let mut signatures = Vec::new();
     let returned_roots = extract_returned_root_names(root, source);
-    collect_global_public_api(root, source, dialect, &returned_roots, &mut signatures);
-    collect_module_exports(root, source, dialect, &returned_roots, &mut signatures);
+    let effective_returned_roots = match export_following {
+        LuaExportFollowing::Off => BTreeSet::new(),
+        LuaExportFollowing::ReturnedRootOnly | LuaExportFollowing::Heuristic => returned_roots,
+    };
+    collect_global_public_api(
+        root,
+        source,
+        dialect,
+        export_following,
+        &effective_returned_roots,
+        &mut signatures,
+    );
+    collect_module_exports(
+        root,
+        source,
+        dialect,
+        &effective_returned_roots,
+        &mut signatures,
+    );
     signatures
 }
 
@@ -39,14 +62,20 @@ fn collect_global_public_api(
     node: Node<'_>,
     source: &str,
     dialect: LuaDialect,
+    export_following: LuaExportFollowing,
     returned_roots: &BTreeSet<String>,
     signatures: &mut Vec<String>,
 ) {
     for child in named_children(node) {
         match child.kind() {
-            "chunk" | "statement" => {
-                collect_global_public_api(child, source, dialect, returned_roots, signatures)
-            }
+            "chunk" | "statement" => collect_global_public_api(
+                child,
+                source,
+                dialect,
+                export_following,
+                returned_roots,
+                signatures,
+            ),
             "function_declaration" => {
                 let Some(name) = child.child_by_field_name("name") else {
                     continue;
@@ -58,6 +87,11 @@ fn collect_global_public_api(
                     continue;
                 };
                 if function_name.is_empty() {
+                    continue;
+                }
+                if export_following == LuaExportFollowing::ReturnedRootOnly
+                    && returned_roots.is_empty()
+                {
                     continue;
                 }
                 if !returned_roots.is_empty() && !returned_roots.contains(function_name) {

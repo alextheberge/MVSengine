@@ -178,8 +178,8 @@ Member signatures inside class-like scopes are now owner-qualified, and Java/C#/
 - C# public API extraction tracks public types, public fields, public constants, public properties, and public or interface methods while stripping leading attributes out of the stored signature; declared namespace plus nesting context is preserved in canonical forms such as `csharp:type public class Demo.AuthApi`, `csharp:field public static readonly string Demo.AuthApi.Version`, `csharp:const public string Demo.AuthApi.STATUS_READY`, `csharp:property public string Demo.AuthApi.DisplayName { get }`, and `csharp:method public static string Demo.AuthApi.Login(...)`
 - Kotlin public API extraction tracks public or default-visible `class`, `interface`, `object`, `fun`, `val`, `var`, and top-level `const val` declarations, preserving modifiers such as `data` and `suspend` while skipping `private`, `protected`, and `internal`; declared package plus nesting context is preserved in canonical forms such as `kotlin:public class demo.auth.AuthApi`, `kotlin:const val demo.auth.API_VERSION: String`, `kotlin:fun demo.auth.AuthApi.login(...)`, and `kotlin:val demo.auth.AuthApi.token: String`
 - PHP public API extraction tracks top-level functions and constants, classes, interfaces, traits, enums, public properties, public or interface constants, and public or interface methods while treating `#` comments as decorators and ignoring attribute syntax in stored signatures; class and interface members are owner-qualified as `AuthApi.run(...)`, `AuthApi.$token`, and `AuthApi::STATUS_READY`
-- Ruby public API extraction tracks `class`, `module`, public `def`, singleton methods, `class << self` method bodies, public `attr_reader`/`attr_writer`/`attr_accessor` macros, and constant assignments within public namespaces while ignoring heredoc fixture content; `private_constant` hides constants until `public_constant` re-exposes them, `module_function` and `extend self` promote module exports into singleton signatures, `private_class_method` removes hidden singleton methods, and member signatures use Ruby owner forms such as `Demo::AuthApi#login(...)` and `Demo::AuthApi.connect(...)`
-- Lua public API extraction tracks global `function` declarations and returned module-table exports such as `Api.connect = function(...) end`, `function Api:refresh(...)`, and named fields from returned tables, while `--` and long-bracket comments remain decorator-aware; when a file returns a module root such as `return Api`, that returned root becomes the export boundary and unrelated globals stop counting
+- Ruby public API extraction tracks `class`, `module`, public `def`, singleton methods, `class << self` method bodies, public `attr_reader`/`attr_writer`/`attr_accessor` macros, and constant assignments within public namespaces while ignoring heredoc fixture content; `private_constant` hides constants until `public_constant` re-exposes them, `module_function` and `extend self` promote module exports into singleton signatures, `private_class_method` removes hidden singleton methods, and member signatures use Ruby owner forms such as `Demo::AuthApi#login(...)` and `Demo::AuthApi.connect(...)`; `scan_policy.ruby_export_following` or `--ruby-export-following` can keep that macro-driven export shaping enabled or reduce Ruby scanning to file-local declarations only
+- Lua public API extraction tracks global `function` declarations and returned module-table exports such as `Api.connect = function(...) end`, `function Api:refresh(...)`, and named fields from returned tables, while `--` and long-bracket comments remain decorator-aware; when a file returns a module root such as `return Api`, that returned root becomes the export boundary and unrelated globals stop counting; `scan_policy.lua_export_following` or `--lua-export-following` can disable returned-root following or require explicit returned roots before runtime exports are inferred
 - Swift public API extraction tracks `public` and `open` types, functions, properties, and inherited protocol requirements, and the scanner masks multiline Swift string literals so embedded examples do not pollute evidence; type and protocol members are owner-qualified as `swift:public func AuthApi.login(...)` and `swift:public var SessionContract.token: ...`
 - Luau public API extraction tracks global `function` declarations, `export type` definitions, and returned module-table exports such as `Api.connect = function(...) end`, `function Api:refresh(...)`, and named fields from returned tables; when a file returns a module root such as `return Api`, that returned root becomes the runtime export boundary while `export type` declarations remain explicit API
 
@@ -194,6 +194,8 @@ You can persist scan policy in `mvs.json` so public API evidence reflects the co
 The `scan_policy` block supports:
 
 - `public_api_roots`: relative file or directory roots that define the public API boundary
+- `ruby_export_following`: Ruby export-shaping mode: `heuristic` (default) or `off`
+- `lua_export_following`: Lua/Luau runtime export mode: `heuristic` (default), `returned_root_only`, or `off`
 - `python_export_following`: Python cross-module export resolution mode: `heuristic` (default), `roots_only`, or `off`
 - `public_api_includes`: wildcard patterns for declarations that should count as public API
 - `public_api_excludes`: wildcard patterns for declarations that should not count as public API
@@ -208,6 +210,8 @@ Example:
     "public_api_roots": [
       "src/cli.rs"
     ],
+    "ruby_export_following": "off",
+    "lua_export_following": "returned_root_only",
     "python_export_following": "roots_only",
     "public_api_excludes": [
       "rust:const EXIT_*",
@@ -231,6 +235,8 @@ mvs-manager generate --root . --manifest mvs.json --context cli --public-api-roo
 mvs-manager generate --root . --manifest mvs.json --context cli --exclude-path src/generated
 mvs-manager generate --root . --manifest mvs.json --context cli --public-api-exclude 'rust:const EXIT_*'
 mvs-manager generate --root . --manifest mvs.json --context cli --public-api-include 'src/cli.rs|rust:fn *'
+mvs-manager generate --root . --manifest mvs.json --context cli --ruby-export-following off
+mvs-manager generate --root . --manifest mvs.json --context cli --lua-export-following returned-root-only
 mvs-manager generate --root . --manifest mvs.json --context cli --python-export-following roots-only --python-module-root app
 mvs-manager generate --root . --manifest mvs.json --context cli --python-module-root app
 ```
@@ -242,6 +248,9 @@ Practical guidance:
 - Generated or vendor-like code under the root: add it to `exclude_paths`
 - Use `public_api_excludes` when a facade file still contains public constants, argument structs, or helper exports that are not real compatibility surface
 - Use `public_api_includes` when you want to pin the contract to a small explicit subset of declarations
+- Ruby repos that want file-local declarations only: set `ruby_export_following` to `off`
+- Lua or Luau repos that require explicit runtime module returns: set `lua_export_following` to `returned_root_only`
+- Lua or Luau repos that want file-local globals only: set `lua_export_following` to `off`
 - Python repos with nonstandard package roots: set `python_module_roots`
 - Python repos that want strict facade tracking: set `python_export_following` to `roots_only` and provide `python_module_roots`
 - Python repos that want file-local behavior only: set `python_export_following` to `off`

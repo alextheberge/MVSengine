@@ -99,6 +99,10 @@ pub struct ScanPolicy {
     pub exclude_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub public_api_roots: Vec<String>,
+    #[serde(default, skip_serializing_if = "RubyExportFollowing::is_default")]
+    pub ruby_export_following: RubyExportFollowing,
+    #[serde(default, skip_serializing_if = "LuaExportFollowing::is_default")]
+    pub lua_export_following: LuaExportFollowing,
     #[serde(default, skip_serializing_if = "PythonExportFollowing::is_default")]
     pub python_export_following: PythonExportFollowing,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -114,6 +118,23 @@ pub struct ScanPolicy {
 pub enum PythonExportFollowing {
     Off,
     RootsOnly,
+    #[default]
+    Heuristic,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum RubyExportFollowing {
+    Off,
+    #[default]
+    Heuristic,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum LuaExportFollowing {
+    Off,
+    ReturnedRootOnly,
     #[default]
     Heuristic,
 }
@@ -316,6 +337,8 @@ impl ScanPolicy {
     pub fn is_empty(&self) -> bool {
         self.exclude_paths.is_empty()
             && self.public_api_roots.is_empty()
+            && self.ruby_export_following.is_default()
+            && self.lua_export_following.is_default()
             && self.python_export_following.is_default()
             && self.python_module_roots.is_empty()
             && self.public_api_includes.is_empty()
@@ -378,6 +401,33 @@ impl PythonExportFollowing {
         match self {
             Self::Off => "off",
             Self::RootsOnly => "roots_only",
+            Self::Heuristic => "heuristic",
+        }
+    }
+}
+
+impl RubyExportFollowing {
+    pub fn is_default(&self) -> bool {
+        *self == Self::Heuristic
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Heuristic => "heuristic",
+        }
+    }
+}
+
+impl LuaExportFollowing {
+    pub fn is_default(&self) -> bool {
+        *self == Self::Heuristic
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::ReturnedRootOnly => "returned_root_only",
             Self::Heuristic => "heuristic",
         }
     }
@@ -633,7 +683,8 @@ fn current_unix_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Evidence, Manifest, ProtocolRange, PublicApiSnapshot, PythonExportFollowing, ScanPolicy,
+        Evidence, LuaExportFollowing, Manifest, ProtocolRange, PublicApiSnapshot,
+        PythonExportFollowing, RubyExportFollowing, ScanPolicy,
     };
 
     #[test]
@@ -715,6 +766,8 @@ mod tests {
         let policy = ScanPolicy {
             exclude_paths: vec!["src/generated".to_string()],
             public_api_roots: vec!["src/cli.rs".to_string(), "src/facade".to_string()],
+            ruby_export_following: RubyExportFollowing::Heuristic,
+            lua_export_following: LuaExportFollowing::Heuristic,
             python_export_following: PythonExportFollowing::Heuristic,
             python_module_roots: vec!["src/python".to_string()],
             public_api_includes: Vec::new(),
@@ -741,6 +794,8 @@ mod tests {
         let policy = ScanPolicy {
             exclude_paths: Vec::new(),
             public_api_roots: vec!["src/cli.rs".to_string()],
+            ruby_export_following: RubyExportFollowing::Heuristic,
+            lua_export_following: LuaExportFollowing::Heuristic,
             python_export_following: PythonExportFollowing::Heuristic,
             python_module_roots: Vec::new(),
             public_api_includes: vec![

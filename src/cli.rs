@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::commands;
-use crate::mvs::manifest::PythonExportFollowing;
+use crate::mvs::manifest::{LuaExportFollowing, PythonExportFollowing, RubyExportFollowing};
 
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_GENERATE_ERROR: i32 = 10;
@@ -51,6 +51,38 @@ impl From<PythonExportFollowingArg> for PythonExportFollowing {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum)]
+pub enum RubyExportFollowingArg {
+    Off,
+    Heuristic,
+}
+
+impl From<RubyExportFollowingArg> for RubyExportFollowing {
+    fn from(value: RubyExportFollowingArg) -> Self {
+        match value {
+            RubyExportFollowingArg::Off => Self::Off,
+            RubyExportFollowingArg::Heuristic => Self::Heuristic,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum)]
+pub enum LuaExportFollowingArg {
+    Off,
+    ReturnedRootOnly,
+    Heuristic,
+}
+
+impl From<LuaExportFollowingArg> for LuaExportFollowing {
+    fn from(value: LuaExportFollowingArg) -> Self {
+        match value {
+            LuaExportFollowingArg::Off => Self::Off,
+            LuaExportFollowingArg::ReturnedRootOnly => Self::ReturnedRootOnly,
+            LuaExportFollowingArg::Heuristic => Self::Heuristic,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Args)]
 pub struct GenerateArgs {
     #[arg(long, default_value = ".")]
@@ -85,6 +117,12 @@ pub struct GenerateArgs {
 
     #[arg(long = "public-api-root")]
     pub public_api_roots: Vec<PathBuf>,
+
+    #[arg(long = "ruby-export-following", value_enum)]
+    pub ruby_export_following: Option<RubyExportFollowingArg>,
+
+    #[arg(long = "lua-export-following", value_enum)]
+    pub lua_export_following: Option<LuaExportFollowingArg>,
 
     #[arg(long = "python-module-root")]
     pub python_module_roots: Vec<PathBuf>,
