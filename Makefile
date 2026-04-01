@@ -44,11 +44,14 @@ RELEASE_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo ""
 RELEASE_ALLOW_NON_DEFAULT ?= false
 RELEASE_AUTO_COMMIT ?= true
 RELEASE_PUSH ?= true
+RELEASE_TAG_SUFFIX ?=
+CARGO_VERSION_SUFFIX ?=
+DOGFOOD_REQUIRE_CANONICAL ?= false
 
 HOST_TARGET := $(shell rustc -vV 2>/dev/null | awk '/host:/ {print $$2}')
 CARGO_TARGET_FLAG := $(if $(strip $(TARGET)),--target $(TARGET),)
 
-.PHONY: help print-config bootstrap fmt fmt-check check clippy test test-unit test-integration build build-release docs clean ci generate generate-dry lint-manifest validate fixture-smoke release-local release-host release-target release-matrix-local release-merge-checksums release-sign-checksums release-verify release-github install install-hooks run-precommit dogfood-check dogfood-sync-version watch doctor
+.PHONY: help print-config bootstrap fmt fmt-check check clippy test test-unit test-integration build build-release docs clean ci generate generate-dry lint-manifest validate fixture-smoke release-local release-host release-target release-matrix-local release-merge-checksums release-sign-checksums release-verify release-github release-rc install install-hooks run-precommit dogfood-check dogfood-sync-version watch doctor
 
 help: ## Show all available targets.
 	@awk 'BEGIN {FS = ":.*##"; printf "\nMVS Engine Make Targets\n\n"} /^[a-zA-Z0-9_.-]+:.*##/ { printf "  %-26s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -194,6 +197,21 @@ release-github: dogfood-sync-version ci ## Prepare and push release version upda
 	RELEASE_PUSH="$(RELEASE_PUSH)" \
 	scripts/release/github_release.sh
 
+release-rc: ## Prepare and push a prerelease tag (set RELEASE_TAG_SUFFIX=rc1).
+	@if [[ -z "$(RELEASE_TAG_SUFFIX)" ]]; then \
+		echo "Set RELEASE_TAG_SUFFIX=<suffix>, for example RELEASE_TAG_SUFFIX=rc1"; \
+		exit 1; \
+	fi
+	@CARGO_VERSION_SUFFIX="$(RELEASE_TAG_SUFFIX)" $(MAKE) dogfood-sync-version
+	@CARGO_VERSION_SUFFIX="$(RELEASE_TAG_SUFFIX)" $(MAKE) ci
+	@RELEASE_REMOTE="$(RELEASE_REMOTE)" \
+	RELEASE_BRANCH="$(RELEASE_BRANCH)" \
+	RELEASE_ALLOW_NON_DEFAULT="$(RELEASE_ALLOW_NON_DEFAULT)" \
+	RELEASE_AUTO_COMMIT="$(RELEASE_AUTO_COMMIT)" \
+	RELEASE_PUSH="$(RELEASE_PUSH)" \
+	RELEASE_TAG_SUFFIX="$(RELEASE_TAG_SUFFIX)" \
+	scripts/release/github_prerelease.sh
+
 install: ## Install released binary via scripts/install.sh.
 	@MVS_REPO="$(INSTALL_REPO)" MVS_VERSION="$(INSTALL_VERSION)" MVS_INSTALL_DIR="$(INSTALL_DIR)" scripts/install.sh
 
@@ -210,10 +228,12 @@ run-precommit: ## Run the same gate used by the pre-commit hook.
 	@make lint-manifest
 
 dogfood-check: ## Ensure Cargo version matches mvs.json numeric version (and optional EXPECTED_TAG).
-	@EXPECTED_TAG="$(EXPECTED_TAG)" scripts/release/check_dogfood.sh
+	@EXPECTED_TAG="$(EXPECTED_TAG)" \
+	DOGFOOD_REQUIRE_CANONICAL="$(DOGFOOD_REQUIRE_CANONICAL)" \
+	scripts/release/check_dogfood.sh
 
 dogfood-sync-version: ## Sync Cargo.toml version from mvs.json identity (ARCH.FEAT.PROT-CONT -> ARCH.FEAT.PROT).
-	@scripts/release/sync_cargo_version.sh
+	@CARGO_VERSION_SUFFIX="$(CARGO_VERSION_SUFFIX)" scripts/release/sync_cargo_version.sh
 	@$(CARGO) check -q
 
 ci: fmt-check check clippy test fixture-smoke lint-manifest dogfood-check ## Full local/CI quality gate.

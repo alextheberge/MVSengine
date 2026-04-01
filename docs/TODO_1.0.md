@@ -22,13 +22,13 @@ This document tracks the work required to move `mvs-manager` from the current fe
 
 - Add release-grade regression fixtures.
   - Continue broadening multi-crate Rust workspace fixtures beyond the current direct and chained allowlisted member-facade coverage, including more mixed `pub mod` plus `pub use` layouts.
-  - TS/JS package-export, import-map, monorepo self-reference, and path-alias fixtures.
+  - Continue broadening TS/JS fixtures beyond the current release-style workspace coverage for export maps, import maps, monorepo self-references, and path aliases.
   - Continue broadening Python facade and `__all__` fixtures beyond the current multiple-root coverage.
-  - Convention-driven Ruby and Lua/Luau export-boundary fixtures.
+  - Continue broadening Ruby and Lua/Luau release fixtures beyond the current runtime-boundary coverage.
 - Run a public-release audit.
   - Verify installer and release assets on macOS, Linux, and Windows.
   - Review onboarding docs for a first-time public user, not just dogfood usage.
-  - Decide whether to ship `1.0.0-rc1` first or cut `1.0.0` directly.
+  - Decide whether to ship `1.0.0-rc1` first or cut `1.0.0` directly. The repo now has a dedicated prerelease path for `-rcN` tags.
 
 ## P1: Strongly Recommended For 1.0
 
@@ -59,7 +59,7 @@ This document tracks the work required to move `mvs-manager` from the current fe
 
 ### TypeScript / JavaScript
 
-- Broaden monorepo fixture coverage around nested packages and mixed export-map styles.
+- Release-style workspace coverage now exists; remaining fixture gaps are deeper nested packages and more mixed export-map styles.
 
 ### Python
 
@@ -69,12 +69,12 @@ This document tracks the work required to move `mvs-manager` from the current fe
 
 ### Ruby
 
-- Additional coverage for more metaprogramming-heavy export patterns.
+- Release-style export-boundary coverage now exists; remaining gaps are more metaprogramming-heavy patterns.
 - Clear boundaries for what stays intentionally unsupported in `1.0`.
 
 ### Lua / Luau
 
-- More module export fixtures for tables assembled across multiple assignment styles.
+- Release-style returned-root coverage now exists; remaining gaps are more module export tables assembled across multiple assignment styles.
 - Explicit documentation for where runtime export heuristics stop.
 
 ## Testing And Verification

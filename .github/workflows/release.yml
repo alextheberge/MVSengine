@@ -130,6 +130,7 @@ jobs:
           files: dist/${{ env.VERSION_TAG }}/*
           fail_on_unmatched_files: true
           generate_release_notes: true
+          prerelease: ${{ contains(env.VERSION_TAG, '-') }}
 
       - name: Upload assembled artifacts
         uses: actions/upload-artifact@v4

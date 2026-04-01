@@ -44,9 +44,43 @@ make release-github
 
 `release-github` pushes your current branch (default `origin`) so `Auto Tag Version` can create the canonical `vX.Y.Z` tag and dispatch `Release`.
 
+## Release candidate flow
+
+Prereleases use an explicit tag suffix instead of the canonical auto-tag path.
+
+```bash
+make release-rc RELEASE_TAG_SUFFIX=rc1 RELEASE_ALLOW_NON_DEFAULT=true
+```
+
+That flow:
+
+1. Syncs `Cargo.toml` to `<ARCH>.<FEAT>.<PROT>-rcN`.
+2. Keeps `mvs.json.identity.mvs` on the stable numeric base plus context suffix.
+3. Runs the full local `ci` gate against that prerelease Cargo version.
+4. Commits version files when needed.
+5. Creates and pushes an explicit annotated tag such as `v1.0.0-rc1`.
+6. Lets the `Release` workflow publish a GitHub prerelease automatically when the tag contains `-`.
+
+Notes:
+
+- Canonical auto-tagging on `main` or `master` remains for final `vX.Y.Z` releases only.
+- `latest` installer resolution intentionally skips prerelease tags.
+- To install an RC explicitly, pass the prerelease tag:
+
+  ```bash
+  MVS_VERSION=v1.0.0-rc1 scripts/install.sh
+  ```
+
+  ```powershell
+  $env:MVS_VERSION = "v1.0.0-rc1"
+  .\scripts\install.ps1
+  ```
+
 This enforces:
 - `Cargo.toml` version = MVS numeric version (`ARCH.FEAT.PROT`)
 - canonical release tag = `vARCH.FEAT.PROT` (for example `mvs.json: 0.2.3-cli` => tag `v0.2.3`)
+
+For prereleases, `Cargo.toml` may carry a suffix such as `1.0.0-rc1`, but its numeric base must still match `mvs.json.identity.mvs`.
 
 Build matrix currently publishes:
 - `x86_64-unknown-linux-gnu`

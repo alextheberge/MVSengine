@@ -5,6 +5,7 @@ set -euo pipefail
 manifest_file="${1:-mvs.json}"
 cargo_file="${2:-Cargo.toml}"
 expected_tag="${EXPECTED_TAG:-}"
+require_canonical="${DOGFOOD_REQUIRE_CANONICAL:-false}"
 
 if [[ ! -f "${manifest_file}" ]]; then
   echo "manifest not found: ${manifest_file}" >&2
@@ -35,16 +36,24 @@ if [[ -z "${cargo_version}" ]]; then
   exit 1
 fi
 
-if [[ "${cargo_version}" != "${numeric_version}" ]]; then
-  echo "dogfood check failed: Cargo.toml version (${cargo_version}) does not match MVS numeric version (${numeric_version})." >&2
+cargo_numeric_version="${cargo_version%%-*}"
+if [[ "${cargo_numeric_version}" != "${numeric_version}" ]]; then
+  echo "dogfood check failed: Cargo.toml version (${cargo_version}) does not share the MVS numeric version (${numeric_version})." >&2
   echo "Run: make dogfood-sync-version" >&2
   exit 1
 fi
 
 canonical_tag="v${numeric_version}"
-if [[ -n "${expected_tag}" && "${expected_tag}" != "${canonical_tag}" ]]; then
-  echo "dogfood check failed: expected release tag ${canonical_tag} from mvs.json, got ${expected_tag}." >&2
+release_tag="v${cargo_version}"
+
+if [[ "${require_canonical}" == "true" && "${cargo_version}" != "${numeric_version}" ]]; then
+  echo "dogfood check failed: canonical release flow requires Cargo.toml version ${numeric_version}, found ${cargo_version}." >&2
   exit 1
 fi
 
-echo "Dogfood check passed: Cargo ${cargo_version}, MVS ${mvs_identity}, canonical tag ${canonical_tag}."
+if [[ -n "${expected_tag}" && "${expected_tag}" != "${release_tag}" ]]; then
+  echo "dogfood check failed: expected release tag ${release_tag} from Cargo.toml, got ${expected_tag}." >&2
+  exit 1
+fi
+
+echo "Dogfood check passed: Cargo ${cargo_version}, MVS ${mvs_identity}, release tag ${release_tag}, canonical tag ${canonical_tag}."

@@ -7,20 +7,26 @@ release_branch="${RELEASE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null 
 allow_non_default="${RELEASE_ALLOW_NON_DEFAULT:-false}"
 auto_commit="${RELEASE_AUTO_COMMIT:-true}"
 do_push="${RELEASE_PUSH:-true}"
+tag_suffix="${RELEASE_TAG_SUFFIX:-}"
 
 if ! command -v git >/dev/null 2>&1; then
   echo "git is required" >&2
   exit 1
 fi
 
+if [[ -z "${tag_suffix}" ]]; then
+  echo "Set RELEASE_TAG_SUFFIX=<rc suffix>, for example RELEASE_TAG_SUFFIX=rc1." >&2
+  exit 1
+fi
+tag_suffix="${tag_suffix#-}"
+
 if [[ -z "${release_branch}" || "${release_branch}" == "HEAD" ]]; then
-  echo "unable to resolve release branch. Set RELEASE_BRANCH=<main|master>." >&2
+  echo "unable to resolve release branch. Set RELEASE_BRANCH=<branch>." >&2
   exit 1
 fi
 
 if [[ "${allow_non_default}" != "true" ]] && [[ "${release_branch}" != "main" && "${release_branch}" != "master" ]]; then
-  echo "release branch must be main or master (current: ${release_branch})." >&2
-  echo "Set RELEASE_ALLOW_NON_DEFAULT=true to override." >&2
+  echo "prerelease branch must be main or master unless RELEASE_ALLOW_NON_DEFAULT=true (current: ${release_branch})." >&2
   exit 1
 fi
 
@@ -35,8 +41,9 @@ if [[ -z "${mvs_identity}" ]]; then
   exit 1
 fi
 
-canonical_tag="v${mvs_identity%%-*}"
-DOGFOOD_REQUIRE_CANONICAL=true EXPECTED_TAG="${canonical_tag}" scripts/release/check_dogfood.sh
+numeric_version="${mvs_identity%%-*}"
+release_tag="v${numeric_version}-${tag_suffix}"
+EXPECTED_TAG="${release_tag}" scripts/release/check_dogfood.sh
 
 version_files=()
 for file in mvs.json Cargo.toml Cargo.lock; do
@@ -50,21 +57,35 @@ git add "${version_files[@]}"
 if ! git diff --cached --quiet -- "${version_files[@]}"; then
   if [[ "${auto_commit}" != "true" ]]; then
     echo "version files changed but RELEASE_AUTO_COMMIT is false." >&2
-    echo "Commit these files, then run make release-github again." >&2
+    echo "Commit these files, then run make release-rc again." >&2
     exit 1
   fi
 
-  git commit -m "chore(release): prepare ${canonical_tag}" -- "${version_files[@]}"
-  echo "Committed version files for ${canonical_tag}."
+  git commit -m "chore(release): prepare ${release_tag}" -- "${version_files[@]}"
+  echo "Committed version files for ${release_tag}."
 else
-  echo "No version file changes to commit for ${canonical_tag}."
+  echo "No version file changes to commit for ${release_tag}."
 fi
+
+if git rev-parse "${release_tag}" >/dev/null 2>&1; then
+  echo "local tag already exists: ${release_tag}" >&2
+  exit 1
+fi
+
+if git ls-remote --tags "${release_remote}" "refs/tags/${release_tag}" | grep -q .; then
+  echo "remote tag already exists: ${release_tag}" >&2
+  exit 1
+fi
+
+git tag -a "${release_tag}" -m "Release ${release_tag}"
+echo "Created local tag ${release_tag}."
 
 if [[ "${do_push}" == "true" ]]; then
   git push "${release_remote}" "${release_branch}"
-  echo "Pushed ${release_branch} to ${release_remote}."
-  echo "GitHub Actions will now run Auto Tag Version and Release for ${canonical_tag}."
+  git push "${release_remote}" "refs/tags/${release_tag}"
+  echo "Pushed ${release_branch} and ${release_tag} to ${release_remote}."
+  echo "GitHub Actions will now run Release for ${release_tag}."
 else
   echo "RELEASE_PUSH=false, skipping push."
-  echo "Push ${release_branch} to ${release_remote} to trigger GitHub workflows."
+  echo "Push ${release_branch} and ${release_tag} to ${release_remote} to trigger GitHub workflows."
 fi

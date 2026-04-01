@@ -87,6 +87,13 @@ One-command flow from repo root:
 make release-github
 ```
 
+Release-candidate flow:
+```bash
+make release-rc RELEASE_TAG_SUFFIX=rc1 RELEASE_ALLOW_NON_DEFAULT=true
+```
+
+`latest` installers intentionally ignore prerelease tags. To install an RC explicitly, set `MVS_VERSION=vX.Y.Z-rcN`.
+
 ## Local Build
 ```bash
 make ci

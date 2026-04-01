@@ -4,6 +4,7 @@ set -euo pipefail
 
 manifest_file="${1:-mvs.json}"
 cargo_file="${2:-Cargo.toml}"
+version_suffix="${CARGO_VERSION_SUFFIX:-}"
 
 if [[ ! -f "${manifest_file}" ]]; then
   echo "manifest not found: ${manifest_file}" >&2
@@ -27,10 +28,16 @@ if [[ "${numeric_version}" == "${mvs_identity}" ]]; then
   exit 1
 fi
 
+version_suffix="${version_suffix#-}"
+cargo_version="${numeric_version}"
+if [[ -n "${version_suffix}" ]]; then
+  cargo_version="${numeric_version}-${version_suffix}"
+fi
+
 tmp_file="$(mktemp)"
 trap 'rm -f "${tmp_file}"' EXIT
 
-awk -v new_version="${numeric_version}" '
+awk -v new_version="${cargo_version}" '
 BEGIN { in_package = 0; replaced = 0 }
 /^\[package\]/ { in_package = 1; print; next }
 in_package && /^\[/ { in_package = 0 }
@@ -48,4 +55,4 @@ END {
 ' "${cargo_file}" > "${tmp_file}"
 
 mv "${tmp_file}" "${cargo_file}"
-echo "Updated ${cargo_file} version to ${numeric_version} from ${manifest_file}."
+echo "Updated ${cargo_file} version to ${cargo_version} from ${manifest_file}."

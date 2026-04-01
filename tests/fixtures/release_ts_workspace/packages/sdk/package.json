@@ -1,0 +1,12 @@
+{
+  "name": "@demo/sdk",
+  "exports": {
+    "./auth": {
+      "types": "./src/auth.ts",
+      "default": "./dist/auth.js"
+    }
+  },
+  "imports": {
+    "#session": "./src/internal/session.ts"
+  }
+}

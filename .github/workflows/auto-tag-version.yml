@@ -32,7 +32,7 @@ jobs:
         shell: bash
         run: |
           chmod +x scripts/release/check_dogfood.sh
-          scripts/release/check_dogfood.sh
+          DOGFOOD_REQUIRE_CANONICAL=true scripts/release/check_dogfood.sh
 
       - name: Resolve canonical tag from mvs.json
         id: resolve

@@ -1304,6 +1304,81 @@ fn ts_export_following_workspace_only_resolves_monorepo_package_self_references(
 }
 
 #[test]
+fn ts_export_following_workspace_only_covers_release_fixture() {
+    let temp = TempWorkspace::new();
+    let fixture_project = fixtures_root().join("release_ts_workspace");
+    let project_root = temp.path().join("project");
+    copy_dir_recursive(&fixture_project, &project_root);
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "packages/sdk/src/index.ts",
+            "--ts-export-following",
+            "workspace-only",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("TS/JS export following"));
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+    assert_eq!(
+        generated["scan_policy"]["ts_export_following"],
+        "workspace_only"
+    );
+    let inventory = generated["evidence"]["public_api_inventory"]
+        .as_array()
+        .expect("public api inventory should be an array");
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "packages/sdk/src/index.ts"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "ts/js:function authenticate(username: string): string"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "packages/sdk/src/index.ts"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "ts/js:interface Session"
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        let signature = entry["signature"]
+            .as_str()
+            .expect("signature should be a string");
+        signature == "ts/js:export { login as authenticate } from \"@demo/sdk/auth\""
+            || signature == "ts/js:export * from \"#session\""
+    }));
+
+    let mut lint = binary_cmd();
+    lint.args([
+        "lint",
+        "--root",
+        project_root.to_str().expect("non-utf8 path"),
+        "--manifest",
+        manifest_path.to_str().expect("non-utf8 path"),
+    ])
+    .assert()
+    .success()
+    .stdout(contains("TS/JS export following"))
+    .stdout(contains("Lint passed"));
+}
+
+#[test]
 fn go_export_following_package_only_persists_and_expands_package_siblings() {
     let temp = TempWorkspace::new();
     let project_root = temp.path().join("project");
@@ -2154,7 +2229,6 @@ fn ruby_and_lua_export_following_modes_persist_and_shape_runtime_exports() {
         ])
         .assert()
         .success()
-        .stdout(contains("Ruby export following"))
         .stdout(contains("Lua export following"));
 
     let generated: Value = serde_json::from_str(
@@ -2212,6 +2286,101 @@ fn ruby_and_lua_export_following_modes_persist_and_shape_runtime_exports() {
     .assert()
     .success()
     .stdout(contains("Ruby export following"))
+    .stdout(contains("Lua export following"))
+    .stdout(contains("Lint passed"));
+}
+
+#[test]
+fn ruby_and_lua_export_following_cover_release_fixture() {
+    let temp = TempWorkspace::new();
+    let fixture_project = fixtures_root().join("release_ruby_luau");
+    let project_root = temp.path().join("project");
+    copy_dir_recursive(&fixture_project, &project_root);
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--ruby-export-following",
+            "heuristic",
+            "--lua-export-following",
+            "returned-root-only",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Lua export following"));
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+    assert!(generated["scan_policy"]["ruby_export_following"].is_null());
+    assert_eq!(
+        generated["scan_policy"]["lua_export_following"],
+        "returned_root_only"
+    );
+    let inventory = generated["evidence"]["public_api_inventory"]
+        .as_array()
+        .expect("public api inventory should be an array");
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "src/api.rb"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "ruby:def Demo#build(token)"
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            .contains("SECRET")
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "src/runtime.luau"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "luau:function Runtime.connect(target: string): boolean"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "src/runtime.luau"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "luau:function Runtime:refresh(token: string): string"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "src/runtime.luau"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "luau:export type Session={ token: string }"
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            .contains("leak")
+    }));
+
+    let mut lint = binary_cmd();
+    lint.args([
+        "lint",
+        "--root",
+        project_root.to_str().expect("non-utf8 path"),
+        "--manifest",
+        manifest_path.to_str().expect("non-utf8 path"),
+    ])
+    .assert()
+    .success()
     .stdout(contains("Lua export following"))
     .stdout(contains("Lint passed"));
 }
