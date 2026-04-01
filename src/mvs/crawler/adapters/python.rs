@@ -7,6 +7,7 @@ use super::super::{
     children_by_field_name, extract_tree_sitter_prefix_signature, is_public_python_name,
     named_children, node_text, normalize_tree_sitter_signature,
 };
+use crate::mvs::manifest::PythonExportFollowing;
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub(crate) struct PythonModuleIndex {
@@ -40,8 +41,13 @@ struct PythonWildcardImport {
 
 pub(super) fn build_module_index(
     files: &[PythonModuleSource<'_>],
+    export_following: PythonExportFollowing,
     module_roots: &[String],
 ) -> PythonModuleIndex {
+    if export_following == PythonExportFollowing::Off {
+        return PythonModuleIndex::default();
+    }
+
     let mut index = PythonModuleIndex::default();
 
     for _ in 0..4 {
@@ -51,7 +57,9 @@ pub(super) fn build_module_index(
             let Some(exports) = summarize_python_module_exports(file.source, &index) else {
                 continue;
             };
-            for module_name in python_module_name_candidates(file.rel_path, module_roots) {
+            for module_name in
+                python_module_name_candidates(file.rel_path, export_following, module_roots)
+            {
                 next.exports_by_module
                     .entry(module_name)
                     .or_default()
@@ -823,7 +831,11 @@ fn summarize_python_module_exports(
     Some(extract_python_export_names_from_signatures(&signatures))
 }
 
-fn python_module_name_candidates(rel_path: &str, module_roots: &[String]) -> Vec<String> {
+fn python_module_name_candidates(
+    rel_path: &str,
+    export_following: PythonExportFollowing,
+    module_roots: &[String],
+) -> Vec<String> {
     let normalized = rel_path.replace('\\', "/");
     let Some(stripped) = normalized.strip_suffix(".py") else {
         return Vec::new();
@@ -831,7 +843,7 @@ fn python_module_name_candidates(rel_path: &str, module_roots: &[String]) -> Vec
 
     let mut candidates = Vec::new();
 
-    if module_roots.is_empty() {
+    if export_following == PythonExportFollowing::Heuristic && module_roots.is_empty() {
         let mut parts: Vec<&str> = stripped
             .split('/')
             .filter(|part| !part.is_empty())

@@ -154,6 +154,7 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
         .collect();
     let python_module_index = adapters::build_python_module_index(
         &python_module_sources,
+        scan_policy.python_export_following,
         &scan_policy.python_module_roots,
     );
 
@@ -2574,6 +2575,7 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: Vec::new(),
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: vec!["app".to_string()],
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
@@ -2582,6 +2584,53 @@ mod tests {
         .expect("crawler failed");
 
         assert!(rooted_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:from pkg.core import login"));
+    }
+
+    #[test]
+    fn python_export_following_off_disables_cross_module_workspace_resolution() {
+        let workspace = TempWorkspace::new();
+        let pkg = workspace.path().join("app/pkg");
+        fs::create_dir_all(&pkg).expect("failed to create python package");
+
+        fs::write(
+            pkg.join("core.py"),
+            r#"
+            __all__ = ("login",)
+
+            def login(username: str) -> str:
+                return username
+        "#,
+        )
+        .expect("failed to write package core fixture");
+
+        fs::write(
+            workspace.path().join("app/api.py"),
+            r#"
+            from pkg.core import __all__ as CORE_EXPORTS
+            from pkg.core import *
+
+            __all__ = CORE_EXPORTS
+        "#,
+        )
+        .expect("failed to write python facade fixture");
+
+        let report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: Vec::new(),
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Off,
+                python_module_roots: vec!["app".to_string()],
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(!report
             .public_api
             .iter()
             .any(|entry| entry.signature == "python:from pkg.core import login"));
@@ -3907,6 +3956,7 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: vec!["src/api.ts".to_string()],
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
@@ -3951,6 +4001,7 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: vec!["src/generated".to_string()],
                 public_api_roots: Vec::new(),
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
                 public_api_includes: Vec::new(),
                 public_api_excludes: Vec::new(),
@@ -4027,6 +4078,7 @@ mod tests {
             &ScanPolicy {
                 exclude_paths: Vec::new(),
                 public_api_roots: vec!["src/api.ts".to_string()],
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
                 python_module_roots: Vec::new(),
                 public_api_includes: vec!["ts/js:function login*".to_string()],
                 public_api_excludes: vec!["ts/js:const buildSession".to_string()],

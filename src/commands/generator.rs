@@ -319,6 +319,10 @@ fn apply_scan_policy_overrides(manifest: &mut Manifest, args: &GenerateArgs) {
         manifest.scan_policy.public_api_roots = normalize_policy_paths(&args.public_api_roots);
     }
 
+    if let Some(mode) = args.python_export_following {
+        manifest.scan_policy.python_export_following = mode.into();
+    }
+
     if !args.python_module_roots.is_empty() {
         manifest.scan_policy.python_module_roots =
             normalize_policy_paths(&args.python_module_roots);
@@ -411,6 +415,12 @@ fn render_scan_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) {
         println!(
             "- Public API includes: {}",
             scan_policy.public_api_includes.join(", ")
+        );
+    }
+    if !scan_policy.python_export_following.is_default() {
+        println!(
+            "- Python export following: {}",
+            scan_policy.python_export_following.as_str()
         );
     }
     if !scan_policy.python_module_roots.is_empty() {
@@ -691,6 +701,7 @@ mod tests {
             dry_run: false,
             exclude_paths: Vec::new(),
             public_api_roots: Vec::new(),
+            python_export_following: None,
             python_module_roots: Vec::new(),
             public_api_includes: Vec::new(),
             public_api_excludes: Vec::new(),

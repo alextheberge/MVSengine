@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::commands;
+use crate::mvs::manifest::PythonExportFollowing;
 
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_GENERATE_ERROR: i32 = 10;
@@ -31,6 +32,23 @@ enum Command {
 pub enum OutputFormat {
     Text,
     Json,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum)]
+pub enum PythonExportFollowingArg {
+    Off,
+    RootsOnly,
+    Heuristic,
+}
+
+impl From<PythonExportFollowingArg> for PythonExportFollowing {
+    fn from(value: PythonExportFollowingArg) -> Self {
+        match value {
+            PythonExportFollowingArg::Off => Self::Off,
+            PythonExportFollowingArg::RootsOnly => Self::RootsOnly,
+            PythonExportFollowingArg::Heuristic => Self::Heuristic,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Args)]
@@ -70,6 +88,9 @@ pub struct GenerateArgs {
 
     #[arg(long = "python-module-root")]
     pub python_module_roots: Vec<PathBuf>,
+
+    #[arg(long = "python-export-following", value_enum)]
+    pub python_export_following: Option<PythonExportFollowingArg>,
 
     #[arg(long = "public-api-include", value_name = "PATTERN")]
     pub public_api_includes: Vec<String>,

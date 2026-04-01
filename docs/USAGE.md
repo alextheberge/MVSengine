@@ -138,7 +138,7 @@ For class-like languages, stored member signatures are owner-qualified so collis
 
 - TypeScript/JavaScript: multiline exports, named export clauses, re-exports, and default exports are parser-backed
 - Go: exported `func` declarations, exported methods, exported named types, exported struct fields, exported embedded struct fields, exported interface methods, embedded interface type elements, exported constants, and exported package `var` declarations are parser-backed
-- Python: public `class` declarations, non-underscore `def` declarations, public `type` aliases, and module-level or class-level constants such as `API_VERSION`, `__all__`, or `Worker.STATUS` are parser-backed without promoting nested local helpers or private class bodies; parseable `__all__` becomes the top-level export boundary, including common alias, unpacking, and `+=` composition patterns built from parseable literals, explicit import re-exports are stored in canonical forms such as `python:from auth.core import login as authorize`, same-workspace `from ... import *` or imported `__all__` aliases resolve when the upstream module export graph is static and parseable, and `scan_policy.python_module_roots` or `--python-module-root` can pin module resolution to nonstandard repository roots
+- Python: public `class` declarations, non-underscore `def` declarations, public `type` aliases, and module-level or class-level constants such as `API_VERSION`, `__all__`, or `Worker.STATUS` are parser-backed without promoting nested local helpers or private class bodies; parseable `__all__` becomes the top-level export boundary, including common alias, unpacking, and `+=` composition patterns built from parseable literals, explicit import re-exports are stored in canonical forms such as `python:from auth.core import login as authorize`, same-workspace `from ... import *` or imported `__all__` aliases resolve when the upstream module export graph is static and parseable, and `scan_policy.python_export_following` plus `scan_policy.python_module_roots` or `--python-module-root` can pin how cross-module facade resolution behaves
 - Java: public types, public fields, interface constants, and public or interface methods are parser-backed; stored signatures drop leading annotations and preserve package plus nesting context as `java:type public class demo.AuthApi`, `java:field public String demo.AuthApi.status`, `java:const public static final String demo.AuthApi.Contract.STATE`, and `java:method public String demo.AuthApi.login(...)`
 - C#: public types, public fields, public constants, public properties, and public or interface methods are parser-backed; stored signatures drop leading attributes and preserve namespace plus nesting context as `csharp:type public class Demo.AuthApi`, `csharp:field public static readonly string Demo.AuthApi.Version`, `csharp:const public string Demo.AuthApi.STATUS_READY`, `csharp:property public string Demo.AuthApi.DisplayName { get }`, and `csharp:method public static string Demo.AuthApi.Login(...)`
 - Kotlin: public or default-visible `class`, `interface`, `object`, `fun`, `val`, `var`, and top-level `const val` declarations are parser-backed, while `private`, `protected`, and `internal` declarations are skipped; stored signatures preserve package plus nesting context as `kotlin:public class demo.auth.AuthApi`, `kotlin:const val demo.auth.API_VERSION: String`, `kotlin:fun demo.auth.AuthApi.login(...)`, and `kotlin:val demo.auth.AuthApi.token: String`
@@ -161,6 +161,7 @@ Rust API signatures are AST-normalized before they are persisted. Typical entrie
 `mvs.json.scan_policy` lets you narrow API evidence to real contract boundaries:
 
 - `public_api_roots`: relative file or directory prefixes that define the public API surface
+- `python_export_following`: Python cross-module export resolution mode: `heuristic`, `roots_only`, or `off`
 - `public_api_includes`: wildcard rules for declarations that count as public API
 - `public_api_excludes`: wildcard rules for declarations that should be ignored
 - `python_module_roots`: relative directory roots used to resolve same-workspace Python module names for `__all__`, explicit re-exports, and wildcard imports
@@ -172,6 +173,7 @@ This is especially useful when:
 - that facade file still contains public constants or argument structs that are not real consumer contract
 - a library has an explicit `public/` or `index.ts` export layer
 - a Python repo keeps importable modules under a nonstandard root such as `app/` or `services/`
+- a Python repo wants strict facade following under declared roots only, or wants cross-file export following disabled entirely
 - generated code sits under the normal source root
 
 Flags passed to `generate` persist into `mvs.json.scan_policy`, so later `lint` runs use the same boundary automatically.
@@ -180,6 +182,7 @@ Example:
 
 ```bash
 mvs-manager generate --root . --manifest mvs.json --context server --python-module-root app
+mvs-manager generate --root . --manifest mvs.json --context server --python-export-following roots-only --python-module-root app
 ```
 
 Pattern matching rules:

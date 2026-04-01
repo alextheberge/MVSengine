@@ -99,12 +99,23 @@ pub struct ScanPolicy {
     pub exclude_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub public_api_roots: Vec<String>,
+    #[serde(default, skip_serializing_if = "PythonExportFollowing::is_default")]
+    pub python_export_following: PythonExportFollowing,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub python_module_roots: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub public_api_includes: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub public_api_excludes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum PythonExportFollowing {
+    Off,
+    RootsOnly,
+    #[default]
+    Heuristic,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -305,6 +316,7 @@ impl ScanPolicy {
     pub fn is_empty(&self) -> bool {
         self.exclude_paths.is_empty()
             && self.public_api_roots.is_empty()
+            && self.python_export_following.is_default()
             && self.python_module_roots.is_empty()
             && self.public_api_includes.is_empty()
             && self.public_api_excludes.is_empty()
@@ -346,7 +358,28 @@ impl ScanPolicy {
         validate_policy_paths("scan_policy.python_module_roots", &self.python_module_roots)?;
         validate_policy_patterns("scan_policy.public_api_includes", &self.public_api_includes)?;
         validate_policy_patterns("scan_policy.public_api_excludes", &self.public_api_excludes)?;
+        if self.python_export_following == PythonExportFollowing::RootsOnly
+            && self.python_module_roots.is_empty()
+        {
+            bail!(
+                "scan_policy.python_export_following=roots_only requires scan_policy.python_module_roots"
+            );
+        }
         Ok(())
+    }
+}
+
+impl PythonExportFollowing {
+    pub fn is_default(&self) -> bool {
+        *self == Self::Heuristic
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::RootsOnly => "roots_only",
+            Self::Heuristic => "heuristic",
+        }
     }
 }
 
@@ -599,7 +632,9 @@ fn current_unix_timestamp() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Evidence, Manifest, ProtocolRange, PublicApiSnapshot, ScanPolicy};
+    use super::{
+        Evidence, Manifest, ProtocolRange, PublicApiSnapshot, PythonExportFollowing, ScanPolicy,
+    };
 
     #[test]
     fn default_manifest_has_valid_identity() {
@@ -680,6 +715,7 @@ mod tests {
         let policy = ScanPolicy {
             exclude_paths: vec!["src/generated".to_string()],
             public_api_roots: vec!["src/cli.rs".to_string(), "src/facade".to_string()],
+            python_export_following: PythonExportFollowing::Heuristic,
             python_module_roots: vec!["src/python".to_string()],
             public_api_includes: Vec::new(),
             public_api_excludes: Vec::new(),
@@ -705,6 +741,7 @@ mod tests {
         let policy = ScanPolicy {
             exclude_paths: Vec::new(),
             public_api_roots: vec!["src/cli.rs".to_string()],
+            python_export_following: PythonExportFollowing::Heuristic,
             python_module_roots: Vec::new(),
             public_api_includes: vec![
                 "rust:fn *".to_string(),
@@ -724,6 +761,14 @@ mod tests {
     fn validation_rejects_empty_public_api_selector_patterns() {
         let mut manifest = Manifest::default_for_context("cli");
         manifest.scan_policy.public_api_excludes = vec!["src/cli.rs|".to_string()];
+
+        assert!(manifest.validate().is_err());
+    }
+
+    #[test]
+    fn validation_rejects_roots_only_python_following_without_roots() {
+        let mut manifest = Manifest::default_for_context("cli");
+        manifest.scan_policy.python_export_following = PythonExportFollowing::RootsOnly;
 
         assert!(manifest.validate().is_err());
     }

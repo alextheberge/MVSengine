@@ -259,6 +259,12 @@ fn render_scan_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) {
             scan_policy.public_api_includes.join(", ")
         );
     }
+    if !scan_policy.python_export_following.is_default() {
+        println!(
+            "- Python export following: {}",
+            scan_policy.python_export_following.as_str()
+        );
+    }
     if !scan_policy.python_module_roots.is_empty() {
         println!(
             "- Python module roots: {}",

@@ -15,14 +15,16 @@ mod ts_js;
 use tree_sitter::Node;
 
 use super::language::SourceLanguage;
+use crate::mvs::manifest::PythonExportFollowing;
 
 pub(super) use python::{PythonModuleIndex, PythonModuleSource};
 
 pub(super) fn build_python_module_index(
     files: &[PythonModuleSource<'_>],
+    export_following: PythonExportFollowing,
     module_roots: &[String],
 ) -> PythonModuleIndex {
-    python::build_module_index(files, module_roots)
+    python::build_module_index(files, export_following, module_roots)
 }
 
 pub(super) fn extract_tree_sitter_public_api(

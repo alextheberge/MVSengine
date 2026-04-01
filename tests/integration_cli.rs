@@ -504,17 +504,24 @@ fn python_module_roots_persist_and_enable_cross_module_python_exports() {
             manifest_path.to_str().expect("non-utf8 path"),
             "--context",
             "cli",
+            "--python-export-following",
+            "roots-only",
             "--python-module-root",
             "app",
         ])
         .assert()
         .success()
+        .stdout(contains("Python export following"))
         .stdout(contains("Python module roots"));
 
     let generated: Value = serde_json::from_str(
         &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
     )
     .expect("generated manifest should be valid JSON");
+    assert_eq!(
+        generated["scan_policy"]["python_export_following"],
+        "roots_only"
+    );
     assert_eq!(generated["scan_policy"]["python_module_roots"][0], "app");
     let inventory = generated["evidence"]["public_api_inventory"]
         .as_array()
@@ -536,6 +543,7 @@ fn python_module_roots_persist_and_enable_cross_module_python_exports() {
     ])
     .assert()
     .success()
+    .stdout(contains("Python export following"))
     .stdout(contains("Python module roots"))
     .stdout(contains("Lint passed"));
 }
