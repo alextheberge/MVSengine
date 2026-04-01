@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fs, path::Path};
 
+use serde_json::Value;
 use tree_sitter::{Node, Parser};
 
 use super::super::language::SourceLanguage;
@@ -13,6 +14,10 @@ use crate::mvs::manifest::TsExportFollowing;
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub(crate) struct TsModuleIndex {
     exports_by_module: BTreeMap<String, BTreeMap<String, String>>,
+    exact_workspace_specifiers: BTreeMap<String, String>,
+    wildcard_workspace_specifiers: Vec<TsWorkspaceAlias>,
+    base_url: Option<String>,
+    export_following: TsExportFollowing,
 }
 
 pub(crate) struct TsModuleSource<'a> {
@@ -21,18 +26,50 @@ pub(crate) struct TsModuleSource<'a> {
     pub language: SourceLanguage,
 }
 
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+struct TsWorkspaceConfig {
+    exact_workspace_specifiers: BTreeMap<String, String>,
+    wildcard_workspace_specifiers: Vec<TsWorkspaceAlias>,
+    base_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+struct TsWorkspaceAlias {
+    specifier_prefix: String,
+    specifier_suffix: String,
+    target_prefix: String,
+    target_suffix: String,
+}
+
+impl TsModuleIndex {
+    fn with_workspace_config(
+        workspace_config: &TsWorkspaceConfig,
+        export_following: TsExportFollowing,
+    ) -> Self {
+        Self {
+            exports_by_module: BTreeMap::new(),
+            exact_workspace_specifiers: workspace_config.exact_workspace_specifiers.clone(),
+            wildcard_workspace_specifiers: workspace_config.wildcard_workspace_specifiers.clone(),
+            base_url: workspace_config.base_url.clone(),
+            export_following,
+        }
+    }
+}
+
 pub(super) fn build_module_index(
     files: &[TsModuleSource<'_>],
     export_following: TsExportFollowing,
+    root: &Path,
 ) -> TsModuleIndex {
     if export_following == TsExportFollowing::Off {
         return TsModuleIndex::default();
     }
 
-    let mut index = TsModuleIndex::default();
+    let workspace_config = load_ts_workspace_config(root, export_following);
+    let mut index = TsModuleIndex::with_workspace_config(&workspace_config, export_following);
 
     for _ in 0..6 {
-        let mut next = TsModuleIndex::default();
+        let mut next = TsModuleIndex::with_workspace_config(&workspace_config, export_following);
 
         for file in files {
             let Some(grammar) = file.language.tree_sitter_language() else {
@@ -67,6 +104,202 @@ pub(super) fn build_module_index(
     }
 
     index
+}
+
+fn load_ts_workspace_config(root: &Path, export_following: TsExportFollowing) -> TsWorkspaceConfig {
+    if export_following != TsExportFollowing::WorkspaceOnly {
+        return TsWorkspaceConfig::default();
+    }
+
+    let mut workspace_config = TsWorkspaceConfig::default();
+
+    load_tsconfig_workspace_config(root, &mut workspace_config);
+    load_package_json_workspace_config(root, &mut workspace_config);
+    workspace_config.wildcard_workspace_specifiers.sort();
+    workspace_config.wildcard_workspace_specifiers.dedup();
+
+    workspace_config
+}
+
+fn load_tsconfig_workspace_config(root: &Path, workspace_config: &mut TsWorkspaceConfig) {
+    let config_path = ["tsconfig.json", "jsconfig.json"]
+        .into_iter()
+        .map(|candidate| root.join(candidate))
+        .find(|candidate| candidate.exists());
+    let Some(config_path) = config_path else {
+        return;
+    };
+    let Ok(raw) = fs::read_to_string(config_path) else {
+        return;
+    };
+    let Ok(parsed) = serde_json::from_str::<Value>(&raw) else {
+        return;
+    };
+    let Some(compiler_options) = parsed.get("compilerOptions").and_then(Value::as_object) else {
+        return;
+    };
+
+    let base_url = compiler_options
+        .get("baseUrl")
+        .and_then(Value::as_str)
+        .map(normalize_workspace_target)
+        .filter(|value| !value.is_empty());
+
+    if workspace_config.base_url.is_none() {
+        workspace_config.base_url = base_url.clone();
+    }
+
+    let Some(paths) = compiler_options.get("paths").and_then(Value::as_object) else {
+        return;
+    };
+
+    for (specifier, targets) in paths {
+        let Some(target_values) = targets.as_array() else {
+            continue;
+        };
+        for target in target_values.iter().filter_map(Value::as_str) {
+            let normalized_target = normalize_tsconfig_path_target(target, base_url.as_deref());
+            register_workspace_specifier(workspace_config, specifier, &normalized_target);
+        }
+    }
+}
+
+fn load_package_json_workspace_config(root: &Path, workspace_config: &mut TsWorkspaceConfig) {
+    let package_path = root.join("package.json");
+    let Ok(raw) = fs::read_to_string(package_path) else {
+        return;
+    };
+    let Ok(parsed) = serde_json::from_str::<Value>(&raw) else {
+        return;
+    };
+    let Some(package_name) = parsed.get("name").and_then(Value::as_str) else {
+        return;
+    };
+    let Some(exports) = parsed.get("exports") else {
+        return;
+    };
+
+    collect_package_export_rules(package_name, None, exports, workspace_config);
+}
+
+fn collect_package_export_rules(
+    package_name: &str,
+    export_key: Option<&str>,
+    value: &Value,
+    workspace_config: &mut TsWorkspaceConfig,
+) {
+    match value {
+        Value::String(target) => {
+            let Some(specifier) =
+                export_key.and_then(|key| package_export_specifier(package_name, key))
+            else {
+                return;
+            };
+            register_workspace_specifier(
+                workspace_config,
+                &specifier,
+                &normalize_workspace_target(target),
+            );
+        }
+        Value::Array(values) => {
+            for value in values {
+                collect_package_export_rules(package_name, export_key, value, workspace_config);
+            }
+        }
+        Value::Object(map) => {
+            if export_key.is_none() && map.keys().all(|key| key == "." || key.starts_with("./")) {
+                for (nested_key, nested_value) in map {
+                    collect_package_export_rules(
+                        package_name,
+                        Some(nested_key),
+                        nested_value,
+                        workspace_config,
+                    );
+                }
+            } else {
+                for nested_value in map.values() {
+                    collect_package_export_rules(
+                        package_name,
+                        export_key,
+                        nested_value,
+                        workspace_config,
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn package_export_specifier(package_name: &str, export_key: &str) -> Option<String> {
+    if export_key == "." {
+        return Some(package_name.to_string());
+    }
+
+    export_key
+        .strip_prefix("./")
+        .map(|path| format!("{package_name}/{}", path.trim_start_matches('/')))
+}
+
+fn register_workspace_specifier(
+    workspace_config: &mut TsWorkspaceConfig,
+    specifier: &str,
+    target: &str,
+) {
+    let specifier = specifier.trim();
+    let target = target.trim();
+    if specifier.is_empty() || target.is_empty() {
+        return;
+    }
+
+    let specifier_wildcards = specifier.matches('*').count();
+    let target_wildcards = target.matches('*').count();
+    if specifier_wildcards == 1 && target_wildcards == 1 {
+        let Some((specifier_prefix, specifier_suffix)) = specifier.split_once('*') else {
+            return;
+        };
+        let Some((target_prefix, target_suffix)) = target.split_once('*') else {
+            return;
+        };
+        let alias = TsWorkspaceAlias {
+            specifier_prefix: specifier_prefix.to_string(),
+            specifier_suffix: specifier_suffix.to_string(),
+            target_prefix: target_prefix.to_string(),
+            target_suffix: target_suffix.to_string(),
+        };
+        if !workspace_config
+            .wildcard_workspace_specifiers
+            .contains(&alias)
+        {
+            workspace_config.wildcard_workspace_specifiers.push(alias);
+        }
+        return;
+    }
+    if specifier_wildcards == 0 && target_wildcards == 0 {
+        workspace_config
+            .exact_workspace_specifiers
+            .entry(specifier.to_string())
+            .or_insert_with(|| target.to_string());
+    }
+}
+
+fn normalize_tsconfig_path_target(target: &str, base_url: Option<&str>) -> String {
+    let target = normalize_workspace_target(target);
+    match base_url {
+        Some(base_url) if !base_url.is_empty() => {
+            normalize_workspace_target(&format!("{base_url}/{target}"))
+        }
+        _ => target,
+    }
+}
+
+fn normalize_workspace_target(target: &str) -> String {
+    target
+        .trim()
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .trim_matches('/')
+        .to_string()
 }
 
 pub(super) fn extract(
@@ -132,7 +365,7 @@ fn extract_export_statement(
     };
 
     if let Some(index) = module_index {
-        let followed = follow_relative_reexport_signatures(&statement, rel_path, index);
+        let followed = follow_reexport_signatures(&statement, rel_path, index);
         if !followed.is_empty() {
             return followed;
         }
@@ -235,7 +468,7 @@ fn extract_variable_signatures(node: Node<'_>, source: &str) -> Vec<String> {
     signatures
 }
 
-fn follow_relative_reexport_signatures(
+fn follow_reexport_signatures(
     statement: &str,
     rel_path: &str,
     module_index: &TsModuleIndex,
@@ -243,10 +476,6 @@ fn follow_relative_reexport_signatures(
     let Some((clause, source_specifier)) = parse_reexport_statement(statement) else {
         return Vec::new();
     };
-    if !source_specifier.starts_with("./") && !source_specifier.starts_with("../") {
-        return Vec::new();
-    }
-
     let Some(target_exports) = resolve_ts_module_exports(module_index, rel_path, &source_specifier)
     else {
         return Vec::new();
@@ -319,7 +548,11 @@ fn resolve_ts_module_exports<'a>(
     rel_path: &str,
     source_specifier: &str,
 ) -> Option<&'a BTreeMap<String, String>> {
-    let resolved = resolve_relative_ts_module_specifier(rel_path, source_specifier)?;
+    let resolved = if source_specifier.starts_with("./") || source_specifier.starts_with("../") {
+        resolve_relative_ts_module_specifier(rel_path, source_specifier)?
+    } else {
+        resolve_workspace_ts_module_specifier(module_index, source_specifier)?
+    };
     module_index.exports_by_module.get(&resolved).or_else(|| {
         strip_supported_ts_extension(&resolved)
             .and_then(|key| module_index.exports_by_module.get(key))
@@ -346,6 +579,59 @@ fn resolve_relative_ts_module_specifier(rel_path: &str, source_specifier: &str) 
     }
 
     (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+fn resolve_workspace_ts_module_specifier(
+    module_index: &TsModuleIndex,
+    source_specifier: &str,
+) -> Option<String> {
+    if module_index.export_following != TsExportFollowing::WorkspaceOnly {
+        return None;
+    }
+
+    if let Some(target) = module_index
+        .exact_workspace_specifiers
+        .get(source_specifier)
+    {
+        return Some(target.clone());
+    }
+    if let Some(stripped) = strip_supported_ts_extension(source_specifier) {
+        if let Some(target) = module_index.exact_workspace_specifiers.get(stripped) {
+            return Some(target.clone());
+        }
+    }
+
+    for alias in &module_index.wildcard_workspace_specifiers {
+        if let Some(target) = resolve_workspace_alias(alias, source_specifier) {
+            return Some(target);
+        }
+    }
+    if let Some(stripped) = strip_supported_ts_extension(source_specifier) {
+        for alias in &module_index.wildcard_workspace_specifiers {
+            if let Some(target) = resolve_workspace_alias(alias, stripped) {
+                return Some(target);
+            }
+        }
+    }
+
+    module_index
+        .base_url
+        .as_ref()
+        .map(|base_url| normalize_workspace_target(&format!("{base_url}/{source_specifier}")))
+}
+
+fn resolve_workspace_alias(alias: &TsWorkspaceAlias, source_specifier: &str) -> Option<String> {
+    if !source_specifier.starts_with(&alias.specifier_prefix)
+        || !source_specifier.ends_with(&alias.specifier_suffix)
+    {
+        return None;
+    }
+    let wildcard_value = &source_specifier
+        [alias.specifier_prefix.len()..source_specifier.len() - alias.specifier_suffix.len()];
+    Some(normalize_workspace_target(&format!(
+        "{}{}{}",
+        alias.target_prefix, wildcard_value, alias.target_suffix
+    )))
 }
 
 fn strip_supported_ts_extension(path: &str) -> Option<&str> {

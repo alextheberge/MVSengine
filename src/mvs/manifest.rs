@@ -134,6 +134,7 @@ pub enum TsExportFollowing {
     #[default]
     Off,
     RelativeOnly,
+    WorkspaceOnly,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, Eq, PartialEq)]
@@ -448,6 +449,7 @@ impl TsExportFollowing {
         match self {
             Self::Off => "off",
             Self::RelativeOnly => "relative_only",
+            Self::WorkspaceOnly => "workspace_only",
         }
     }
 }

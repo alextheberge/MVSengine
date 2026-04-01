@@ -212,7 +212,7 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
     let go_package_index =
         adapters::build_go_package_index(&go_package_sources, scan_policy.go_export_following);
     let ts_module_index =
-        adapters::build_ts_module_index(&ts_module_sources, scan_policy.ts_export_following);
+        adapters::build_ts_module_index(&ts_module_sources, scan_policy.ts_export_following, root);
     let python_module_index = adapters::build_python_module_index(
         &python_module_sources,
         scan_policy.python_export_following,
@@ -3057,6 +3057,129 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature == "ts/js:export * from \"./auth\""));
+    }
+
+    #[test]
+    fn ts_export_following_workspace_only_resolves_package_exports_and_tsconfig_paths() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            workspace.path().join("package.json"),
+            r#"
+            {
+              "name": "@demo/sdk",
+              "exports": {
+                "./auth": "./src/auth.ts"
+              }
+            }
+        "#,
+        )
+        .expect("failed to write package.json");
+
+        fs::write(
+            workspace.path().join("tsconfig.json"),
+            r#"
+            {
+              "compilerOptions": {
+                "baseUrl": ".",
+                "paths": {
+                  "@/*": ["src/*"]
+                }
+              }
+            }
+        "#,
+        )
+        .expect("failed to write tsconfig.json");
+
+        fs::write(
+            src.join("auth.ts"),
+            r#"
+            export function login(username: string): string {
+              return username;
+            }
+        "#,
+        )
+        .expect("failed to write auth fixture");
+
+        fs::write(
+            src.join("session.ts"),
+            r#"
+            export interface Session {
+              token: string;
+            }
+        "#,
+        )
+        .expect("failed to write session fixture");
+
+        fs::write(
+            src.join("index.ts"),
+            r#"
+            export { login as authenticate } from "@demo/sdk/auth";
+            export * from "@/session";
+        "#,
+        )
+        .expect("failed to write index fixture");
+
+        let default_report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["src/index.ts".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::RelativeOnly,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(default_report.public_api.iter().any(|entry| {
+            entry.signature == "ts/js:export { login as authenticate } from \"@demo/sdk/auth\""
+        }));
+        assert!(default_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ts/js:export * from \"@/session\""));
+
+        let workspace_report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["src/index.ts".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::WorkspaceOnly,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(workspace_report.public_api.iter().any(
+            |entry| entry.signature == "ts/js:function authenticate(username: string): string"
+        ));
+        assert!(workspace_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ts/js:interface Session"));
+        assert!(!workspace_report.public_api.iter().any(|entry| {
+            entry.signature == "ts/js:export { login as authenticate } from \"@demo/sdk/auth\""
+        }));
+        assert!(!workspace_report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ts/js:export * from \"@/session\""));
     }
 
     #[test]

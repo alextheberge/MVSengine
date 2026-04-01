@@ -560,6 +560,141 @@ fn ts_export_following_persists_and_resolves_relative_barrels() {
 }
 
 #[test]
+fn ts_export_following_workspace_only_persists_and_resolves_workspace_facades() {
+    let temp = TempWorkspace::new();
+    let project_root = temp.path().join("project");
+    fs::create_dir_all(project_root.join("src")).expect("failed to create src");
+
+    fs::write(
+        project_root.join("package.json"),
+        r#"
+        {
+          "name": "@demo/sdk",
+          "exports": {
+            "./auth": "./src/auth.ts"
+          }
+        }
+    "#,
+    )
+    .expect("failed to write package.json");
+
+    fs::write(
+        project_root.join("tsconfig.json"),
+        r#"
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": {
+              "@/*": ["src/*"]
+            }
+          }
+        }
+    "#,
+    )
+    .expect("failed to write tsconfig.json");
+
+    fs::write(
+        project_root.join("src/auth.ts"),
+        r#"
+        export function login(username: string): string {
+          return username;
+        }
+    "#,
+    )
+    .expect("failed to write auth fixture");
+
+    fs::write(
+        project_root.join("src/session.ts"),
+        r#"
+        export interface Session {
+          token: string;
+        }
+    "#,
+    )
+    .expect("failed to write session fixture");
+
+    fs::write(
+        project_root.join("src/index.ts"),
+        r#"
+        export { login as authenticate } from "@demo/sdk/auth";
+        export * from "@/session";
+    "#,
+    )
+    .expect("failed to write barrel fixture");
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "src/index.ts",
+            "--ts-export-following",
+            "workspace-only",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("TS/JS export following"));
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+    assert_eq!(
+        generated["scan_policy"]["ts_export_following"],
+        "workspace_only"
+    );
+
+    let inventory = generated["evidence"]["public_api_inventory"]
+        .as_array()
+        .expect("public api inventory should be an array");
+    assert!(inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ts/js:function authenticate(username: string): string"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ts/js:interface Session"
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ts/js:export { login as authenticate } from \"@demo/sdk/auth\""
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ts/js:export * from \"@/session\""
+    }));
+
+    let mut lint = binary_cmd();
+    lint.args([
+        "lint",
+        "--root",
+        project_root.to_str().expect("non-utf8 path"),
+        "--manifest",
+        manifest_path.to_str().expect("non-utf8 path"),
+    ])
+    .assert()
+    .success()
+    .stdout(contains("TS/JS export following"))
+    .stdout(contains("Lint passed"));
+}
+
+#[test]
 fn go_export_following_package_only_persists_and_expands_package_siblings() {
     let temp = TempWorkspace::new();
     let project_root = temp.path().join("project");

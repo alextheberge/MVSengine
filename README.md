@@ -173,7 +173,7 @@ Member signatures inside class-like scopes are now owner-qualified, and Java/C#/
 - `@mvs-feature(...)` and `@mvs-protocol(...)` are counted only when they appear in real comments
 - block comments such as `/* ... */` are supported for decorator extraction
 - string literals and embedded fixture blobs are ignored during decorator extraction
-- TypeScript/JavaScript public API extraction handles multiline exports, named export clauses, re-exports, and default exports without depending on line-based regex matching; `scan_policy.ts_export_following` or `--ts-export-following` can follow same-workspace relative barrel re-exports so facade files contribute the concrete signatures they export instead of raw `export ... from` statements
+- TypeScript/JavaScript public API extraction handles multiline exports, named export clauses, re-exports, and default exports without depending on line-based regex matching; `scan_policy.ts_export_following` or `--ts-export-following` can follow same-workspace relative barrel re-exports, and `workspace_only` mode also follows same-workspace `package.json` export maps plus `tsconfig.json` or `jsconfig.json` `baseUrl` and `paths` aliases so facade files contribute the concrete signatures they export instead of raw `export ... from` statements
 - Go public API extraction tracks exported `func` declarations, exported methods, exported named types, exported struct fields, exported embedded struct fields, exported interface methods, embedded interface type elements, exported constants, and exported package `var` declarations from syntax trees; `scan_policy.go_export_following` or `--go-export-following` can expand a rooted `.go` facade file to same-package sibling source files while skipping `_test.go` files
 - Rust public API extraction still uses AST-normalized signatures, and `scan_policy.rust_export_following` or `--rust-export-following` can expand a rooted Rust facade such as `src/lib.rs` across same-crate `pub mod` graphs, including nested inline public modules, without pulling in private-module files or `tests`/`examples`/`benches`; direct same-crate `pub use` facades from private modules are also resolved onto the public alias names, including associated inherent methods
 - Python public API extraction tracks public `class` and non-underscore `def` declarations, public `type` aliases, module-level constants such as `API_VERSION` or `__all__`, and public class-level constants such as `Worker.STATUS`, without promoting nested local helpers or private class bodies into the API inventory; when a parseable `__all__` is present it becomes the top-level export boundary, including common alias, unpacking, and `+=` composition patterns built from parseable literals, and explicit import re-exports are stored in canonical forms such as `python:from auth.core import login as authorize`; for same-workspace Python modules, imported `__all__` aliases and `from ... import *` re-exports also resolve when the source module export graph is static and parseable, and `scan_policy.python_export_following` plus `scan_policy.python_module_roots` or `--python-module-root` can pin how aggressively module resolution follows nonstandard repository roots
@@ -197,7 +197,7 @@ You can persist scan policy in `mvs.json` so public API evidence reflects the co
 The `scan_policy` block supports:
 
 - `public_api_roots`: relative file or directory roots that define the public API boundary
-- `ts_export_following`: TypeScript/JavaScript barrel-following mode: `off` (default) or `relative_only`
+- `ts_export_following`: TypeScript/JavaScript barrel-following mode: `off` (default), `relative_only`, or `workspace_only`
 - `go_export_following`: Go package expansion mode: `off` (default) or `package_only`
 - `rust_export_following`: Rust module-following mode: `off` (default) or `public_modules`
 - `ruby_export_following`: Ruby export-shaping mode: `heuristic` (default) or `off`
@@ -216,7 +216,7 @@ Example:
     "public_api_roots": [
       "src/cli.rs"
     ],
-    "ts_export_following": "relative_only",
+    "ts_export_following": "workspace_only",
     "go_export_following": "package_only",
     "rust_export_following": "public_modules",
     "ruby_export_following": "off",
@@ -245,6 +245,7 @@ mvs-manager generate --root . --manifest mvs.json --context cli --exclude-path s
 mvs-manager generate --root . --manifest mvs.json --context cli --public-api-exclude 'rust:const EXIT_*'
 mvs-manager generate --root . --manifest mvs.json --context cli --public-api-include 'src/cli.rs|rust:fn *'
 mvs-manager generate --root . --manifest mvs.json --context cli --public-api-root src/index.ts --ts-export-following relative-only
+mvs-manager generate --root . --manifest mvs.json --context cli --public-api-root src/index.ts --ts-export-following workspace-only
 mvs-manager generate --root . --manifest mvs.json --context cli --public-api-root src/api.go --go-export-following package-only
 mvs-manager generate --root . --manifest mvs.json --context cli --public-api-root src/lib.rs --rust-export-following public-modules
 mvs-manager generate --root . --manifest mvs.json --context cli --ruby-export-following off
@@ -260,7 +261,8 @@ Practical guidance:
 - Generated or vendor-like code under the root: add it to `exclude_paths`
 - Use `public_api_excludes` when a facade file still contains public constants, argument structs, or helper exports that are not real compatibility surface
 - Use `public_api_includes` when you want to pin the contract to a small explicit subset of declarations
-- TypeScript or JavaScript repos with barrel files: set `ts_export_following` to `relative_only` when `public_api_roots` points at `index.ts` or similar facades
+- TypeScript or JavaScript repos with only relative barrel facades: set `ts_export_following` to `relative_only`
+- TypeScript or JavaScript repos with `package.json` export maps or `tsconfig`/`jsconfig` path aliases inside the same workspace: set `ts_export_following` to `workspace_only`
 - Go repos that root the contract on one `.go` file but ship a whole package surface: set `go_export_following` to `package_only` so same-package sibling files count without dragging `_test.go` helpers into `public_api_inventory`
 - Rust repos that root the contract on `src/lib.rs` or another crate facade file: set `rust_export_following` to `public_modules` so same-crate `pub mod` files count with that facade while private-module files stay out
 - Ruby repos that want file-local declarations only: set `ruby_export_following` to `off`
@@ -280,6 +282,12 @@ Pattern rules:
 - If both include and exclude rules match the same declaration, the exclude rule wins
 - The easiest way to author patterns is to copy a signature from `mvs.json.evidence.public_api_inventory` or `lint --format json`
 - Legacy Rust function patterns with duplicated `fn` still match during migration, but regenerated manifests rewrite them to the canonical form
+
+## Roadmap
+
+- Usage details: [docs/USAGE.md](docs/USAGE.md)
+- Release workflow: [docs/RELEASE.md](docs/RELEASE.md)
+- `1.x` readiness roadmap: [docs/TODO_1.0.md](docs/TODO_1.0.md)
 
 ## Machine-Readable Output
 

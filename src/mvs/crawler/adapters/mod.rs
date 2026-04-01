@@ -12,6 +12,8 @@ mod ruby;
 mod swift;
 mod ts_js;
 
+use std::path::Path;
+
 use tree_sitter::Node;
 
 use super::language::SourceLanguage;
@@ -34,8 +36,9 @@ pub(super) struct TreeSitterExtractionContext<'a> {
 pub(super) fn build_ts_module_index(
     files: &[TsModuleSource<'_>],
     export_following: TsExportFollowing,
+    root: &Path,
 ) -> TsModuleIndex {
-    ts_js::build_module_index(files, export_following)
+    ts_js::build_module_index(files, export_following, root)
 }
 
 pub(super) fn build_go_package_index(

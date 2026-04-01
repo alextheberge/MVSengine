@@ -136,7 +136,7 @@ The parser-backed path is organized as per-language adapters, so expanding or ti
 
 For class-like languages, stored member signatures are owner-qualified so collisions between similarly named methods or properties stay visible in `public_api_inventory`. Java, C#, and Kotlin also include declared package or namespace context in both type and member signatures.
 
-- TypeScript/JavaScript: multiline exports, named export clauses, re-exports, and default exports are parser-backed, and `scan_policy.ts_export_following` or `--ts-export-following relative-only` can follow same-workspace relative barrel re-exports
+- TypeScript/JavaScript: multiline exports, named export clauses, re-exports, and default exports are parser-backed; `scan_policy.ts_export_following` or `--ts-export-following relative-only` can follow same-workspace relative barrel re-exports, and `workspace-only` also follows same-workspace `package.json` export maps plus `tsconfig.json` or `jsconfig.json` `baseUrl` and `paths`
 - Go: exported `func` declarations, exported methods, exported named types, exported struct fields, exported embedded struct fields, exported interface methods, embedded interface type elements, exported constants, and exported package `var` declarations are parser-backed, and `scan_policy.go_export_following` or `--go-export-following package-only` can expand a rooted `.go` file to same-package sibling source files while skipping `_test.go` files
 - Rust: AST-normalized `pub fn`, `pub struct`, `pub enum`, `pub trait`, `pub type`, `pub const`, `pub static`, and `pub` impl methods are parser-backed, and `scan_policy.rust_export_following` or `--rust-export-following public-modules` can expand a rooted Rust facade such as `src/lib.rs` across same-crate `pub mod` graphs, including nested inline public modules, while leaving private-module files out; direct same-crate `pub use` facades from private modules are also resolved onto their public alias names, including associated inherent methods
 - Python: public `class` declarations, non-underscore `def` declarations, public `type` aliases, and module-level or class-level constants such as `API_VERSION`, `__all__`, or `Worker.STATUS` are parser-backed without promoting nested local helpers or private class bodies; parseable `__all__` becomes the top-level export boundary, including common alias, unpacking, and `+=` composition patterns built from parseable literals, explicit import re-exports are stored in canonical forms such as `python:from auth.core import login as authorize`, same-workspace `from ... import *` or imported `__all__` aliases resolve when the upstream module export graph is static and parseable, and `scan_policy.python_export_following` plus `scan_policy.python_module_roots` or `--python-module-root` can pin how cross-module facade resolution behaves
@@ -162,7 +162,7 @@ Rust API signatures are AST-normalized before they are persisted. Typical entrie
 `mvs.json.scan_policy` lets you narrow API evidence to real contract boundaries:
 
 - `public_api_roots`: relative file or directory prefixes that define the public API surface
-- `ts_export_following`: TypeScript/JavaScript barrel-following mode: `off` or `relative_only`
+- `ts_export_following`: TypeScript/JavaScript barrel-following mode: `off`, `relative_only`, or `workspace_only`
 - `go_export_following`: Go package expansion mode: `off` or `package_only`
 - `rust_export_following`: Rust module-following mode: `off` or `public_modules`
 - `ruby_export_following`: Ruby export-shaping mode: `heuristic` or `off`
@@ -179,6 +179,7 @@ This is especially useful when:
 - that facade file still contains public constants or argument structs that are not real consumer contract
 - a library has an explicit `public/` or `index.ts` export layer
 - a TypeScript or JavaScript repo uses barrel files and wants `index.ts` to contribute the followed concrete contract instead of raw re-export statements
+- that TypeScript or JavaScript facade also depends on same-workspace `package.json` export maps or `tsconfig` / `jsconfig` path aliases
 - a Go repo treats one `.go` file as the visible entrypoint but wants the whole same-package surface to count without importing `_test.go` helpers
 - a Rust repo treats `src/lib.rs` or a workspace member crate facade as the contract root and wants same-crate `pub mod` files to count without scanning private-module files
 - a Ruby repo wants file-local declarations without `module_function` or `extend self` promotion
@@ -193,6 +194,7 @@ Example:
 
 ```bash
 mvs-manager generate --root . --manifest mvs.json --context server --public-api-root src/index.ts --ts-export-following relative-only
+mvs-manager generate --root . --manifest mvs.json --context server --public-api-root src/index.ts --ts-export-following workspace-only
 mvs-manager generate --root . --manifest mvs.json --context server --public-api-root src/api.go --go-export-following package-only
 mvs-manager generate --root . --manifest mvs.json --context server --public-api-root src/lib.rs --rust-export-following public-modules
 mvs-manager generate --root . --manifest mvs.json --context server --ruby-export-following off
@@ -208,6 +210,8 @@ Pattern matching rules:
 - `src/cli.rs|rust:fn *` matches a relative file path and a signature together
 - exclude rules win over include rules when both match the same declaration
 - legacy Rust function patterns like `rust:fn fn *` still match during migration, but `generate` rewrites inventories to the canonical form
+
+See also: [docs/TODO_1.0.md](TODO_1.0.md) for the release-readiness roadmap and remaining `1.x` blockers.
 
 ## Exit Codes
 

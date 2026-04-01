@@ -58,6 +58,7 @@ impl From<PythonExportFollowingArg> for PythonExportFollowing {
 pub enum TsExportFollowingArg {
     Off,
     RelativeOnly,
+    WorkspaceOnly,
 }
 
 impl From<TsExportFollowingArg> for TsExportFollowing {
@@ -65,6 +66,7 @@ impl From<TsExportFollowingArg> for TsExportFollowing {
         match value {
             TsExportFollowingArg::Off => Self::Off,
             TsExportFollowingArg::RelativeOnly => Self::RelativeOnly,
+            TsExportFollowingArg::WorkspaceOnly => Self::WorkspaceOnly,
         }
     }
 }
