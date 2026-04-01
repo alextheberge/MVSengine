@@ -24,7 +24,6 @@ This document tracks the work required to move `mvs-manager` from the current fe
   - Define which `scan_policy` options are stable in `1.x`.
   - Document compatibility guarantees for canonical signature inventories and JSON command output.
 - Finish the remaining explicit-export boundary gaps.
-  - Rust: chained and indirect `pub use` reexports, not just direct same-crate facade hops.
   - Rust: multi-crate workspace policy so a crate facade can intentionally include or exclude workspace-member crates.
   - TypeScript/JavaScript: `package.json` export-map edge cases, including wildcard exports and multi-condition exports.
   - TypeScript/JavaScript: clarify whether `package.json#imports` and monorepo self-references are in or out for `1.0`.
@@ -64,8 +63,6 @@ This document tracks the work required to move `mvs-manager` from the current fe
 
 ### Rust
 
-- Chained `pub use` graphs across multiple modules.
-- Glob reexports and renamed grouped reexports.
 - Workspace-member crate boundary policy.
 - Stronger handling for facade crates that reexport private internals through multiple layers.
 

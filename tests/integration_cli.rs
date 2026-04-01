@@ -997,6 +997,118 @@ fn rust_export_following_public_modules_resolves_direct_pub_use_facades() {
 }
 
 #[test]
+fn rust_export_following_public_modules_resolves_chained_pub_use_facades() {
+    let temp = TempWorkspace::new();
+    let project_root = temp.path().join("project");
+    fs::create_dir_all(project_root.join("src")).expect("failed to create rust src dir");
+
+    fs::write(
+        project_root.join("src/lib.rs"),
+        r#"
+        pub use facade::{PublicSession as Session, open as connect};
+        pub use facade::*;
+
+        pub mod facade;
+        mod internal;
+    "#,
+    )
+    .expect("failed to write rust root fixture");
+
+    fs::write(
+        project_root.join("src/facade.rs"),
+        r#"
+        pub use crate::internal::{Hidden as PublicSession, start as open};
+    "#,
+    )
+    .expect("failed to write rust facade fixture");
+
+    fs::write(
+        project_root.join("src/internal.rs"),
+        r#"
+        pub struct Hidden;
+
+        impl Hidden {
+            pub fn ping(&self) -> bool { true }
+        }
+
+        pub fn start(target: u32) -> bool { target > 0 }
+    "#,
+    )
+    .expect("failed to write rust internal fixture");
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "src/lib.rs",
+            "--rust-export-following",
+            "public-modules",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Rust export following"));
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+
+    let inventory = generated["evidence"]["public_api_inventory"]
+        .as_array()
+        .expect("public api inventory should be an array");
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "src/lib.rs"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "rust:struct Session"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "src/lib.rs"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "rust:impl-fn Session::ping(&self) -> bool"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "src/lib.rs"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "rust:fn connect(target: u32) -> bool"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "src/lib.rs"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "rust:struct PublicSession"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["file"].as_str().expect("file should be a string") == "src/lib.rs"
+            && entry["signature"]
+                .as_str()
+                .expect("signature should be a string")
+                == "rust:fn open(target: u32) -> bool"
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            .contains("Hidden")
+    }));
+}
+
+#[test]
 fn python_module_roots_persist_and_enable_cross_module_python_exports() {
     let temp = TempWorkspace::new();
     let project_root = temp.path().join("project");

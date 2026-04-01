@@ -59,6 +59,12 @@ struct RustModuleIndex {
     reexported_signatures_by_file: BTreeMap<String, Vec<String>>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+struct RustReexportedSymbol {
+    symbol_path: String,
+    signature: String,
+}
+
 impl RustModuleIndex {
     fn public_module_files_for<'a>(&'a self, rel_path: &str) -> &'a [String] {
         self.public_module_files_by_rel_path
@@ -359,6 +365,35 @@ fn build_rust_module_index(
         }
     }
 
+    for _ in 0..rust_files.len().saturating_mul(2).max(1) {
+        let mut pending = BTreeSet::new();
+        for file in &rust_files {
+            let Ok(parsed) = syn::parse_file(&file.source) else {
+                continue;
+            };
+            let current_module = rust_file_module_path(Path::new(&file.rel));
+            collect_rust_reexported_symbols(
+                &parsed.items,
+                &current_module,
+                true,
+                &symbol_signatures_by_path,
+                &mut pending,
+            );
+        }
+
+        let mut changed = false;
+        for symbol in pending {
+            changed |= insert_rust_symbol_signature(
+                &mut symbol_signatures_by_path,
+                &symbol.symbol_path,
+                symbol.signature,
+            );
+        }
+        if !changed {
+            break;
+        }
+    }
+
     let mut index = RustModuleIndex::default();
     for rel_path in known_rust_files {
         let mut visited = BTreeSet::new();
@@ -558,6 +593,42 @@ fn collect_rust_reexported_signatures(
     }
 }
 
+fn collect_rust_reexported_symbols(
+    items: &[Item],
+    current_module: &[String],
+    current_module_public: bool,
+    symbol_signatures_by_path: &BTreeMap<String, Vec<String>>,
+    pending: &mut BTreeSet<RustReexportedSymbol>,
+) {
+    for item in items {
+        match item {
+            Item::Use(item_use) if current_module_public && is_public(&item_use.vis) => {
+                collect_rust_use_tree_symbols(
+                    &item_use.tree,
+                    &[],
+                    current_module,
+                    symbol_signatures_by_path,
+                    pending,
+                );
+            }
+            Item::Mod(item_mod) if current_module_public => {
+                let mut nested_module = current_module.to_vec();
+                nested_module.push(item_mod.ident.to_string());
+                if let Some((_, nested_items)) = &item_mod.content {
+                    collect_rust_reexported_symbols(
+                        nested_items,
+                        &nested_module,
+                        is_public(&item_mod.vis),
+                        symbol_signatures_by_path,
+                        pending,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn collect_rust_use_tree_signatures(
     tree: &UseTree,
     prefix: &[String],
@@ -628,6 +699,76 @@ fn collect_rust_use_tree_signatures(
     }
 }
 
+fn collect_rust_use_tree_symbols(
+    tree: &UseTree,
+    prefix: &[String],
+    current_module: &[String],
+    symbol_signatures_by_path: &BTreeMap<String, Vec<String>>,
+    pending: &mut BTreeSet<RustReexportedSymbol>,
+) {
+    match tree {
+        UseTree::Path(path) => {
+            let mut next = prefix.to_vec();
+            next.push(path.ident.to_string());
+            collect_rust_use_tree_symbols(
+                &path.tree,
+                &next,
+                current_module,
+                symbol_signatures_by_path,
+                pending,
+            );
+        }
+        UseTree::Name(name) => {
+            if name.ident == "self" {
+                return;
+            }
+            let mut source = prefix.to_vec();
+            source.push(name.ident.to_string());
+            resolve_rust_reexported_symbol(
+                &source,
+                None,
+                false,
+                current_module,
+                symbol_signatures_by_path,
+                pending,
+            );
+        }
+        UseTree::Rename(rename) => {
+            let mut source = prefix.to_vec();
+            source.push(rename.ident.to_string());
+            resolve_rust_reexported_symbol(
+                &source,
+                Some(rename.rename.to_string()),
+                false,
+                current_module,
+                symbol_signatures_by_path,
+                pending,
+            );
+        }
+        UseTree::Glob(_) => {
+            resolve_rust_reexported_symbol(
+                prefix,
+                None,
+                true,
+                current_module,
+                symbol_signatures_by_path,
+                pending,
+            );
+        }
+        UseTree::Group(group) => {
+            for item in &group.items {
+                collect_rust_use_tree_symbols(
+                    item,
+                    prefix,
+                    current_module,
+                    symbol_signatures_by_path,
+                    pending,
+                );
+            }
+        }
+    }
+}
+
 fn resolve_rust_reexport_target(
     source: &[String],
     alias: Option<String>,
@@ -679,6 +820,52 @@ fn resolve_rust_reexport_target(
     emit_rust_reexported_signatures(&source_path, &export_path, symbol_signatures, signatures);
 }
 
+fn resolve_rust_reexported_symbol(
+    source: &[String],
+    alias: Option<String>,
+    is_glob: bool,
+    current_module: &[String],
+    symbol_signatures_by_path: &BTreeMap<String, Vec<String>>,
+    pending: &mut BTreeSet<RustReexportedSymbol>,
+) {
+    let Some(resolved_source) = resolve_rust_path(current_module, source) else {
+        return;
+    };
+    let source_path = resolved_source.join("::");
+
+    if is_glob {
+        let prefix = format!("{source_path}::");
+        for (symbol_path, symbol_signatures) in symbol_signatures_by_path {
+            if !(symbol_path == &source_path || symbol_path.starts_with(&prefix)) {
+                continue;
+            }
+            let remainder = symbol_path
+                .strip_prefix(&prefix)
+                .or_else(|| symbol_path.strip_prefix(&source_path))
+                .unwrap_or(symbol_path)
+                .trim_start_matches("::");
+            if remainder.is_empty() {
+                continue;
+            }
+            let export_path = join_module_path(current_module, remainder);
+            queue_rust_reexported_symbols(symbol_path, &export_path, symbol_signatures, pending);
+        }
+        return;
+    }
+
+    let export_name = alias.unwrap_or_else(|| {
+        resolved_source
+            .last()
+            .cloned()
+            .unwrap_or_else(|| source_path.clone())
+    });
+    let export_path = join_module_path(current_module, &export_name);
+    let Some(symbol_signatures) = symbol_signatures_by_path.get(&source_path) else {
+        return;
+    };
+    queue_rust_reexported_symbols(&source_path, &export_path, symbol_signatures, pending);
+}
+
 fn emit_rust_reexported_signatures(
     source_path: &str,
     export_path: &str,
@@ -690,15 +877,33 @@ fn emit_rust_reexported_signatures(
     }
 }
 
+fn queue_rust_reexported_symbols(
+    source_path: &str,
+    export_path: &str,
+    symbol_signatures: &[String],
+    pending: &mut BTreeSet<RustReexportedSymbol>,
+) {
+    for signature in symbol_signatures {
+        pending.insert(RustReexportedSymbol {
+            symbol_path: export_path.to_string(),
+            signature: signature.replacen(source_path, export_path, 1),
+        });
+    }
+}
+
 fn insert_rust_symbol_signature(
     symbol_signatures_by_path: &mut BTreeMap<String, Vec<String>>,
     symbol_path: &str,
     signature: String,
-) {
-    symbol_signatures_by_path
+) -> bool {
+    let signatures = symbol_signatures_by_path
         .entry(symbol_path.to_string())
-        .or_default()
-        .push(signature);
+        .or_default();
+    if signatures.contains(&signature) {
+        return false;
+    }
+    signatures.push(signature);
+    true
 }
 
 fn collect_rust_public_module_edges(
@@ -2841,6 +3046,87 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("Other")));
+    }
+
+    #[test]
+    fn rust_export_following_public_modules_resolves_chained_pub_use_aliases_and_globs() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("lib.rs"),
+            r#"
+            pub use facade::{PublicSession as Session, open as connect};
+            pub use facade::*;
+
+            pub mod facade;
+            mod internal;
+        "#,
+        )
+        .expect("failed to write rust root fixture");
+
+        fs::write(
+            src.join("facade.rs"),
+            r#"
+            pub use crate::internal::{Hidden as PublicSession, start as open};
+        "#,
+        )
+        .expect("failed to write rust facade fixture");
+
+        fs::write(
+            src.join("internal.rs"),
+            r#"
+            pub struct Hidden;
+
+            impl Hidden {
+                pub fn ping(&self) -> bool { true }
+            }
+
+            pub fn start(target: u32) -> bool { target > 0 }
+        "#,
+        )
+        .expect("failed to write rust internal fixture");
+
+        let report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["src/lib.rs".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::Off,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::PublicModules,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.file == "src/lib.rs" && entry.signature == "rust:struct Session"));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.file == "src/lib.rs"
+                && entry.signature == "rust:impl-fn Session::ping(&self) -> bool"
+        }));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.file == "src/lib.rs" && entry.signature == "rust:fn connect(target: u32) -> bool"
+        }));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.file == "src/lib.rs" && entry.signature == "rust:struct PublicSession"
+        }));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.file == "src/lib.rs" && entry.signature == "rust:fn open(target: u32) -> bool"
+        }));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("Hidden")));
     }
 
     #[test]
