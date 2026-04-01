@@ -2270,7 +2270,7 @@ mod tests {
     }
 
     #[test]
-    fn tree_sitter_captures_java_public_types_and_methods() {
+    fn tree_sitter_captures_java_public_types_methods_fields_and_constants() {
         let workspace = TempWorkspace::new();
         let src = workspace.path().join("src");
         fs::create_dir_all(&src).expect("failed to create src");
@@ -2284,9 +2284,17 @@ mod tests {
             public record Session(String token) {}
 
             public class AuthApi {
+                public static final String VERSION = "v1";
+                public String status = "ready";
+
                 @Deprecated
                 public String login(String username) {
                     return username;
+                }
+
+                public interface Contract {
+                    String sync(String username);
+                    String STATE = "ready";
                 }
 
                 void hidden() {}
@@ -2315,8 +2323,24 @@ mod tests {
         assert!(report
             .public_api
             .iter()
+            .any(|entry| entry.signature == "java:type public interface Contract"));
+        assert!(report.public_api.iter().any(
+            |entry| entry.signature == "java:field public static final String AuthApi.VERSION"
+        ));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "java:field public String AuthApi.status"));
+        assert!(report
+            .public_api
+            .iter()
             .any(|entry| entry.signature
                 == "java:method public String AuthApi.login(String username)"));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature == "java:method public String AuthApi.Contract.sync(String username)"
+        }));
+        assert!(report.public_api.iter().any(|entry| entry.signature
+            == "java:const public static final String AuthApi.Contract.STATE"));
         assert!(!report
             .public_api
             .iter()
@@ -2328,7 +2352,7 @@ mod tests {
     }
 
     #[test]
-    fn tree_sitter_captures_kotlin_public_declarations() {
+    fn tree_sitter_captures_kotlin_public_declarations_properties_and_constants() {
         let workspace = TempWorkspace::new();
         let src = workspace.path().join("src");
         fs::create_dir_all(&src).expect("failed to create src");
@@ -2336,14 +2360,25 @@ mod tests {
         fs::write(
             src.join("api.kt"),
             r#"
+            const val API_VERSION: String = "v1"
+
             public class AuthApi {
+                val token: String = "ready"
+                var status: String = "active"
+
                 fun login(username: String): String {
                     return username
+                }
+
+                interface Contract {
+                    val sessionToken: String
                 }
 
                 private fun hidden(): String {
                     return "hidden"
                 }
+
+                private val hiddenToken: String = "hidden"
 
                 data class Session(val token: String)
             }
@@ -2354,7 +2389,9 @@ mod tests {
                 return token
             }
 
-            object Defaults
+            object Defaults {
+                val timeout: Int = 5
+            }
         "#,
         )
         .expect("failed to write kotlin fixture");
@@ -2369,7 +2406,27 @@ mod tests {
         assert!(report
             .public_api
             .iter()
+            .any(|entry| entry.signature == "kotlin:const val API_VERSION: String"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "kotlin:val AuthApi.token: String"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "kotlin:var AuthApi.status: String"));
+        assert!(report
+            .public_api
+            .iter()
             .any(|entry| entry.signature == "kotlin:fun AuthApi.login(username: String): String"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "kotlin:interface Contract"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "kotlin:val AuthApi.Contract.sessionToken: String"));
         assert!(report
             .public_api
             .iter()
@@ -2382,6 +2439,10 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature == "kotlin:object Defaults"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "kotlin:val Defaults.timeout: Int"));
         assert!(!report
             .public_api
             .iter()
@@ -2393,7 +2454,7 @@ mod tests {
     }
 
     #[test]
-    fn tree_sitter_captures_csharp_public_types_and_methods_without_attributes() {
+    fn tree_sitter_captures_csharp_public_types_methods_fields_and_properties_without_attributes() {
         let workspace = TempWorkspace::new();
         let src = workspace.path().join("src");
         fs::create_dir_all(&src).expect("failed to create src");
@@ -2407,14 +2468,25 @@ mod tests {
             public record Session(string Token);
 
             public class AuthApi {
+                public static readonly string Version = "v1";
+                public const string STATUS_READY = "ready";
+                public string DisplayName { get; private set; }
+
                 [Obsolete]
                 public static string Login(string username) {
                     return username;
                 }
 
+                public interface Contract {
+                    string Sync(string username);
+                    string State { get; }
+                }
+
                 private static string Hidden(string username) {
                     return username;
                 }
+
+                private string HiddenName { get; set; }
 
                 public struct Result { }
             }
@@ -2436,9 +2508,29 @@ mod tests {
         assert!(report
             .public_api
             .iter()
+            .any(|entry| entry.signature == "csharp:type public interface Contract"));
+        assert!(report
+            .public_api
+            .iter()
             .any(|entry| entry.signature == "csharp:type public struct Result"));
         assert!(report.public_api.iter().any(|entry| {
+            entry.signature == "csharp:field public static readonly string AuthApi.Version"
+        }));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "csharp:const public string AuthApi.STATUS_READY"));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature == "csharp:property public string AuthApi.DisplayName { get }"
+        }));
+        assert!(report.public_api.iter().any(|entry| {
             entry.signature == "csharp:method public static string AuthApi.Login(string username)"
+        }));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature == "csharp:method public string AuthApi.Contract.Sync(string username)"
+        }));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature == "csharp:property public string AuthApi.Contract.State { get }"
         }));
         assert!(!report
             .public_api
@@ -3045,8 +3137,14 @@ mod tests {
                 // @mvs-feature("java_bridge")
                 // @mvs-protocol("java-api-v1")
                 public class AuthApi {
+                    public static final String VERSION = "v1";
+
                     public String login(String username) {
                         return username;
+                    }
+
+                    public interface Contract {
+                        String sync(String username);
                     }
 
                     private String hidden(String username) {
@@ -3058,7 +3156,10 @@ mod tests {
                 expected_protocol: "java-api-v1",
                 expected_public_api: &[
                     "java:type public class AuthApi",
+                    "java:field public static final String AuthApi.VERSION",
                     "java:method public String AuthApi.login(String username)",
+                    "java:type public interface Contract",
+                    "java:method public String AuthApi.Contract.sync(String username)",
                 ],
                 rejected_public_api_fragments: &["hidden"],
             },
@@ -3072,7 +3173,11 @@ mod tests {
 
                 // @mvs-feature("kotlin_bridge")
                 // @mvs-protocol("kotlin-api-v1")
+                const val API_VERSION: String = "v1"
+
                 class AuthApi {
+                    val token: String = "ready"
+
                     fun login(username: String): String {
                         return username
                     }
@@ -3085,7 +3190,9 @@ mod tests {
                 expected_feature: "kotlin_bridge",
                 expected_protocol: "kotlin-api-v1",
                 expected_public_api: &[
+                    "kotlin:const val API_VERSION: String",
                     "kotlin:class AuthApi",
+                    "kotlin:val AuthApi.token: String",
                     "kotlin:fun AuthApi.login(username: String): String",
                 ],
                 rejected_public_api_fragments: &["hidden"],
@@ -3101,6 +3208,9 @@ mod tests {
                 // @mvs-feature("csharp_bridge")
                 // @mvs-protocol("csharp-api-v1")
                 public class AuthApi {
+                    public static readonly string Version = "v1";
+                    public string DisplayName { get; private set; }
+
                     public static string Login(string username) {
                         return username;
                     }
@@ -3114,6 +3224,8 @@ mod tests {
                 expected_protocol: "csharp-api-v1",
                 expected_public_api: &[
                     "csharp:type public class AuthApi",
+                    "csharp:field public static readonly string AuthApi.Version",
+                    "csharp:property public string AuthApi.DisplayName { get }",
                     "csharp:method public static string AuthApi.Login(string username)",
                 ],
                 rejected_public_api_fragments: &["Hidden"],
