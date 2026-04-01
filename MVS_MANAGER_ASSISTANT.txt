@@ -42,12 +42,12 @@ Work instructions:
    - `mvs-manager` also hashes public/exported API signatures.
    - Rust signatures are canonicalized from the AST, so inventories and filters use forms like `rust:fn run() -> i32` or `rust:impl-fn HostAdapter::connect(&self, target: &str) -> bool`.
    - TypeScript/JavaScript scanning is parser-backed, so named exports, re-exports, multiline exports, and default exports are part of the contract surface even when line-based regexes would miss them.
-   - Go scanning is parser-backed and tracks exported functions and exported methods.
-   - Python scanning is parser-backed and tracks non-underscore `def` declarations, including decorated class methods, without promoting nested local helpers.
+   - Go scanning is parser-backed and tracks exported functions, exported methods, exported named types, exported struct fields, exported embedded struct fields, exported interface methods, embedded interface type elements, exported constants, and exported package `var` declarations.
+   - Python scanning is parser-backed and tracks public `class` declarations, non-underscore `def` declarations, public `type` aliases, and module-level or class-level constants such as `API_VERSION`, `__all__`, or `Worker.STATUS` without promoting nested local helpers or private class bodies.
    - Java and C# scanning are parser-backed and track public types and methods while ignoring leading annotations or attributes in the stored signature.
    - Kotlin scanning is parser-backed and tracks public or default-visible `class`, `interface`, `object`, and `fun` declarations while skipping `private`, `protected`, and `internal`.
    - PHP scanning is parser-backed and tracks top-level functions and constants, classes, interfaces, traits, enums, public properties, public or interface constants, and public or interface methods while treating `#` comments as decorators and ignoring attributes in stored signatures.
-   - Ruby scanning is parser-backed and tracks `class`, `module`, public `def`, singleton methods, and `class << self` method bodies while ignoring heredoc fixtures and non-public methods.
+   - Ruby scanning is parser-backed and tracks `class`, `module`, public `def`, singleton methods, `class << self` method bodies, public `attr_reader`/`attr_writer`/`attr_accessor` macros, and namespace constants while ignoring heredoc fixtures; `private_constant` removes hidden constants, and non-public methods stay out.
    - Lua scanning is parser-backed and tracks global `function` declarations and returned module-table exports while treating `--` and long-bracket comments as real decorator locations.
    - Swift scanning is parser-backed and tracks `public` and `open` types, functions, properties, and inherited protocol requirements.
    - Luau scanning is parser-backed and tracks global `function` declarations, `export type` definitions, and returned module-table exports.
@@ -55,12 +55,12 @@ Work instructions:
    - Examples:
      - TypeScript/JavaScript: `export function`, `export class`, `export interface`, `export type`, `export enum`, `export const`
      - Rust: `pub fn`, `pub struct`, `pub enum`, `pub trait`, `pub type`, `pub const`, `pub static`, and `pub` impl methods
-     - Go: exported `func` names and exported methods start with an uppercase letter
-     - Python: non-underscore `def` functions and decorated class methods are scanned
+     - Go: exported `func` names and exported methods start with an uppercase letter; exported types, exported struct fields, exported embedded struct fields, exported interface methods, embedded interface type elements, exported constants, and exported package `var` declarations are also scanned
+     - Python: public `class` declarations, non-underscore `def` functions, decorated class methods, public `type` aliases, and module-level or class-level constants such as `API_VERSION`, `__all__`, and `Worker.STATUS` are scanned
      - Java/C#: public types and public methods are scanned
      - Kotlin: public or default-visible `class`, `interface`, `object`, and `fun` declarations are scanned
      - PHP: top-level `function` and `const`, `class`, `interface`, `trait`, `enum`, public properties, and public or interface constants and methods are scanned
-     - Ruby: `class`, `module`, public `def`, singleton methods, and `class << self` method bodies are scanned
+     - Ruby: `class`, `module`, public `def`, singleton methods, `class << self` method bodies, public `attr_reader`/`attr_writer`/`attr_accessor` macros, and namespace constants are scanned, while `private_constant` hides constants from the public API inventory
      - Lua: global `function` declarations and returned module-table exports are scanned
      - Swift: `public` or `open` `struct`, `class`, `enum`, `protocol`, `extension`, `func`, `var`, and inherited protocol requirement declarations are scanned
      - Luau: global `function` declarations, `export type` definitions, and returned module-table exports are scanned

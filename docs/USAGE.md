@@ -135,12 +135,12 @@ Public API extraction is syntax-aware across all supported languages:
 The parser-backed path is organized as per-language adapters, so expanding or tightening one language does not require editing the full crawler.
 
 - TypeScript/JavaScript: multiline exports, named export clauses, re-exports, and default exports are parser-backed
-- Go: exported `func` declarations and exported methods are parser-backed
-- Python: non-underscore `def` declarations, including decorated class methods, are parser-backed without promoting nested local helpers
+- Go: exported `func` declarations, exported methods, exported named types, exported struct fields, exported embedded struct fields, exported interface methods, embedded interface type elements, exported constants, and exported package `var` declarations are parser-backed
+- Python: public `class` declarations, non-underscore `def` declarations, public `type` aliases, and module-level or class-level constants such as `API_VERSION`, `__all__`, or `Worker.STATUS` are parser-backed without promoting nested local helpers or private class bodies
 - Java and C#: public type and method declarations are parser-backed, and stored signatures drop leading annotations or attributes
 - Kotlin: public or default-visible `class`, `interface`, `object`, and `fun` declarations are parser-backed, while `private`, `protected`, and `internal` declarations are skipped
 - PHP: top-level functions and constants, classes, interfaces, traits, enums, public properties, public or interface constants, and public or interface methods are parser-backed; `#` comments count for decorators, while attributes are ignored in stored signatures
-- Ruby: `class`, `module`, public `def`, singleton methods, and `class << self` method bodies are parser-backed; `#` comments count for decorators, while heredocs and non-public methods are ignored
+- Ruby: `class`, `module`, public `def`, singleton methods, `class << self` method bodies, public `attr_reader`/`attr_writer`/`attr_accessor` macros, and namespace constants are parser-backed; `private_constant` removes hidden constants, `#` comments count for decorators, and heredocs plus non-public methods are ignored
 - Lua: global `function` declarations and returned module-table exports are parser-backed, and `--` plus long-bracket comments are recognized during decorator scans
 - Swift: `public` and `open` types, functions, properties, and inherited protocol requirements are parser-backed, and multiline Swift string literals are masked during decorator scans
 - Luau: global `function` declarations, `export type` definitions, and returned module-table exports are parser-backed, and `--` plus long-bracket comments are recognized during decorator scans

@@ -296,6 +296,12 @@ fn named_children(node: Node<'_>) -> Vec<Node<'_>> {
     children
 }
 
+fn children_by_field_name<'a>(node: Node<'a>, field_name: &str) -> Vec<Node<'a>> {
+    let mut cursor = node.walk();
+    node.children_by_field_name(field_name, &mut cursor)
+        .collect()
+}
+
 fn is_exported_tree_sitter_name(node: Node<'_>, source: &str) -> bool {
     node.child_by_field_name("name")
         .and_then(|child| node_text(child, source))
@@ -2053,6 +2059,28 @@ mod tests {
             package demo
 
             type service struct{}
+            type Transport struct{}
+            type Reader interface {
+                Read(p []byte) (int, error)
+            }
+            type Session struct {
+                *Transport
+                Token string
+                hidden string
+            }
+
+            type Contract interface {
+                Reader
+                Sync(token string) error
+                hidden() error
+            }
+
+            type SessionID = string
+
+            const Version string = "v1"
+            const internalVersion = "v0"
+            var DefaultTimeout int = 30
+            var internalClient = service{}
 
             func ExportedLogin(username string) string {
                 return username
@@ -2082,6 +2110,42 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature == "go:func(s *service) Connect(target string) error"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "go:type Session struct"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "go:embed Session *Transport"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "go:field Session.Token string"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "go:type Contract interface"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "go:interface-type Contract Reader"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "go:interface Contract.Sync(token string) error"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "go:type SessionID = string"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "go:const Version string"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "go:var DefaultTimeout int"));
         assert!(!report
             .public_api
             .iter()
@@ -2090,6 +2154,14 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("hidden")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("internalVersion")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("internalClient")));
     }
 
     #[test]
@@ -2101,7 +2173,16 @@ mod tests {
         fs::write(
             src.join("api.py"),
             r#"
+            API_VERSION: str = "v1"
+            __all__ = ("login", "Worker")
+            type SessionToken = str
+            type _InternalToken = str
+            _INTERNAL = "hidden"
+
             class Worker:
+                STATUS: str = "ready"
+                _HIDDEN_STATUS = "hidden"
+
                 @staticmethod
                 def run_job(name: str) -> str:
                     def helper() -> str:
@@ -2110,6 +2191,12 @@ mod tests {
 
                 def _hidden(self) -> str:
                     return "hidden"
+
+            class _InternalWorker:
+                STATUS: str = "hidden"
+
+                def run_job(name: str) -> str:
+                    return name
 
             @decorator
             def login(username: str) -> str:
@@ -2124,6 +2211,26 @@ mod tests {
         let report =
             crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
 
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:const API_VERSION: str"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:const __all__"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:type SessionToken = str"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:class Worker"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "python:const Worker.STATUS: str"));
         assert!(report
             .public_api
             .iter()
@@ -2144,6 +2251,22 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("_internal")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("_InternalWorker")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("_InternalToken")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("_INTERNAL")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("_HIDDEN_STATUS")));
     }
 
     #[test]
@@ -2528,7 +2651,18 @@ mod tests {
             # @mvs-feature("ruby_bridge")
             # @mvs-protocol("ruby-api-v1")
             module Demo
+              VERSION = "v1"
+              SECRET = "hidden"
+              private_constant :SECRET
+
               class AuthApi < BaseApi
+                TIMEOUT = 30
+                PRIVATE_TOKEN = "hidden"
+                private_constant :PRIVATE_TOKEN
+
+                attr_reader :token, :status
+                attr_accessor :mode
+
                 def login(username)
                   username
                 end
@@ -2568,7 +2702,27 @@ mod tests {
         assert!(report
             .public_api
             .iter()
+            .any(|entry| entry.signature == "ruby:const Demo::VERSION"));
+        assert!(report
+            .public_api
+            .iter()
             .any(|entry| entry.signature == "ruby:class AuthApi < BaseApi"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:const Demo::AuthApi::TIMEOUT"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:attr_reader token"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:attr_reader status"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ruby:attr_accessor mode"));
         assert!(report
             .public_api
             .iter()
@@ -2585,6 +2739,14 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("hidden")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("Demo::SECRET")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("PRIVATE_TOKEN")));
     }
 
     #[test]
@@ -2804,6 +2966,17 @@ mod tests {
 
                 // @mvs-feature("go_bridge")
                 // @mvs-protocol("go-api-v1")
+                type Transport struct{}
+
+                type Session struct {
+                    *Transport
+                    Token string
+                    hidden string
+                }
+
+                const Version string = "v1"
+                var DefaultTimeout int = 30
+
                 func Connect(target string) error {
                     return nil
                 }
@@ -2814,7 +2987,14 @@ mod tests {
             "#,
                 expected_feature: "go_bridge",
                 expected_protocol: "go-api-v1",
-                expected_public_api: &["go:func Connect(target string) error"],
+                expected_public_api: &[
+                    "go:type Session struct",
+                    "go:embed Session *Transport",
+                    "go:field Session.Token string",
+                    "go:const Version string",
+                    "go:var DefaultTimeout int",
+                    "go:func Connect(target string) error",
+                ],
                 rejected_public_api_fragments: &["hidden"],
             },
             ParserAdapterCase {
@@ -2827,6 +3007,13 @@ mod tests {
 
                 # @mvs-feature("python_bridge")
                 # @mvs-protocol("python-api-v1")
+                API_VERSION: str = "v1"
+                type SessionToken = str
+
+                class Worker:
+                    STATUS: str = "ready"
+                    pass
+
                 def login(username: str) -> str:
                     return username
 
@@ -2835,7 +3022,13 @@ mod tests {
             "#,
                 expected_feature: "python_bridge",
                 expected_protocol: "python-api-v1",
-                expected_public_api: &["python:def login(username: str) -> str"],
+                expected_public_api: &[
+                    "python:const API_VERSION: str",
+                    "python:type SessionToken = str",
+                    "python:class Worker",
+                    "python:const Worker.STATUS: str",
+                    "python:def login(username: str) -> str",
+                ],
                 rejected_public_api_fragments: &["_hidden"],
             },
             ParserAdapterCase {
@@ -2957,22 +3150,36 @@ mod tests {
 
                 # @mvs-feature("ruby_bridge")
                 # @mvs-protocol("ruby-api-v1")
-                class AuthApi
-                  def login(username)
-                    username
-                  end
+                module Demo
+                  VERSION = "v1"
+                  SECRET = "hidden"
+                  private_constant :SECRET
 
-                  private
+                  class AuthApi
+                    attr_reader :token
 
-                  def hidden(secret)
-                    secret
+                    def login(username)
+                      username
+                    end
+
+                    private
+
+                    def hidden(secret)
+                      secret
+                    end
                   end
                 end
             "##,
                 expected_feature: "ruby_bridge",
                 expected_protocol: "ruby-api-v1",
-                expected_public_api: &["ruby:class AuthApi", "ruby:def login(username)"],
-                rejected_public_api_fragments: &["hidden"],
+                expected_public_api: &[
+                    "ruby:module Demo",
+                    "ruby:const Demo::VERSION",
+                    "ruby:class AuthApi",
+                    "ruby:attr_reader token",
+                    "ruby:def login(username)",
+                ],
+                rejected_public_api_fragments: &["hidden", "SECRET"],
             },
             ParserAdapterCase {
                 file_name: "Api.swift",
