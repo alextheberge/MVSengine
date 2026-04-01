@@ -14,7 +14,7 @@ use crate::mvs::manifest::TsExportFollowing;
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub(crate) struct TsModuleIndex {
     exports_by_module: BTreeMap<String, BTreeMap<String, String>>,
-    exact_workspace_specifiers: BTreeMap<String, String>,
+    exact_workspace_specifiers: BTreeMap<String, Vec<String>>,
     wildcard_workspace_specifiers: Vec<TsWorkspaceAlias>,
     base_url: Option<String>,
     export_following: TsExportFollowing,
@@ -28,7 +28,7 @@ pub(crate) struct TsModuleSource<'a> {
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 struct TsWorkspaceConfig {
-    exact_workspace_specifiers: BTreeMap<String, String>,
+    exact_workspace_specifiers: BTreeMap<String, Vec<String>>,
     wildcard_workspace_specifiers: Vec<TsWorkspaceAlias>,
     base_url: Option<String>,
 }
@@ -40,6 +40,10 @@ struct TsWorkspaceAlias {
     target_prefix: String,
     target_suffix: String,
 }
+
+const TS_EXPORT_CONDITION_PRIORITY: &[&str] = &[
+    "types", "import", "module", "browser", "node", "default", "require",
+];
 
 impl TsModuleIndex {
     fn with_workspace_config(
@@ -115,8 +119,6 @@ fn load_ts_workspace_config(root: &Path, export_following: TsExportFollowing) ->
 
     load_tsconfig_workspace_config(root, &mut workspace_config);
     load_package_json_workspace_config(root, &mut workspace_config);
-    workspace_config.wildcard_workspace_specifiers.sort();
-    workspace_config.wildcard_workspace_specifiers.dedup();
 
     workspace_config
 }
@@ -207,8 +209,17 @@ fn collect_package_export_rules(
             }
         }
         Value::Object(map) => {
-            if export_key.is_none() && map.keys().all(|key| key == "." || key.starts_with("./")) {
-                for (nested_key, nested_value) in map {
+            let subpath_keys: Vec<&str> = map
+                .keys()
+                .map(String::as_str)
+                .filter(|key| *key == "." || key.starts_with("./"))
+                .collect();
+
+            if export_key.is_none() && !subpath_keys.is_empty() {
+                for nested_key in &subpath_keys {
+                    let Some(nested_value) = map.get(*nested_key) else {
+                        continue;
+                    };
                     collect_package_export_rules(
                         package_name,
                         Some(nested_key),
@@ -216,18 +227,49 @@ fn collect_package_export_rules(
                         workspace_config,
                     );
                 }
-            } else {
-                for nested_value in map.values() {
-                    collect_package_export_rules(
-                        package_name,
-                        export_key,
-                        nested_value,
-                        workspace_config,
-                    );
+                if subpath_keys.len() == map.len() {
+                    return;
                 }
             }
+
+            collect_package_condition_rules(
+                package_name,
+                export_key.or(Some(".")),
+                map,
+                &subpath_keys,
+                workspace_config,
+            );
         }
         _ => {}
+    }
+}
+
+fn collect_package_condition_rules(
+    package_name: &str,
+    export_key: Option<&str>,
+    map: &serde_json::Map<String, Value>,
+    subpath_keys: &[&str],
+    workspace_config: &mut TsWorkspaceConfig,
+) {
+    for condition in TS_EXPORT_CONDITION_PRIORITY {
+        let Some(value) = map.get(*condition) else {
+            continue;
+        };
+        collect_package_export_rules(package_name, export_key, value, workspace_config);
+    }
+
+    let mut remaining_keys: Vec<&str> = map
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !subpath_keys.contains(key) && !TS_EXPORT_CONDITION_PRIORITY.contains(key))
+        .collect();
+    remaining_keys.sort();
+
+    for key in remaining_keys {
+        let Some(value) = map.get(key) else {
+            continue;
+        };
+        collect_package_export_rules(package_name, export_key, value, workspace_config);
     }
 }
 
@@ -276,10 +318,13 @@ fn register_workspace_specifier(
         return;
     }
     if specifier_wildcards == 0 && target_wildcards == 0 {
-        workspace_config
+        let targets = workspace_config
             .exact_workspace_specifiers
             .entry(specifier.to_string())
-            .or_insert_with(|| target.to_string());
+            .or_default();
+        if !targets.iter().any(|candidate| candidate == target) {
+            targets.push(target.to_string());
+        }
     }
 }
 
@@ -589,35 +634,54 @@ fn resolve_workspace_ts_module_specifier(
         return None;
     }
 
-    if let Some(target) = module_index
+    if let Some(targets) = module_index
         .exact_workspace_specifiers
         .get(source_specifier)
     {
-        return Some(target.clone());
+        return resolve_workspace_target_candidates(
+            module_index,
+            targets.iter().map(String::as_str),
+        );
     }
     if let Some(stripped) = strip_supported_ts_extension(source_specifier) {
-        if let Some(target) = module_index.exact_workspace_specifiers.get(stripped) {
-            return Some(target.clone());
+        if let Some(targets) = module_index.exact_workspace_specifiers.get(stripped) {
+            return resolve_workspace_target_candidates(
+                module_index,
+                targets.iter().map(String::as_str),
+            );
         }
     }
 
+    let mut wildcard_targets = Vec::new();
     for alias in &module_index.wildcard_workspace_specifiers {
         if let Some(target) = resolve_workspace_alias(alias, source_specifier) {
-            return Some(target);
+            wildcard_targets.push(target);
         }
     }
     if let Some(stripped) = strip_supported_ts_extension(source_specifier) {
         for alias in &module_index.wildcard_workspace_specifiers {
             if let Some(target) = resolve_workspace_alias(alias, stripped) {
-                return Some(target);
+                wildcard_targets.push(target);
             }
         }
     }
+    if !wildcard_targets.is_empty() {
+        return resolve_workspace_target_candidates(
+            module_index,
+            wildcard_targets.iter().map(String::as_str),
+        );
+    }
 
-    module_index
-        .base_url
-        .as_ref()
-        .map(|base_url| normalize_workspace_target(&format!("{base_url}/{source_specifier}")))
+    module_index.base_url.as_ref().and_then(|base_url| {
+        resolve_workspace_target_candidates(
+            module_index,
+            [normalize_workspace_target(&format!(
+                "{base_url}/{source_specifier}"
+            ))]
+            .iter()
+            .map(String::as_str),
+        )
+    })
 }
 
 fn resolve_workspace_alias(alias: &TsWorkspaceAlias, source_specifier: &str) -> Option<String> {
@@ -632,6 +696,29 @@ fn resolve_workspace_alias(alias: &TsWorkspaceAlias, source_specifier: &str) -> 
         "{}{}{}",
         alias.target_prefix, wildcard_value, alias.target_suffix
     )))
+}
+
+fn resolve_workspace_target_candidates<'a>(
+    module_index: &TsModuleIndex,
+    candidates: impl IntoIterator<Item = &'a str>,
+) -> Option<String> {
+    let mut fallback = None;
+    for candidate in candidates {
+        if fallback.is_none() {
+            fallback = Some(candidate.to_string());
+        }
+        if workspace_target_exists(module_index, candidate) {
+            return Some(candidate.to_string());
+        }
+    }
+    fallback
+}
+
+fn workspace_target_exists(module_index: &TsModuleIndex, target: &str) -> bool {
+    module_index.exports_by_module.contains_key(target)
+        || strip_supported_ts_extension(target)
+            .map(|stripped| module_index.exports_by_module.contains_key(stripped))
+            .unwrap_or(false)
 }
 
 fn strip_supported_ts_extension(path: &str) -> Option<&str> {

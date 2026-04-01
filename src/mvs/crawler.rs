@@ -3469,6 +3469,99 @@ mod tests {
     }
 
     #[test]
+    fn ts_export_following_workspace_only_prefers_conditioned_sources_and_wildcard_exports() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(src.join("features")).expect("failed to create src/features");
+        fs::create_dir_all(workspace.path().join("dist/features"))
+            .expect("failed to create dist/features");
+
+        fs::write(
+            workspace.path().join("package.json"),
+            r#"
+            {
+              "name": "@demo/sdk",
+              "exports": {
+                ".": {
+                  "default": "./dist/index.js",
+                  "import": "./src/root.ts"
+                },
+                "./features/*": {
+                  "default": "./dist/features/*.js",
+                  "import": "./src/features/*.ts"
+                }
+              }
+            }
+        "#,
+        )
+        .expect("failed to write package.json");
+
+        fs::write(
+            src.join("root.ts"),
+            r#"
+            export function createKit(name: string): string {
+              return name;
+            }
+        "#,
+        )
+        .expect("failed to write root fixture");
+
+        fs::write(
+            src.join("features/session.ts"),
+            r#"
+            export interface SessionFeature {
+              token: string;
+            }
+        "#,
+        )
+        .expect("failed to write feature fixture");
+
+        fs::write(
+            src.join("index.ts"),
+            r#"
+            export { createKit } from "@demo/sdk";
+            export * from "@demo/sdk/features/session";
+        "#,
+        )
+        .expect("failed to write index fixture");
+
+        let report = crawl_codebase(
+            workspace.path(),
+            &ScanPolicy {
+                exclude_paths: Vec::new(),
+                public_api_roots: vec!["src/index.ts".to_string()],
+                ts_export_following: crate::mvs::manifest::TsExportFollowing::WorkspaceOnly,
+                go_export_following: crate::mvs::manifest::GoExportFollowing::Off,
+                rust_export_following: crate::mvs::manifest::RustExportFollowing::Off,
+                ruby_export_following: crate::mvs::manifest::RubyExportFollowing::Heuristic,
+                lua_export_following: crate::mvs::manifest::LuaExportFollowing::Heuristic,
+                python_export_following: crate::mvs::manifest::PythonExportFollowing::Heuristic,
+                python_module_roots: Vec::new(),
+                public_api_includes: Vec::new(),
+                public_api_excludes: Vec::new(),
+            },
+        )
+        .expect("crawler failed");
+
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ts/js:function createKit(name: string): string"));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "ts/js:interface SessionFeature"));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("dist/index.js")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("dist/features")));
+    }
+
+    #[test]
     fn go_export_following_package_only_expands_file_roots_to_same_package_siblings() {
         let workspace = TempWorkspace::new();
         let src = workspace.path().join("src");

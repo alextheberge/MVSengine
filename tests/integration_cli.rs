@@ -695,6 +695,117 @@ fn ts_export_following_workspace_only_persists_and_resolves_workspace_facades() 
 }
 
 #[test]
+fn ts_export_following_workspace_only_prefers_conditioned_root_and_wildcard_exports() {
+    let temp = TempWorkspace::new();
+    let project_root = temp.path().join("project");
+    fs::create_dir_all(project_root.join("src/features")).expect("failed to create src/features");
+    fs::create_dir_all(project_root.join("dist/features")).expect("failed to create dist/features");
+
+    fs::write(
+        project_root.join("package.json"),
+        r#"
+        {
+          "name": "@demo/sdk",
+          "exports": {
+            ".": {
+              "default": "./dist/index.js",
+              "import": "./src/root.ts"
+            },
+            "./features/*": {
+              "default": "./dist/features/*.js",
+              "import": "./src/features/*.ts"
+            }
+          }
+        }
+    "#,
+    )
+    .expect("failed to write package.json");
+
+    fs::write(
+        project_root.join("src/root.ts"),
+        r#"
+        export function createKit(name: string): string {
+          return name;
+        }
+    "#,
+    )
+    .expect("failed to write root fixture");
+
+    fs::write(
+        project_root.join("src/features/session.ts"),
+        r#"
+        export interface SessionFeature {
+          token: string;
+        }
+    "#,
+    )
+    .expect("failed to write feature fixture");
+
+    fs::write(
+        project_root.join("src/index.ts"),
+        r#"
+        export { createKit } from "@demo/sdk";
+        export * from "@demo/sdk/features/session";
+    "#,
+    )
+    .expect("failed to write barrel fixture");
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "src/index.ts",
+            "--ts-export-following",
+            "workspace-only",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("TS/JS export following"));
+
+    let generated: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+    )
+    .expect("generated manifest should be valid JSON");
+
+    let inventory = generated["evidence"]["public_api_inventory"]
+        .as_array()
+        .expect("public api inventory should be an array");
+    assert!(inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ts/js:function createKit(name: string): string"
+    }));
+    assert!(inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            == "ts/js:interface SessionFeature"
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            .contains("dist/index.js")
+    }));
+    assert!(!inventory.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            .contains("dist/features")
+    }));
+}
+
+#[test]
 fn go_export_following_package_only_persists_and_expands_package_siblings() {
     let temp = TempWorkspace::new();
     let project_root = temp.path().join("project");
