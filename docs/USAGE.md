@@ -132,6 +132,8 @@ Decorator extraction is comment-aware:
 
 Public API extraction is syntax-aware across all supported languages:
 
+The parser-backed path is organized as per-language adapters, so expanding or tightening one language does not require editing the full crawler.
+
 - TypeScript/JavaScript: multiline exports, named export clauses, re-exports, and default exports are parser-backed
 - Go: exported `func` declarations and exported methods are parser-backed
 - Python: non-underscore `def` declarations, including decorated class methods, are parser-backed without promoting nested local helpers

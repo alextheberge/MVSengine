@@ -164,6 +164,8 @@ This reduces formatting noise in `public_api_inventory` and makes policy pattern
 
 The crawler now tokenizes source before matching decorators, uses AST extraction for Rust, and uses parser-backed public API adapters for every other supported language: TypeScript/JavaScript, Go, Python, Java, Kotlin, C#, PHP, Swift, and Luau.
 
+Internally, parser-backed extraction now dispatches through dedicated language adapters under `src/mvs/crawler/adapters/`, with shared language metadata in `src/mvs/crawler/language.rs`. That keeps new language work localized instead of expanding one monolithic extractor path.
+
 - `@mvs-feature(...)` and `@mvs-protocol(...)` are counted only when they appear in real comments
 - block comments such as `/* ... */` are supported for decorator extraction
 - string literals and embedded fixture blobs are ignored during decorator extraction
