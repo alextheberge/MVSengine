@@ -133,6 +133,7 @@ This gives you two things:
 
 - deterministic hashing for version-axis decisions
 - machine-readable diffs explaining exactly what changed between manifest generations
+- machine-readable boundary debugging in `lint --format json` when scan policy shapes the public surface
 - scanner precision that ignores decorator-like examples inside source string literals
 
 Typical `evidence` shape:
@@ -325,6 +326,8 @@ JSON responses are designed for CI, bots, editor tooling, and release automation
 - `exit_code`
 - semantic diff details where relevant
 - command-specific metadata such as identity changes, inventory counts, or compatibility reasons
+
+When scan policy actively shapes the public API boundary, `lint --format json` also emits `boundary_debug` with included and excluded candidate declarations plus the matched root/include/exclude rule or follow-mode reason.
 
 `validate --format json` also includes:
 

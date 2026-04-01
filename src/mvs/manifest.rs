@@ -221,6 +221,14 @@ pub struct PublicApiInventoryDiff {
     pub removed: Vec<PublicApiSnapshot>,
 }
 
+#[derive(Debug, Clone, Serialize, Eq, PartialEq)]
+pub struct PublicApiItemFilterDecision {
+    pub included: bool,
+    pub reason: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
+}
+
 impl ProtocolRange {
     pub fn contains(&self, prot: u64) -> bool {
         prot >= self.min_prot && prot <= self.max_prot
@@ -396,20 +404,53 @@ impl ScanPolicy {
                 .any(|pattern| path_matches(relative_path, pattern))
     }
 
+    pub fn matching_public_api_root(&self, relative_path: &str) -> Option<String> {
+        most_specific_public_api_root_match(&self.public_api_roots, relative_path)
+    }
+
     pub fn includes_public_api_item(&self, relative_path: &str, signature: &str) -> bool {
-        if self
-            .public_api_excludes
-            .iter()
-            .any(|pattern| public_api_rule_matches(pattern, relative_path, signature))
+        self.public_api_item_filter_decision(relative_path, signature)
+            .included
+    }
+
+    pub fn public_api_item_filter_decision(
+        &self,
+        relative_path: &str,
+        signature: &str,
+    ) -> PublicApiItemFilterDecision {
+        if let Some(rule) =
+            most_specific_public_api_rule_match(&self.public_api_excludes, relative_path, signature)
         {
-            return false;
+            return PublicApiItemFilterDecision {
+                included: false,
+                reason: "excluded_by_rule",
+                rule: Some(rule),
+            };
         }
 
-        self.public_api_includes.is_empty()
-            || self
-                .public_api_includes
-                .iter()
-                .any(|pattern| public_api_rule_matches(pattern, relative_path, signature))
+        if self.public_api_includes.is_empty() {
+            return PublicApiItemFilterDecision {
+                included: true,
+                reason: "default_allow",
+                rule: None,
+            };
+        }
+
+        if let Some(rule) =
+            most_specific_public_api_rule_match(&self.public_api_includes, relative_path, signature)
+        {
+            return PublicApiItemFilterDecision {
+                included: true,
+                reason: "included_by_rule",
+                rule: Some(rule),
+            };
+        }
+
+        PublicApiItemFilterDecision {
+            included: false,
+            reason: "missing_include_match",
+            rule: None,
+        }
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -678,6 +719,26 @@ fn public_api_rule_matches(pattern: &str, relative_path: &str, signature: &str) 
     }
 }
 
+fn most_specific_public_api_root_match(patterns: &[String], relative_path: &str) -> Option<String> {
+    patterns
+        .iter()
+        .filter(|pattern| path_matches(relative_path, pattern))
+        .max_by_key(|pattern| normalize_policy_path(pattern).len())
+        .cloned()
+}
+
+fn most_specific_public_api_rule_match(
+    patterns: &[String],
+    relative_path: &str,
+    signature: &str,
+) -> Option<String> {
+    patterns
+        .iter()
+        .filter(|pattern| public_api_rule_matches(pattern, relative_path, signature))
+        .max_by_key(|pattern| pattern.trim().len())
+        .cloned()
+}
+
 fn canonicalize_public_api_signature(signature: &str) -> String {
     let mut canonical = signature.trim().to_string();
 
@@ -900,6 +961,54 @@ mod tests {
         assert!(!policy.includes_public_api_item("src/cli.rs", "rust:fn internal_probe() -> i32"));
         assert!(!policy.includes_public_api_item("src/cli.rs", "rust:struct GenerateArgs"));
         assert!(!policy.includes_public_api_item("src/internal.rs", "rust:enum OutputFormat"));
+    }
+
+    #[test]
+    fn scan_policy_reports_rule_level_public_api_filter_decisions() {
+        let policy = ScanPolicy {
+            exclude_paths: Vec::new(),
+            public_api_roots: vec!["src".to_string(), "src/cli.rs".to_string()],
+            ts_export_following: TsExportFollowing::Off,
+            go_export_following: GoExportFollowing::Off,
+            rust_export_following: RustExportFollowing::Off,
+            ruby_export_following: RubyExportFollowing::Heuristic,
+            lua_export_following: LuaExportFollowing::Heuristic,
+            python_export_following: PythonExportFollowing::Heuristic,
+            python_module_roots: Vec::new(),
+            rust_workspace_members: Vec::new(),
+            public_api_includes: vec![
+                "rust:fn *".to_string(),
+                "src/cli.rs|rust:fn run() -> i32".to_string(),
+            ],
+            public_api_excludes: vec![
+                "rust:fn internal_*".to_string(),
+                "src/cli.rs|rust:fn run() -> i32".to_string(),
+            ],
+        };
+
+        assert_eq!(
+            policy.matching_public_api_root("src/cli.rs"),
+            Some("src/cli.rs".to_string())
+        );
+
+        let excluded = policy.public_api_item_filter_decision("src/cli.rs", "rust:fn run() -> i32");
+        assert!(!excluded.included);
+        assert_eq!(excluded.reason, "excluded_by_rule");
+        assert_eq!(
+            excluded.rule,
+            Some("src/cli.rs|rust:fn run() -> i32".to_string())
+        );
+
+        let included =
+            policy.public_api_item_filter_decision("src/cli.rs", "rust:fn login() -> i32");
+        assert!(included.included);
+        assert_eq!(included.reason, "included_by_rule");
+        assert_eq!(included.rule, Some("rust:fn *".to_string()));
+
+        let missing = policy.public_api_item_filter_decision("src/cli.rs", "rust:struct Command");
+        assert!(!missing.included);
+        assert_eq!(missing.reason, "missing_include_match");
+        assert_eq!(missing.rule, None);
     }
 
     #[test]

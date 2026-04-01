@@ -11,7 +11,7 @@ use std::{
 use anyhow::{Context, Result};
 use quote::ToTokens;
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use syn::{FnArg, ImplItem, Item, ReturnType, Signature, TraitItem, Type, UseTree, Visibility};
 use tree_sitter::{Node, Parser as TreeSitterParser};
 use walkdir::{DirEntry, WalkDir};
@@ -39,6 +39,20 @@ pub struct CrawlReport {
     pub feature_occurrences: Vec<TagOccurrence>,
     pub protocol_occurrences: Vec<TagOccurrence>,
     pub public_api: Vec<ApiSignature>,
+    pub public_api_boundary_decisions: Vec<PublicApiBoundaryDecision>,
+}
+
+#[derive(Debug, Clone, Serialize, Eq, PartialEq, Ord, PartialOrd)]
+pub struct PublicApiBoundaryDecision {
+    pub file: String,
+    pub signature: String,
+    pub included: bool,
+    pub file_reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_rule: Option<String>,
+    pub item_reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item_rule: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +66,13 @@ struct SourceFileInput {
     language: SourceLanguage,
     source: String,
     lexed: LexedSource,
+}
+
+#[derive(Debug, Clone)]
+struct PublicApiFileDecision {
+    included: bool,
+    reason: &'static str,
+    rule: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -294,24 +315,43 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
             });
         }
 
-        if includes_effective_public_api(&effective_public_api_files, &file.rel) {
-            let signatures = extract_public_api(
-                file.language,
-                &file.rel,
-                &file.source,
-                &file.lexed.masked_code,
-                PublicApiExtractionContext {
-                    regex: &api_pack,
-                    scan_policy,
-                    rust_module_index: &rust_module_index,
-                    ts_module_index: &ts_module_index,
-                    python_module_index: &python_module_index,
-                },
-            );
-            for signature in signatures {
-                if !scan_policy.includes_public_api_item(&file.rel, &signature) {
-                    continue;
+        let signatures = extract_public_api(
+            file.language,
+            &file.rel,
+            &file.source,
+            &file.lexed.masked_code,
+            PublicApiExtractionContext {
+                regex: &api_pack,
+                scan_policy,
+                rust_module_index: &rust_module_index,
+                ts_module_index: &ts_module_index,
+                python_module_index: &python_module_index,
+            },
+        );
+        let file_decision = public_api_file_decision(&effective_public_api_files, &file.rel);
+        for signature in signatures {
+            let item_decision = if file_decision.included {
+                scan_policy.public_api_item_filter_decision(&file.rel, &signature)
+            } else {
+                crate::mvs::manifest::PublicApiItemFilterDecision {
+                    included: false,
+                    reason: "skipped_file_boundary",
+                    rule: None,
                 }
+            };
+            let included = file_decision.included && item_decision.included;
+            report
+                .public_api_boundary_decisions
+                .push(PublicApiBoundaryDecision {
+                    file: file.rel.clone(),
+                    signature: signature.clone(),
+                    included,
+                    file_reason: file_decision.reason.to_string(),
+                    file_rule: file_decision.rule.clone(),
+                    item_reason: item_decision.reason.to_string(),
+                    item_rule: item_decision.rule.clone(),
+                });
+            if included {
                 report.public_api.push(ApiSignature {
                     file: file.rel.clone(),
                     signature,
@@ -324,6 +364,8 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
     report.protocol_occurrences.sort();
     report.public_api.sort();
     report.public_api.dedup();
+    report.public_api_boundary_decisions.sort();
+    report.public_api_boundary_decisions.dedup();
 
     Ok(report)
 }
@@ -333,50 +375,74 @@ fn build_effective_public_api_files(
     scan_policy: &ScanPolicy,
     go_package_index: &adapters::GoPackageIndex,
     rust_module_index: &RustModuleIndex,
-) -> Option<BTreeSet<String>> {
+) -> Option<BTreeMap<String, PublicApiFileDecision>> {
     if scan_policy.public_api_roots.is_empty() {
         return None;
     }
 
-    let mut files = BTreeSet::new();
+    let mut files = BTreeMap::new();
     for file in source_files {
         if !scan_policy.includes_public_api(&file.rel) {
             continue;
         }
 
-        files.insert(file.rel.clone());
+        files.insert(
+            file.rel.clone(),
+            PublicApiFileDecision {
+                included: true,
+                reason: "public_api_root",
+                rule: scan_policy.matching_public_api_root(&file.rel),
+            },
+        );
         if file.language == SourceLanguage::Go
             && scan_policy.go_export_following == GoExportFollowing::PackageOnly
         {
-            files.extend(
-                go_package_index
-                    .package_files_for(&file.rel)
-                    .iter()
-                    .cloned(),
-            );
+            for package_file in go_package_index.package_files_for(&file.rel) {
+                files
+                    .entry(package_file.clone())
+                    .or_insert_with(|| PublicApiFileDecision {
+                        included: true,
+                        reason: "go_export_following",
+                        rule: Some("package_only".to_string()),
+                    });
+            }
         }
         if file.language == SourceLanguage::Rust
             && scan_policy.rust_export_following == RustExportFollowing::PublicModules
         {
-            files.extend(
-                rust_module_index
-                    .public_module_files_for(&file.rel)
-                    .iter()
-                    .cloned(),
-            );
+            for module_file in rust_module_index.public_module_files_for(&file.rel) {
+                files
+                    .entry(module_file.clone())
+                    .or_insert_with(|| PublicApiFileDecision {
+                        included: true,
+                        reason: "rust_export_following",
+                        rule: Some("public_modules".to_string()),
+                    });
+            }
         }
     }
 
     Some(files)
 }
 
-fn includes_effective_public_api(
-    effective_public_api_files: &Option<BTreeSet<String>>,
+fn public_api_file_decision(
+    effective_public_api_files: &Option<BTreeMap<String, PublicApiFileDecision>>,
     relative_path: &str,
-) -> bool {
+) -> PublicApiFileDecision {
     match effective_public_api_files {
-        Some(files) => files.contains(relative_path),
-        None => true,
+        Some(files) => files
+            .get(relative_path)
+            .cloned()
+            .unwrap_or(PublicApiFileDecision {
+                included: false,
+                reason: "outside_public_api_roots",
+                rule: None,
+            }),
+        None => PublicApiFileDecision {
+            included: true,
+            reason: "default_allow",
+            rule: None,
+        },
     }
 }
 

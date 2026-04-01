@@ -740,6 +740,97 @@ fn public_api_include_filters_persist_and_ignore_non_contract_drift() {
 }
 
 #[test]
+fn lint_json_boundary_debug_reports_included_and_excluded_rules() {
+    let temp = TempWorkspace::new();
+    let fixture_project = fixtures_root().join("generator_project");
+    let project_root = temp.path().join("project");
+    copy_dir_recursive(&fixture_project, &project_root);
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "src/api.ts",
+            "--public-api-include",
+            "ts/js:function login*",
+            "--public-api-exclude",
+            "ts/js:const buildSession",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let mut lint = binary_cmd();
+    let assert = lint
+        .args([
+            "lint",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout =
+        String::from_utf8(assert.get_output().stdout.clone()).expect("lint output should be utf8");
+    let payload: Value = serde_json::from_str(&stdout).expect("lint json output should parse");
+
+    assert_eq!(payload["status"], "passed");
+    assert_eq!(payload["boundary_debug"]["included_count"], 1);
+    assert_eq!(payload["boundary_debug"]["excluded_count"], 5);
+
+    let included = payload["boundary_debug"]["included"]
+        .as_array()
+        .expect("boundary debug included should be an array");
+    assert!(included.iter().any(|entry| {
+        entry["signature"]
+            .as_str()
+            .expect("signature should be a string")
+            .starts_with("ts/js:function login(")
+            && entry["file_reason"] == "public_api_root"
+            && entry["file_rule"] == "src/api.ts"
+            && entry["item_reason"] == "included_by_rule"
+            && entry["item_rule"] == "ts/js:function login*"
+    }));
+
+    let excluded = payload["boundary_debug"]["excluded"]
+        .as_array()
+        .expect("boundary debug excluded should be an array");
+    assert!(excluded.iter().any(|entry| {
+        entry["signature"] == "ts/js:const buildSession"
+            && entry["item_reason"] == "excluded_by_rule"
+            && entry["item_rule"] == "ts/js:const buildSession"
+    }));
+    assert!(excluded.iter().any(|entry| {
+        entry["signature"] == "ts/js:interface Session"
+            && entry["item_reason"] == "missing_include_match"
+            && entry.get("item_rule").is_none()
+    }));
+    assert!(excluded.iter().any(|entry| {
+        entry["file"] == "src/lib.rs"
+            && entry["file_reason"] == "outside_public_api_roots"
+            && entry["item_reason"] == "skipped_file_boundary"
+    }));
+
+    let mut normalized = payload.clone();
+    normalize_contract_output(&mut normalized);
+    assert_eq!(normalized, load_contract_json("lint_boundary_debug.json"));
+}
+
+#[test]
 fn ts_export_following_persists_and_resolves_relative_barrels() {
     let temp = TempWorkspace::new();
     let project_root = temp.path().join("project");

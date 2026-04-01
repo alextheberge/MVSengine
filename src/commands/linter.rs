@@ -8,7 +8,7 @@ use crate::cli::{
     LintArgs, OutputFormat, EXIT_LINT_ERROR, EXIT_LINT_FAILED, EXIT_MANIFEST_ERROR, EXIT_SUCCESS,
 };
 use crate::commands::output::{emit_error, emit_json, CommandFailure};
-use crate::mvs::crawler::{crawl_codebase, ApiSignature};
+use crate::mvs::crawler::{crawl_codebase, ApiSignature, PublicApiBoundaryDecision};
 use crate::mvs::hashing::{hash_file, hash_items};
 use crate::mvs::manifest::{InventoryDiff, Manifest, PublicApiSnapshot};
 
@@ -55,6 +55,8 @@ fn try_run(args: &LintArgs) -> std::result::Result<LintReport, CommandFailure> {
     };
 
     let mut failures = Vec::new();
+    let boundary_debug =
+        build_boundary_debug(&manifest.scan_policy, &crawl.public_api_boundary_decisions);
 
     if manifest.evidence.feature_hash != feature_hash || !inventory_diff.features.is_empty() {
         failures.push(format!(
@@ -125,6 +127,7 @@ fn try_run(args: &LintArgs) -> std::result::Result<LintReport, CommandFailure> {
             scan_policy: manifest.scan_policy.clone(),
             failure_count: 0,
             failures,
+            boundary_debug,
             evidence: LintEvidenceReport {
                 feature_hash,
                 protocol_hash,
@@ -146,6 +149,7 @@ fn try_run(args: &LintArgs) -> std::result::Result<LintReport, CommandFailure> {
         scan_policy: manifest.scan_policy.clone(),
         failure_count: failures.len(),
         failures,
+        boundary_debug,
         evidence: LintEvidenceReport {
             feature_hash,
             protocol_hash,
@@ -239,6 +243,13 @@ fn render_lint_report(
                     println!("- {failure}");
                 }
             }
+            if let Some(boundary_debug) = report.boundary_debug.as_ref() {
+                println!(
+                    "- Boundary debug: {} included, {} excluded candidate declaration(s). Use `--format json` for rule-level decisions.",
+                    boundary_debug.included_count,
+                    boundary_debug.excluded_count
+                );
+            }
             render_scan_policy(&report.scan_policy);
             Ok(())
         }
@@ -321,6 +332,47 @@ fn render_scan_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) {
     }
 }
 
+fn build_boundary_debug(
+    scan_policy: &crate::mvs::manifest::ScanPolicy,
+    decisions: &[PublicApiBoundaryDecision],
+) -> Option<LintBoundaryDebugReport> {
+    if !has_boundary_debug_policy(scan_policy) {
+        return None;
+    }
+
+    let included: Vec<PublicApiBoundaryDecision> = decisions
+        .iter()
+        .filter(|decision| decision.included)
+        .cloned()
+        .collect();
+    let excluded: Vec<PublicApiBoundaryDecision> = decisions
+        .iter()
+        .filter(|decision| !decision.included)
+        .cloned()
+        .collect();
+
+    Some(LintBoundaryDebugReport {
+        included_count: included.len(),
+        excluded_count: excluded.len(),
+        included,
+        excluded,
+    })
+}
+
+fn has_boundary_debug_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) -> bool {
+    !scan_policy.public_api_roots.is_empty()
+        || !scan_policy.public_api_includes.is_empty()
+        || !scan_policy.public_api_excludes.is_empty()
+        || !scan_policy.ts_export_following.is_default()
+        || !scan_policy.go_export_following.is_default()
+        || !scan_policy.rust_export_following.is_default()
+        || !scan_policy.ruby_export_following.is_default()
+        || !scan_policy.lua_export_following.is_default()
+        || !scan_policy.python_export_following.is_default()
+        || !scan_policy.python_module_roots.is_empty()
+        || !scan_policy.rust_workspace_members.is_empty()
+}
+
 #[derive(Debug, Serialize)]
 struct LintReport {
     command: &'static str,
@@ -331,6 +383,8 @@ struct LintReport {
     scan_policy: crate::mvs::manifest::ScanPolicy,
     failure_count: usize,
     failures: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    boundary_debug: Option<LintBoundaryDebugReport>,
     evidence: LintEvidenceReport,
 }
 
@@ -343,4 +397,12 @@ struct LintEvidenceReport {
     protocol_inventory_count: usize,
     public_api_inventory_count: usize,
     diff: InventoryDiff,
+}
+
+#[derive(Debug, Serialize)]
+struct LintBoundaryDebugReport {
+    included_count: usize,
+    excluded_count: usize,
+    included: Vec<PublicApiBoundaryDecision>,
+    excluded: Vec<PublicApiBoundaryDecision>,
 }

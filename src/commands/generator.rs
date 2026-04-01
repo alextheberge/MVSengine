@@ -674,6 +674,7 @@ mod tests {
                 file: "src/cli.rs".to_string(),
                 signature: "ts/js:function login(username:string)".to_string(),
             }],
+            public_api_boundary_decisions: Vec::new(),
         };
 
         let decision = derive_axis_decision(AxisInputs {

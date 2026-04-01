@@ -28,8 +28,8 @@ All of the above are now satisfied in-repo.
   - Recommend conservative vs aggressive export-following presets per ecosystem.
   - Document when `public_api_roots`, include/exclude filters, and export-following should be used together.
 - Improve public API reporting.
-  - Surface concrete added/removed inventory entries in `lint` and `validate` JSON.
-  - Show which scan-policy rule included or excluded a declaration when debugging a boundary.
+  - Extend boundary debugging to scan-path exclusions if public users need that level of traceability.
+  - Add a compatibility-focused diff report that compares manifests directly instead of only code-vs-manifest drift.
 - Harden docs for public users.
   - Keep README focused on onboarding and link deeper docs instead of growing it indefinitely.
   - Add an end-to-end “library release” example and a “CLI release” example.

@@ -1,0 +1,97 @@
+{
+  "command": "lint",
+  "status": "passed",
+  "exit_code": 0,
+  "manifest_path": "<MANIFEST_PATH>",
+  "root": "<ROOT>",
+  "scan_policy": {
+    "public_api_roots": [
+      "src/api.ts"
+    ],
+    "public_api_includes": [
+      "ts/js:function login*"
+    ],
+    "public_api_excludes": [
+      "ts/js:const buildSession"
+    ]
+  },
+  "failure_count": 0,
+  "failures": [],
+  "boundary_debug": {
+    "included_count": 1,
+    "excluded_count": 5,
+    "included": [
+      {
+        "file": "src/api.ts",
+        "signature": "ts/js:function login(username: string, password: string): Promise<string>",
+        "included": true,
+        "file_reason": "public_api_root",
+        "file_rule": "src/api.ts",
+        "item_reason": "included_by_rule",
+        "item_rule": "ts/js:function login*"
+      }
+    ],
+    "excluded": [
+      {
+        "file": "src/api.ts",
+        "signature": "ts/js:const buildSession",
+        "included": false,
+        "file_reason": "public_api_root",
+        "file_rule": "src/api.ts",
+        "item_reason": "excluded_by_rule",
+        "item_rule": "ts/js:const buildSession"
+      },
+      {
+        "file": "src/api.ts",
+        "signature": "ts/js:interface Session",
+        "included": false,
+        "file_reason": "public_api_root",
+        "file_rule": "src/api.ts",
+        "item_reason": "missing_include_match"
+      },
+      {
+        "file": "src/lib.rs",
+        "signature": "rust:fn handshake(version: u32) -> bool",
+        "included": false,
+        "file_reason": "outside_public_api_roots",
+        "item_reason": "skipped_file_boundary"
+      },
+      {
+        "file": "src/lib.rs",
+        "signature": "rust:impl-fn HostAdapter::connect(&self, target: &str) -> bool",
+        "included": false,
+        "file_reason": "outside_public_api_roots",
+        "item_reason": "skipped_file_boundary"
+      },
+      {
+        "file": "src/lib.rs",
+        "signature": "rust:struct HostAdapter",
+        "included": false,
+        "file_reason": "outside_public_api_roots",
+        "item_reason": "skipped_file_boundary"
+      }
+    ]
+  },
+  "evidence": {
+    "feature_hash": "3a2eeb5e5415fa3675608e63ab9fa958958373ece992d6088c308011cc284ba1",
+    "protocol_hash": "1ba90c74a907ed7789d3af82c8130afa6f4d00f1d5b64d915931b02edaeee94d",
+    "public_api_hash": "c0211e12b99f692a9dd2bef0237a31c72a4595cb7c56e4e2aa3e23437c1a5b5d",
+    "feature_inventory_count": 3,
+    "protocol_inventory_count": 3,
+    "public_api_inventory_count": 1,
+    "diff": {
+      "features": {
+        "added": [],
+        "removed": []
+      },
+      "protocols": {
+        "added": [],
+        "removed": []
+      },
+      "public_api": {
+        "added": [],
+        "removed": []
+      }
+    }
+  }
+}
