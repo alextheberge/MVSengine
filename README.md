@@ -135,7 +135,7 @@ This gives you two things:
 
 - deterministic hashing for version-axis decisions
 - machine-readable diffs explaining exactly what changed between manifest generations
-- machine-readable boundary debugging in `lint --format json` when scan policy shapes the public surface
+- machine-readable boundary debugging in `generate --format json` and `lint --format json` when scan policy shapes the public surface
 - scanner precision that ignores decorator-like examples inside source string literals
 
 Typical `evidence` shape:
@@ -329,7 +329,7 @@ JSON responses are designed for CI, bots, editor tooling, and release automation
 - semantic diff details where relevant
 - command-specific metadata such as identity changes, inventory counts, or compatibility reasons
 
-When scan policy actively shapes the public API boundary, `lint --format json` also emits `boundary_debug` with included and excluded candidate declarations, excluded paths, and the matched root/include/exclude rule or follow-mode reason. Default ignored directories such as `tests`, `target`, and `node_modules` also show up there when they affect the crawl.
+When scan policy actively shapes the public API boundary, `generate --format json` and `lint --format json` also emit `boundary_debug` with included and excluded candidate declarations, excluded paths, and the matched root/include/exclude rule or follow-mode reason. Default ignored directories such as `tests`, `target`, and `node_modules` also show up there when they affect the crawl.
 
 `validate --format json` also includes:
 
@@ -342,6 +342,8 @@ When scan policy actively shapes the public API boundary, `lint --format json` a
 - `change_count`
 - `changed_sections`
 - `comparison`: structured manifest-to-manifest deltas across identity, compatibility, capabilities, AI contract, environment, scan policy, and evidence inventories
+
+`report` intentionally stays manifest-only in `1.x`. It does not recrawl source or emit `boundary_debug`.
 
 Example `lint --format json` failure shape:
 

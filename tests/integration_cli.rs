@@ -344,6 +344,96 @@ fn generate_json_matches_golden_contract_fixture() {
 }
 
 #[test]
+fn generate_json_boundary_debug_reports_default_and_policy_excluded_paths() {
+    let temp = TempWorkspace::new();
+    let project_root = temp.path().join("project");
+    fs::create_dir_all(project_root.join("src/generated")).expect("failed to create generated dir");
+    fs::create_dir_all(project_root.join("tests")).expect("failed to create tests dir");
+
+    fs::write(
+        project_root.join("src/api.ts"),
+        r#"
+        // @mvs-feature("auth_flow")
+        // @mvs-protocol("auth-api-v1")
+        export function login(username: string): string {
+          return username;
+        }
+    "#,
+    )
+    .expect("failed to write api fixture");
+    fs::write(
+        project_root.join("src/generated/client.ts"),
+        r#"
+        // @mvs-feature("generated_api")
+        // @mvs-protocol("generated-api")
+        export function request(path: string): string {
+          return path;
+        }
+    "#,
+    )
+    .expect("failed to write generated fixture");
+    fs::write(
+        project_root.join("tests/api.ts"),
+        r#"
+        // @mvs-feature("test_only")
+        export function helper(): string {
+          return "test";
+        }
+    "#,
+    )
+    .expect("failed to write tests fixture");
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    let assert = generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "src/api.ts",
+            "--exclude-path",
+            "src/generated",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())
+        .expect("generate output should be valid utf8");
+    let mut payload: Value =
+        serde_json::from_str(&stdout).expect("generate json output should parse");
+
+    assert_eq!(payload["boundary_debug"]["included_count"], 1);
+    assert_eq!(payload["boundary_debug"]["excluded_count"], 0);
+    assert_eq!(payload["boundary_debug"]["excluded_path_count"], 2);
+    let excluded_paths = payload["boundary_debug"]["excluded_paths"]
+        .as_array()
+        .expect("excluded paths should be an array");
+    assert!(excluded_paths.iter().any(|entry| {
+        entry["path"] == "src/generated"
+            && entry["kind"] == "directory"
+            && entry["reason"] == "scan_policy_exclude_path"
+            && entry["rule"] == "src/generated"
+    }));
+    assert!(excluded_paths.iter().any(|entry| {
+        entry["path"] == "tests"
+            && entry["kind"] == "directory"
+            && entry["reason"] == "default_ignored_directory"
+            && entry["rule"] == "tests"
+    }));
+
+    normalize_contract_output(&mut payload);
+    assert_eq!(payload, load_contract_json("generate_boundary_debug.json"));
+}
+
+#[test]
 fn generated_manifest_matches_golden_contract_fixture() {
     let temp = TempWorkspace::new();
     let fixture_project = fixtures_root().join("generator_project");

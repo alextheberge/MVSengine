@@ -7,10 +7,9 @@ use serde::Serialize;
 use crate::cli::{
     LintArgs, OutputFormat, EXIT_LINT_ERROR, EXIT_LINT_FAILED, EXIT_MANIFEST_ERROR, EXIT_SUCCESS,
 };
+use crate::commands::boundary_debug::{build_boundary_debug, BoundaryDebugReport};
 use crate::commands::output::{emit_error, emit_json, CommandFailure};
-use crate::mvs::crawler::{
-    crawl_codebase, ApiSignature, ExcludedPathDecision, PublicApiBoundaryDecision,
-};
+use crate::mvs::crawler::{crawl_codebase, ApiSignature};
 use crate::mvs::hashing::{hash_file, hash_items};
 use crate::mvs::manifest::{InventoryDiff, Manifest, PublicApiSnapshot};
 
@@ -338,50 +337,6 @@ fn render_scan_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) {
     }
 }
 
-fn build_boundary_debug(
-    scan_policy: &crate::mvs::manifest::ScanPolicy,
-    decisions: &[PublicApiBoundaryDecision],
-    excluded_paths: &[ExcludedPathDecision],
-) -> Option<LintBoundaryDebugReport> {
-    if !has_boundary_debug_policy(scan_policy) && excluded_paths.is_empty() {
-        return None;
-    }
-
-    let included: Vec<PublicApiBoundaryDecision> = decisions
-        .iter()
-        .filter(|decision| decision.included)
-        .cloned()
-        .collect();
-    let excluded: Vec<PublicApiBoundaryDecision> = decisions
-        .iter()
-        .filter(|decision| !decision.included)
-        .cloned()
-        .collect();
-
-    Some(LintBoundaryDebugReport {
-        included_count: included.len(),
-        excluded_count: excluded.len(),
-        excluded_path_count: excluded_paths.len(),
-        included,
-        excluded,
-        excluded_paths: excluded_paths.to_vec(),
-    })
-}
-
-fn has_boundary_debug_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) -> bool {
-    !scan_policy.public_api_roots.is_empty()
-        || !scan_policy.public_api_includes.is_empty()
-        || !scan_policy.public_api_excludes.is_empty()
-        || !scan_policy.ts_export_following.is_default()
-        || !scan_policy.go_export_following.is_default()
-        || !scan_policy.rust_export_following.is_default()
-        || !scan_policy.ruby_export_following.is_default()
-        || !scan_policy.lua_export_following.is_default()
-        || !scan_policy.python_export_following.is_default()
-        || !scan_policy.python_module_roots.is_empty()
-        || !scan_policy.rust_workspace_members.is_empty()
-}
-
 #[derive(Debug, Serialize)]
 struct LintReport {
     command: &'static str,
@@ -393,7 +348,7 @@ struct LintReport {
     failure_count: usize,
     failures: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    boundary_debug: Option<LintBoundaryDebugReport>,
+    boundary_debug: Option<BoundaryDebugReport>,
     evidence: LintEvidenceReport,
 }
 
@@ -406,14 +361,4 @@ struct LintEvidenceReport {
     protocol_inventory_count: usize,
     public_api_inventory_count: usize,
     diff: InventoryDiff,
-}
-
-#[derive(Debug, Serialize)]
-struct LintBoundaryDebugReport {
-    included_count: usize,
-    excluded_count: usize,
-    excluded_path_count: usize,
-    included: Vec<PublicApiBoundaryDecision>,
-    excluded: Vec<PublicApiBoundaryDecision>,
-    excluded_paths: Vec<ExcludedPathDecision>,
 }

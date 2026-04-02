@@ -174,6 +174,26 @@ Stable `evidence` fields:
 - `diff.public_api.added`
 - `diff.public_api.removed`
 
+Optional stable fields when boundary-shaping scan policy is active or excluded paths affect the crawl:
+
+- `boundary_debug.included_count`
+- `boundary_debug.excluded_count`
+- `boundary_debug.included[].file`
+- `boundary_debug.included[].signature`
+- `boundary_debug.included[].included`
+- `boundary_debug.included[].file_reason`
+- `boundary_debug.included[].file_rule`
+- `boundary_debug.included[].item_reason`
+- `boundary_debug.included[].item_rule`
+- `boundary_debug.excluded_path_count`
+- `boundary_debug.excluded_paths[].path`
+- `boundary_debug.excluded_paths[].kind`
+- `boundary_debug.excluded_paths[].reason`
+- `boundary_debug.excluded_paths[].rule`
+- `boundary_debug.excluded[]` with the same item shape
+
+`generate --format json` uses `boundary_debug` to explain the boundary rules and skipped paths that shaped the freshly written evidence snapshot.
+
 ### `lint --format json`
 
 Stable fields:
@@ -284,6 +304,8 @@ Stable `comparison.capabilities.changes[]` fields:
 - `field`
 - `base`
 - `target`
+
+`report --format json` intentionally stays manifest-only in `1.x`: it compares persisted manifest state and does not recrawl source or emit `boundary_debug`.
 
 Stable `comparison.ai_contract` fields:
 

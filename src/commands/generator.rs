@@ -5,6 +5,7 @@ use serde::Serialize;
 use crate::cli::{
     GenerateArgs, OutputFormat, EXIT_GENERATE_ERROR, EXIT_MANIFEST_ERROR, EXIT_SUCCESS,
 };
+use crate::commands::boundary_debug::{build_boundary_debug, BoundaryDebugReport};
 use crate::commands::output::{emit_error, emit_json, CommandFailure};
 use crate::mvs::crawler::{crawl_codebase, ApiSignature, CrawlReport};
 use crate::mvs::hashing::{hash_file, hash_items};
@@ -45,6 +46,11 @@ fn try_run(args: &GenerateArgs) -> std::result::Result<GenerateReport, CommandFa
     let feature_inventory: Vec<String> = crawl.feature_tags.iter().cloned().collect();
     let protocol_inventory: Vec<String> = crawl.protocol_tags.iter().cloned().collect();
     let public_api_inventory = build_public_api_inventory(&crawl.public_api);
+    let boundary_debug = build_boundary_debug(
+        &manifest.scan_policy,
+        &crawl.public_api_boundary_decisions,
+        &crawl.excluded_paths,
+    );
     let inventory_diff = previous_evidence.semantic_diff(
         &feature_inventory,
         &protocol_inventory,
@@ -130,6 +136,7 @@ fn try_run(args: &GenerateArgs) -> std::result::Result<GenerateReport, CommandFa
         manifest_written: !args.dry_run,
         range_strategy: range_strategy.label().to_string(),
         scan_policy: manifest.scan_policy.clone(),
+        boundary_debug,
         identity: GenerateIdentityReport {
             previous: previous_identity,
             current: manifest.identity.mvs.clone(),
@@ -198,6 +205,8 @@ struct GenerateReport {
     manifest_written: bool,
     range_strategy: String,
     scan_policy: crate::mvs::manifest::ScanPolicy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    boundary_debug: Option<BoundaryDebugReport>,
     identity: GenerateIdentityReport,
     reasons: Vec<String>,
     evidence: GenerateEvidenceReport,
@@ -415,6 +424,14 @@ fn render_generate_report(
                 report.evidence.protocol_inventory_count,
                 report.evidence.public_api_inventory_count
             );
+            if let Some(boundary_debug) = report.boundary_debug.as_ref() {
+                println!(
+                    "- Boundary debug: {} included, {} excluded candidate declaration(s), {} excluded path(s). Use `--format json` for rule-level decisions.",
+                    boundary_debug.included_count,
+                    boundary_debug.excluded_count,
+                    boundary_debug.excluded_path_count
+                );
+            }
             render_scan_policy(&report.scan_policy);
 
             if report.manifest_written {
