@@ -21,6 +21,14 @@ curl -fsSL https://raw.githubusercontent.com/alextheberge/MVSengine/master/scrip
 irm https://raw.githubusercontent.com/alextheberge/MVSengine/master/scripts/install.ps1 | iex
 ```
 
+Once installed, `mvs-manager` can update itself with:
+
+```bash
+mvs-manager self-update
+```
+
+Interactive runs of the CLI also notify on `stderr` when a newer stable release is available.
+
 ### 2) Initialize your project manifest
 ```bash
 mvs-manager generate --root . --manifest mvs.json --context cli
@@ -117,6 +125,8 @@ mvs-manager validate --host-manifest host.json --extension-manifest extension.js
 mvs-manager validate --host-manifest host.json --extension-manifest extension.json --host-model-capabilities tool_calling,reasoning-v1
 mvs-manager report --base-manifest old-mvs.json --target-manifest new-mvs.json
 mvs-manager report --base-manifest old-mvs.json --target-manifest new-mvs.json --format json
+mvs-manager self-update --check
+mvs-manager self-update
 ```
 
 `mvs.json` persists version-change rationale in `history`, enabling compatibility reports to explain protocol breaks (for example, auth-flow changes tied to a specific `PROT`).

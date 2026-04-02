@@ -9,7 +9,7 @@ use std::{
 
 use assert_cmd::prelude::*;
 use mvs_manager::mvs::hashing::hash_items;
-use predicates::str::contains;
+use predicates::str::{contains, is_empty};
 use serde_json::Value;
 
 fn fixtures_root() -> PathBuf {
@@ -86,8 +86,20 @@ fn copy_dir_recursive(src: &Path, dst: &Path) {
     }
 }
 
+fn generator_fixture_workspace(temp: &TempWorkspace) -> (PathBuf, PathBuf) {
+    let fixture_project = fixtures_root().join("generator_project");
+    let project_root = temp.path().join("project");
+    copy_dir_recursive(&fixture_project, &project_root);
+    let manifest_path = temp.path().join("mvs.json");
+    (project_root, manifest_path)
+}
+
 fn binary_cmd() -> Command {
     Command::new(env!("CARGO_BIN_EXE_mvs-manager"))
+}
+
+fn package_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
 }
 
 struct TempWorkspace {
@@ -126,11 +138,7 @@ impl Drop for TempWorkspace {
 #[test]
 fn generate_then_lint_passes_for_fixture_project() {
     let temp = TempWorkspace::new();
-    let fixture_project = fixtures_root().join("generator_project");
-    let project_root = temp.path().join("project");
-    copy_dir_recursive(&fixture_project, &project_root);
-
-    let manifest_path = temp.path().join("mvs.json");
+    let (project_root, manifest_path) = generator_fixture_workspace(&temp);
     let ai_schema_path = project_root.join("tool_schema.json");
 
     let mut generate = binary_cmd();
@@ -176,11 +184,7 @@ fn generate_then_lint_passes_for_fixture_project() {
 #[test]
 fn lint_fails_after_public_api_drift_without_regeneration() {
     let temp = TempWorkspace::new();
-    let fixture_project = fixtures_root().join("generator_project");
-    let project_root = temp.path().join("project");
-    copy_dir_recursive(&fixture_project, &project_root);
-
-    let manifest_path = temp.path().join("mvs.json");
+    let (project_root, manifest_path) = generator_fixture_workspace(&temp);
 
     let mut generate = binary_cmd();
     generate
@@ -214,6 +218,103 @@ fn lint_fails_after_public_api_drift_without_regeneration() {
     .assert()
     .failure()
     .stdout(contains("Public API signature drift detected"));
+}
+
+#[test]
+fn self_update_check_reports_available_release_in_text_mode() {
+    let temp = TempWorkspace::new();
+    let update_state = temp.path().join("update-state.json");
+
+    let mut cmd = binary_cmd();
+    cmd.args(["self-update", "--check"])
+        .env("MVS_UPDATE_STATE_FILE", &update_state)
+        .env("MVS_UPDATE_LATEST_VERSION", "9.9.9")
+        .assert()
+        .success()
+        .stdout(contains(format!(
+            "Update available: v{} -> v9.9.9.",
+            package_version()
+        )))
+        .stdout(contains("Run `mvs-manager self-update` to install it."))
+        .stdout(contains(
+            "Release: https://github.com/alextheberge/MVSengine/releases/tag/v9.9.9",
+        ));
+}
+
+#[test]
+fn self_update_check_emits_json_without_extra_text() {
+    let temp = TempWorkspace::new();
+    let update_state = temp.path().join("update-state.json");
+
+    let output = binary_cmd()
+        .args(["self-update", "--check", "--format", "json"])
+        .env("MVS_UPDATE_STATE_FILE", &update_state)
+        .env("MVS_UPDATE_LATEST_VERSION", "9.9.9")
+        .output()
+        .expect("self-update --check json should run");
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).expect("json output should be utf-8");
+    let payload: Value = serde_json::from_str(&stdout).expect("json output should parse");
+    assert_eq!(payload["command"], "self-update");
+    assert_eq!(payload["status"], "update_available");
+    assert_eq!(payload["mode"], "check");
+    assert_eq!(payload["current_version"], package_version());
+    assert_eq!(payload["latest_version"], "9.9.9");
+    assert_eq!(
+        payload["release_url"],
+        "https://github.com/alextheberge/MVSengine/releases/tag/v9.9.9"
+    );
+}
+
+#[test]
+fn successful_commands_notify_once_per_available_version() {
+    let temp = TempWorkspace::new();
+    let (project_root, manifest_path) = generator_fixture_workspace(&temp);
+    let update_state = temp.path().join("update-state.json");
+
+    let mut first = binary_cmd();
+    first
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--dry-run",
+        ])
+        .env("MVS_UPDATE_STATE_FILE", &update_state)
+        .env("MVS_UPDATE_LATEST_VERSION", "9.9.9")
+        .env("MVS_FORCE_UPDATE_CHECK", "1")
+        .env("MVS_UPDATE_CHECK_INTERVAL_SECS", "0")
+        .assert()
+        .success()
+        .stderr(contains(format!(
+            "update available: v{} -> v9.9.9. Run `mvs-manager self-update` to install it.",
+            package_version()
+        )));
+
+    let mut second = binary_cmd();
+    second
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--dry-run",
+        ])
+        .env("MVS_UPDATE_STATE_FILE", &update_state)
+        .env("MVS_UPDATE_LATEST_VERSION", "9.9.9")
+        .env("MVS_FORCE_UPDATE_CHECK", "1")
+        .env("MVS_UPDATE_CHECK_INTERVAL_SECS", "0")
+        .assert()
+        .success()
+        .stderr(is_empty());
 }
 
 #[test]

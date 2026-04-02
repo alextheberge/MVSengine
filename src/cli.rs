@@ -16,6 +16,7 @@ pub const EXIT_LINT_ERROR: i32 = 21;
 pub const EXIT_VALIDATE_INCOMPATIBLE: i32 = 30;
 pub const EXIT_MANIFEST_ERROR: i32 = 40;
 pub const EXIT_REPORT_ERROR: i32 = 50;
+pub const EXIT_UPDATE_ERROR: i32 = 60;
 pub const EXIT_OUTPUT_ERROR: i32 = 70;
 
 #[derive(Debug, Parser)]
@@ -31,6 +32,7 @@ enum Command {
     Lint(LintArgs),
     Validate(ValidateArgs),
     Report(ReportArgs),
+    SelfUpdate(SelfUpdateArgs),
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum)]
@@ -255,13 +257,30 @@ pub struct ReportArgs {
     pub format: OutputFormat,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct SelfUpdateArgs {
+    #[arg(long, default_value_t = false)]
+    pub check: bool,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
 pub fn run() -> i32 {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Generate(args) => commands::generator::run(args),
-        Command::Lint(args) => commands::linter::run(args),
-        Command::Validate(args) => commands::reader::run(args),
-        Command::Report(args) => commands::report::run(args),
+        Command::Generate(args) => run_with_update_notification(commands::generator::run(args)),
+        Command::Lint(args) => run_with_update_notification(commands::linter::run(args)),
+        Command::Validate(args) => run_with_update_notification(commands::reader::run(args)),
+        Command::Report(args) => run_with_update_notification(commands::report::run(args)),
+        Command::SelfUpdate(args) => commands::self_update::run(args),
     }
+}
+
+fn run_with_update_notification(exit_code: i32) -> i32 {
+    if exit_code == EXIT_SUCCESS {
+        crate::update::maybe_notify_new_version();
+    }
+    exit_code
 }
