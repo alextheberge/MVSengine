@@ -1,0 +1,69 @@
+{
+  "command": "lint",
+  "status": "passed",
+  "exit_code": 0,
+  "manifest_path": "<MANIFEST_PATH>",
+  "root": "<ROOT>",
+  "scan_policy": {
+    "exclude_paths": [
+      "src/generated"
+    ],
+    "public_api_roots": [
+      "src/api.ts"
+    ]
+  },
+  "failure_count": 0,
+  "failures": [],
+  "boundary_debug": {
+    "included_count": 1,
+    "excluded_count": 0,
+    "excluded_path_count": 2,
+    "included": [
+      {
+        "file": "src/api.ts",
+        "signature": "ts/js:function login(username: string): string",
+        "included": true,
+        "file_reason": "public_api_root",
+        "file_rule": "src/api.ts",
+        "item_reason": "default_allow"
+      }
+    ],
+    "excluded": [],
+    "excluded_paths": [
+      {
+        "path": "src/generated",
+        "kind": "directory",
+        "reason": "scan_policy_exclude_path",
+        "rule": "src/generated"
+      },
+      {
+        "path": "tests",
+        "kind": "directory",
+        "reason": "default_ignored_directory",
+        "rule": "tests"
+      }
+    ]
+  },
+  "evidence": {
+    "feature_hash": "657c0531e0bacdb1c088572362058980d0b859cac47e593fa779086b4854530c",
+    "protocol_hash": "1dba0025d3ac4a97e74cbde7ee4c4572fd0c0782318e4617c7ecc6f937be8a8a",
+    "public_api_hash": "5dd54ba18ce5802e343d854e312eb38e3ed9d6ab5fb9911a2ef1ec245684e54e",
+    "feature_inventory_count": 1,
+    "protocol_inventory_count": 1,
+    "public_api_inventory_count": 1,
+    "diff": {
+      "features": {
+        "added": [],
+        "removed": []
+      },
+      "protocols": {
+        "added": [],
+        "removed": []
+      },
+      "public_api": {
+        "added": [],
+        "removed": []
+      }
+    }
+  }
+}

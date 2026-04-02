@@ -28,8 +28,8 @@ All of the above are now satisfied in-repo.
   - Recommend conservative vs aggressive export-following presets per ecosystem.
   - Document when `public_api_roots`, include/exclude filters, and export-following should be used together.
 - Improve public API reporting.
-  - Extend boundary debugging to scan-path exclusions if public users need that level of traceability.
-  - Decide whether `report` should also trace path-level scan exclusions and default ignored directories.
+  - Decide whether `generate --format json` should also emit path-level exclusion tracing, not just `lint`.
+  - Decide whether `report` should surface scan-path reasoning indirectly through richer `scan_policy` deltas or stay manifest-only.
 - Harden docs for public users.
   - Keep README focused on onboarding and link deeper docs instead of growing it indefinitely.
   - Add an end-to-end “library release” example and a “CLI release” example.

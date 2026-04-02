@@ -198,9 +198,14 @@ Optional stable fields when boundary-shaping scan policy is active:
 - `boundary_debug.included[].file_rule`
 - `boundary_debug.included[].item_reason`
 - `boundary_debug.included[].item_rule`
+- `boundary_debug.excluded_path_count`
+- `boundary_debug.excluded_paths[].path`
+- `boundary_debug.excluded_paths[].kind`
+- `boundary_debug.excluded_paths[].reason`
+- `boundary_debug.excluded_paths[].rule`
 - `boundary_debug.excluded[]` with the same item shape
 
-`boundary_debug` is additive `1.x` surface area for explaining why declarations were included or excluded by `public_api_roots`, include/exclude selectors, and boundary-following policy.
+`boundary_debug` is additive `1.x` surface area for explaining why declarations were included or excluded by `public_api_roots`, include/exclude selectors, boundary-following policy, explicit `exclude_paths`, and default ignored directories.
 
 ### `validate --format json`
 

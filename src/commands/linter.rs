@@ -8,7 +8,9 @@ use crate::cli::{
     LintArgs, OutputFormat, EXIT_LINT_ERROR, EXIT_LINT_FAILED, EXIT_MANIFEST_ERROR, EXIT_SUCCESS,
 };
 use crate::commands::output::{emit_error, emit_json, CommandFailure};
-use crate::mvs::crawler::{crawl_codebase, ApiSignature, PublicApiBoundaryDecision};
+use crate::mvs::crawler::{
+    crawl_codebase, ApiSignature, ExcludedPathDecision, PublicApiBoundaryDecision,
+};
 use crate::mvs::hashing::{hash_file, hash_items};
 use crate::mvs::manifest::{InventoryDiff, Manifest, PublicApiSnapshot};
 
@@ -55,8 +57,11 @@ fn try_run(args: &LintArgs) -> std::result::Result<LintReport, CommandFailure> {
     };
 
     let mut failures = Vec::new();
-    let boundary_debug =
-        build_boundary_debug(&manifest.scan_policy, &crawl.public_api_boundary_decisions);
+    let boundary_debug = build_boundary_debug(
+        &manifest.scan_policy,
+        &crawl.public_api_boundary_decisions,
+        &crawl.excluded_paths,
+    );
 
     if manifest.evidence.feature_hash != feature_hash || !inventory_diff.features.is_empty() {
         failures.push(format!(
@@ -245,9 +250,10 @@ fn render_lint_report(
             }
             if let Some(boundary_debug) = report.boundary_debug.as_ref() {
                 println!(
-                    "- Boundary debug: {} included, {} excluded candidate declaration(s). Use `--format json` for rule-level decisions.",
+                    "- Boundary debug: {} included, {} excluded candidate declaration(s), {} excluded path(s). Use `--format json` for rule-level decisions.",
                     boundary_debug.included_count,
-                    boundary_debug.excluded_count
+                    boundary_debug.excluded_count,
+                    boundary_debug.excluded_path_count
                 );
             }
             render_scan_policy(&report.scan_policy);
@@ -335,8 +341,9 @@ fn render_scan_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) {
 fn build_boundary_debug(
     scan_policy: &crate::mvs::manifest::ScanPolicy,
     decisions: &[PublicApiBoundaryDecision],
+    excluded_paths: &[ExcludedPathDecision],
 ) -> Option<LintBoundaryDebugReport> {
-    if !has_boundary_debug_policy(scan_policy) {
+    if !has_boundary_debug_policy(scan_policy) && excluded_paths.is_empty() {
         return None;
     }
 
@@ -354,8 +361,10 @@ fn build_boundary_debug(
     Some(LintBoundaryDebugReport {
         included_count: included.len(),
         excluded_count: excluded.len(),
+        excluded_path_count: excluded_paths.len(),
         included,
         excluded,
+        excluded_paths: excluded_paths.to_vec(),
     })
 }
 
@@ -403,6 +412,8 @@ struct LintEvidenceReport {
 struct LintBoundaryDebugReport {
     included_count: usize,
     excluded_count: usize,
+    excluded_path_count: usize,
     included: Vec<PublicApiBoundaryDecision>,
     excluded: Vec<PublicApiBoundaryDecision>,
+    excluded_paths: Vec<ExcludedPathDecision>,
 }

@@ -20,6 +20,7 @@
   "boundary_debug": {
     "included_count": 1,
     "excluded_count": 5,
+    "excluded_path_count": 0,
     "included": [
       {
         "file": "src/api.ts",
@@ -70,7 +71,8 @@
         "file_reason": "outside_public_api_roots",
         "item_reason": "skipped_file_boundary"
       }
-    ]
+    ],
+    "excluded_paths": []
   },
   "evidence": {
     "feature_hash": "3a2eeb5e5415fa3675608e63ab9fa958958373ece992d6088c308011cc284ba1",

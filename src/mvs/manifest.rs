@@ -396,6 +396,10 @@ impl ScanPolicy {
             .any(|pattern| path_matches(relative_path, pattern))
     }
 
+    pub fn matching_excluded_path(&self, relative_path: &str) -> Option<String> {
+        most_specific_public_api_root_match(&self.exclude_paths, relative_path)
+    }
+
     pub fn includes_public_api(&self, relative_path: &str) -> bool {
         self.public_api_roots.is_empty()
             || self

@@ -329,7 +329,7 @@ JSON responses are designed for CI, bots, editor tooling, and release automation
 - semantic diff details where relevant
 - command-specific metadata such as identity changes, inventory counts, or compatibility reasons
 
-When scan policy actively shapes the public API boundary, `lint --format json` also emits `boundary_debug` with included and excluded candidate declarations plus the matched root/include/exclude rule or follow-mode reason.
+When scan policy actively shapes the public API boundary, `lint --format json` also emits `boundary_debug` with included and excluded candidate declarations, excluded paths, and the matched root/include/exclude rule or follow-mode reason. Default ignored directories such as `tests`, `target`, and `node_modules` also show up there when they affect the crawl.
 
 `validate --format json` also includes:
 

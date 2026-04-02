@@ -856,6 +856,7 @@ fn lint_json_boundary_debug_reports_included_and_excluded_rules() {
     assert_eq!(payload["status"], "passed");
     assert_eq!(payload["boundary_debug"]["included_count"], 1);
     assert_eq!(payload["boundary_debug"]["excluded_count"], 5);
+    assert_eq!(payload["boundary_debug"]["excluded_path_count"], 0);
 
     let included = payload["boundary_debug"]["included"]
         .as_array()
@@ -893,6 +894,109 @@ fn lint_json_boundary_debug_reports_included_and_excluded_rules() {
     let mut normalized = payload.clone();
     normalize_contract_output(&mut normalized);
     assert_eq!(normalized, load_contract_json("lint_boundary_debug.json"));
+}
+
+#[test]
+fn lint_json_boundary_debug_reports_default_and_policy_excluded_paths() {
+    let temp = TempWorkspace::new();
+    let project_root = temp.path().join("project");
+    fs::create_dir_all(project_root.join("src/generated")).expect("failed to create generated dir");
+    fs::create_dir_all(project_root.join("tests")).expect("failed to create tests dir");
+
+    fs::write(
+        project_root.join("src/api.ts"),
+        r#"
+        // @mvs-feature("auth_flow")
+        // @mvs-protocol("auth-api-v1")
+        export function login(username: string): string {
+          return username;
+        }
+    "#,
+    )
+    .expect("failed to write api fixture");
+    fs::write(
+        project_root.join("src/generated/client.ts"),
+        r#"
+        // @mvs-feature("generated_api")
+        // @mvs-protocol("generated-api")
+        export function request(path: string): string {
+          return path;
+        }
+    "#,
+    )
+    .expect("failed to write generated fixture");
+    fs::write(
+        project_root.join("tests/api.ts"),
+        r#"
+        // @mvs-feature("test_only")
+        export function helper(): string {
+          return "test";
+        }
+    "#,
+    )
+    .expect("failed to write tests fixture");
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+            "--public-api-root",
+            "src/api.ts",
+            "--exclude-path",
+            "src/generated",
+        ])
+        .assert()
+        .success();
+
+    let mut lint = binary_cmd();
+    let assert = lint
+        .args([
+            "lint",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    let stdout =
+        String::from_utf8(assert.get_output().stdout.clone()).expect("lint output should be utf8");
+    let payload: Value = serde_json::from_str(&stdout).expect("lint json output should parse");
+
+    assert_eq!(payload["boundary_debug"]["excluded_path_count"], 2);
+    let excluded_paths = payload["boundary_debug"]["excluded_paths"]
+        .as_array()
+        .expect("excluded paths should be an array");
+    assert!(excluded_paths.iter().any(|entry| {
+        entry["path"] == "src/generated"
+            && entry["kind"] == "directory"
+            && entry["reason"] == "scan_policy_exclude_path"
+            && entry["rule"] == "src/generated"
+    }));
+    assert!(excluded_paths.iter().any(|entry| {
+        entry["path"] == "tests"
+            && entry["kind"] == "directory"
+            && entry["reason"] == "default_ignored_directory"
+            && entry["rule"] == "tests"
+    }));
+
+    let mut normalized = payload.clone();
+    normalize_contract_output(&mut normalized);
+    assert_eq!(
+        normalized,
+        load_contract_json("lint_excluded_paths_debug.json")
+    );
 }
 
 #[test]

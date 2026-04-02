@@ -154,7 +154,7 @@ make build-release
 
 `lint` checks these snapshots in addition to the hashes. If your manifest was created before inventories existed, regenerate once to bring it forward.
 
-When scan policy shapes the public boundary, `lint --format json` also emits `boundary_debug` so you can see which declarations were included or excluded and which rule or follow-mode decision caused that result.
+When scan policy shapes the public boundary, `lint --format json` also emits `boundary_debug` so you can see which declarations were included or excluded, which directories or files were skipped, and which rule or follow-mode decision caused that result.
 
 Decorator extraction is comment-aware:
 
@@ -225,7 +225,7 @@ This is especially useful when:
 
 Flags passed to `generate` persist into `mvs.json.scan_policy`, so later `lint` runs use the same boundary automatically.
 
-If you are debugging why a declaration is missing from or leaking into `public_api_inventory`, prefer `lint --format json`: `boundary_debug` reports direct root matches, root misses, include/exclude selector matches, and file-level follow-mode decisions such as `package_only` or `public_modules`.
+If you are debugging why a declaration is missing from or leaking into `public_api_inventory`, prefer `lint --format json`: `boundary_debug` reports direct root matches, root misses, include/exclude selector matches, file-level follow-mode decisions such as `package_only` or `public_modules`, explicit `exclude_paths`, and default ignored directories such as `tests` or `target`.
 
 For `workspace_only`, package export and import targets are tried in this order when multiple conditions exist: `types`, `import`, `module`, `browser`, `node`, `default`, `require`, then any remaining custom conditions in key order. Root `tsconfig.json` is preferred over `jsconfig.json` when both exist.
 

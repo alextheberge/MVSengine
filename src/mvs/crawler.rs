@@ -40,6 +40,7 @@ pub struct CrawlReport {
     pub protocol_occurrences: Vec<TagOccurrence>,
     pub public_api: Vec<ApiSignature>,
     pub public_api_boundary_decisions: Vec<PublicApiBoundaryDecision>,
+    pub excluded_paths: Vec<ExcludedPathDecision>,
 }
 
 #[derive(Debug, Clone, Serialize, Eq, PartialEq, Ord, PartialOrd)]
@@ -53,6 +54,22 @@ pub struct PublicApiBoundaryDecision {
     pub item_reason: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub item_rule: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Eq, PartialEq, Ord, PartialOrd)]
+#[serde(rename_all = "snake_case")]
+pub enum ExcludedPathKind {
+    File,
+    Directory,
+}
+
+#[derive(Debug, Clone, Serialize, Eq, PartialEq, Ord, PartialOrd)]
+pub struct ExcludedPathDecision {
+    pub path: String,
+    pub kind: ExcludedPathKind,
+    pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -213,13 +230,18 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
     .context("failed to compile protocol regex")?;
     let api_pack = ApiRegexPack::new()?;
     let mut source_files = Vec::new();
+    let mut excluded_paths = Vec::new();
 
     let mut report = CrawlReport::default();
 
-    for entry in WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|entry| !is_excluded(entry))
-    {
+    for entry in WalkDir::new(root).into_iter().filter_entry(|entry| {
+        if let Some(decision) = exclusion_decision(root, scan_policy, entry) {
+            excluded_paths.push(decision);
+            false
+        } else {
+            true
+        }
+    }) {
         let entry = entry.with_context(|| format!("failed walking {}", root.display()))?;
         if !entry.file_type().is_file() {
             continue;
@@ -230,9 +252,6 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
             continue;
         };
         let rel = relative_display_path(root, path);
-        if scan_policy.is_excluded(&rel) {
-            continue;
-        }
 
         let source = match fs::read_to_string(path) {
             Ok(content) => content,
@@ -366,6 +385,9 @@ pub fn crawl_codebase(root: &Path, scan_policy: &ScanPolicy) -> Result<CrawlRepo
     report.public_api.dedup();
     report.public_api_boundary_decisions.sort();
     report.public_api_boundary_decisions.dedup();
+    report.excluded_paths = excluded_paths;
+    report.excluded_paths.sort();
+    report.excluded_paths.dedup();
 
     Ok(report)
 }
@@ -2989,26 +3011,61 @@ fn is_comment_line(line: &str, extension: &str) -> bool {
     }
 }
 
-fn is_excluded(entry: &DirEntry) -> bool {
-    if !entry.file_type().is_dir() {
-        return false;
+fn exclusion_decision(
+    root: &Path,
+    scan_policy: &ScanPolicy,
+    entry: &DirEntry,
+) -> Option<ExcludedPathDecision> {
+    if entry.depth() == 0 {
+        return None;
     }
 
-    matches!(
-        entry.file_name().to_str(),
-        Some(
-            ".git"
-                | "node_modules"
-                | "dist"
-                | "build"
-                | "target"
-                | "vendor"
-                | ".next"
-                | "tests"
-                | "examples"
-                | "benches"
-        )
-    )
+    let rel = relative_display_path(root, entry.path());
+    if let Some(rule) = scan_policy.matching_excluded_path(&rel) {
+        return Some(ExcludedPathDecision {
+            path: rel,
+            kind: entry_path_kind(entry),
+            reason: "scan_policy_exclude_path".to_string(),
+            rule: Some(rule),
+        });
+    }
+
+    if entry.file_type().is_dir() {
+        return default_ignored_directory_name(entry.file_name().to_str()?).map(|rule| {
+            ExcludedPathDecision {
+                path: rel,
+                kind: ExcludedPathKind::Directory,
+                reason: "default_ignored_directory".to_string(),
+                rule: Some(rule.to_string()),
+            }
+        });
+    }
+
+    None
+}
+
+fn entry_path_kind(entry: &DirEntry) -> ExcludedPathKind {
+    if entry.file_type().is_dir() {
+        ExcludedPathKind::Directory
+    } else {
+        ExcludedPathKind::File
+    }
+}
+
+fn default_ignored_directory_name(name: &str) -> Option<&'static str> {
+    match name {
+        ".git" => Some(".git"),
+        "node_modules" => Some("node_modules"),
+        "dist" => Some("dist"),
+        "build" => Some("build"),
+        "target" => Some("target"),
+        "vendor" => Some("vendor"),
+        ".next" => Some(".next"),
+        "tests" => Some("tests"),
+        "examples" => Some("examples"),
+        "benches" => Some("benches"),
+        _ => None,
+    }
 }
 
 fn relative_display_path(root: &Path, path: &Path) -> String {
@@ -3034,7 +3091,7 @@ mod tests {
 
     use crate::mvs::manifest::ScanPolicy;
 
-    use super::crawl_codebase;
+    use super::{crawl_codebase, ExcludedPathKind};
 
     struct TempWorkspace {
         path: PathBuf,
@@ -3708,6 +3765,12 @@ mod tests {
 
         assert!(report.feature_tags.is_empty());
         assert!(report.public_api.is_empty());
+        assert!(report.excluded_paths.iter().any(|decision| {
+            decision.path == "tests"
+                && decision.kind == ExcludedPathKind::Directory
+                && decision.reason == "default_ignored_directory"
+                && decision.rule.as_deref() == Some("tests")
+        }));
     }
 
     #[test]
@@ -6589,6 +6652,12 @@ mod tests {
         assert!(report.feature_tags.is_empty());
         assert!(report.protocol_tags.is_empty());
         assert!(report.public_api.is_empty());
+        assert!(report.excluded_paths.iter().any(|decision| {
+            decision.path == "src/generated"
+                && decision.kind == ExcludedPathKind::Directory
+                && decision.reason == "scan_policy_exclude_path"
+                && decision.rule.as_deref() == Some("src/generated")
+        }));
     }
 
     #[test]
