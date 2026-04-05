@@ -75,6 +75,7 @@ pub(super) fn extract_tree_sitter_public_api(
         SourceLanguage::Java => java::extract(root, source),
         SourceLanguage::Kotlin => kotlin::extract(root, source),
         SourceLanguage::Csharp => csharp::extract(root, source),
+        SourceLanguage::Dart => Vec::new(),
         SourceLanguage::Php => php::extract(root, source),
         SourceLanguage::Ruby => ruby::extract(root, source, context.ruby_export_following),
         SourceLanguage::Swift => swift::extract(root, source),

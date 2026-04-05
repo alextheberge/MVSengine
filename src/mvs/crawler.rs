@@ -174,6 +174,18 @@ struct ApiRegexPack {
     kt_decl: Regex,
     cs_type: Regex,
     cs_method: Regex,
+    dart_library: Regex,
+    dart_class: Regex,
+    dart_mixin: Regex,
+    dart_enum: Regex,
+    dart_extension_type: Regex,
+    dart_extension: Regex,
+    dart_typedef_equals: Regex,
+    dart_callable: Regex,
+    dart_getter: Regex,
+    dart_setter: Regex,
+    dart_static_const: Regex,
+    dart_field: Regex,
 }
 
 struct PublicApiExtractionContext<'a> {
@@ -215,6 +227,48 @@ impl ApiRegexPack {
                 r"^\s*public\s+(?:static\s+)?[A-Za-z0-9_<>,\[\].?\s]+\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?P<sig>\([^)]*\))",
             )
             .context("failed to compile C# API regex (method)")?,
+            dart_library: Regex::new(r"^\s*library\s+(?P<lib>[\w.$]+)\s*;")
+                .context("failed to compile Dart library regex")?,
+            dart_class: Regex::new(
+                r"^\s*(?:abstract\s+|sealed\s+|base\s+|interface\s+|final\s+)*class\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)",
+            )
+            .context("failed to compile Dart class regex")?,
+            dart_mixin: Regex::new(r"^\s*(?:base\s+)?mixin\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)")
+                .context("failed to compile Dart mixin regex")?,
+            dart_enum: Regex::new(r"^\s*enum\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)")
+                .context("failed to compile Dart enum regex")?,
+            dart_extension_type: Regex::new(
+                r"^\s*extension\s+type\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)",
+            )
+            .context("failed to compile Dart extension type regex")?,
+            dart_extension: Regex::new(
+                r"^\s*extension\s+(?:(?P<named>[A-Za-z_][A-Za-z0-9_]*)\s+)?on\s+(?P<on>[^{]+)",
+            )
+            .context("failed to compile Dart extension regex")?,
+            dart_typedef_equals: Regex::new(
+                r"^\s*typedef\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=",
+            )
+            .context("failed to compile Dart typedef regex")?,
+            dart_callable: Regex::new(
+                r"^\s*(?:@[\w.$]+\s+)*(?:external\s+)?(?:static\s+)?(?:async\s+)?(?:covariant\s+)?(?P<ret>void|[A-Za-z_][\w<>,\s\?\[\].]*)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\((?P<args>[^)]*)\)\s*(?:async\s*)?(?:\{|=>.*;|;)\s*$",
+            )
+            .context("failed to compile Dart callable regex")?,
+            dart_getter: Regex::new(
+                r"^\s*(?:@[\w.$]+\s+)*(?:static\s+)?(?P<ret>void|[A-Za-z_][\w<>,\s\?\[\].]*)\s+get\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:=>|\{)",
+            )
+            .context("failed to compile Dart getter regex")?,
+            dart_setter: Regex::new(
+                r"^\s*(?:static\s+)?void\s+set\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(",
+            )
+            .context("failed to compile Dart setter regex")?,
+            dart_static_const: Regex::new(
+                r"^\s*static\s+const\s+(?P<ty>[A-Za-z_][\w<>,\s\?\[\].]*)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=",
+            )
+            .context("failed to compile Dart static const regex")?,
+            dart_field: Regex::new(
+                r"^\s*(?:static\s+)?(?:late\s+)?(?:final\s+)?(?P<ty>[A-Za-z_][\w<>,\s\?\[\].]*)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*[=;]",
+            )
+            .context("failed to compile Dart field regex")?,
         })
     }
 }
@@ -1523,7 +1577,12 @@ fn extract_public_api(
         return tree_sitter_signatures;
     }
 
-    extract_regex_public_api(language, masked_code, context.regex)
+    let regex_source = if language == SourceLanguage::Dart {
+        source
+    } else {
+        masked_code
+    };
+    extract_regex_public_api(language, regex_source, context.regex)
 }
 
 fn extract_tree_sitter_public_api(
@@ -1954,11 +2013,222 @@ fn node_text_range(source: &str, start: usize, end: usize) -> Option<&str> {
     source.get(start..end)
 }
 
+fn dart_ident_public(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('_')
+}
+
+fn dart_qualified_library_prefix(library_prefix: &str, tail: &str) -> String {
+    if library_prefix.is_empty() {
+        tail.to_string()
+    } else {
+        format!("{library_prefix}{tail}")
+    }
+}
+
+fn extract_dart_public_api(source: &str, regex: &ApiRegexPack) -> Vec<String> {
+    let mut signatures = Vec::new();
+    let mut library_prefix = String::new();
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || is_comment_line(trimmed, "dart") {
+            continue;
+        }
+
+        if let Some(cap) = regex.dart_library.captures(trimmed) {
+            if let Some(lib) = cap.name("lib") {
+                let mut value = lib.as_str().to_string();
+                if !value.ends_with('.') {
+                    value.push('.');
+                }
+                library_prefix = value;
+            }
+        }
+
+        if let Some(cap) = regex.dart_class.captures(trimmed) {
+            let name = cap.name("name").map(|value| value.as_str()).unwrap_or("");
+            if dart_ident_public(name) {
+                let tail = normalize_signature(&format!("class {name}"));
+                if !tail.is_empty() {
+                    signatures.push(format!(
+                        "dart:type {}",
+                        dart_qualified_library_prefix(&library_prefix, &tail)
+                    ));
+                }
+            }
+        }
+
+        if let Some(cap) = regex.dart_mixin.captures(trimmed) {
+            let name = cap.name("name").map(|value| value.as_str()).unwrap_or("");
+            if dart_ident_public(name) {
+                let tail = normalize_signature(&format!("mixin {name}"));
+                if !tail.is_empty() {
+                    signatures.push(format!(
+                        "dart:type {}",
+                        dart_qualified_library_prefix(&library_prefix, &tail)
+                    ));
+                }
+            }
+        }
+
+        if let Some(cap) = regex.dart_enum.captures(trimmed) {
+            let name = cap.name("name").map(|value| value.as_str()).unwrap_or("");
+            if dart_ident_public(name) {
+                let tail = normalize_signature(&format!("enum {name}"));
+                if !tail.is_empty() {
+                    signatures.push(format!(
+                        "dart:type {}",
+                        dart_qualified_library_prefix(&library_prefix, &tail)
+                    ));
+                }
+            }
+        }
+
+        if let Some(cap) = regex.dart_extension_type.captures(trimmed) {
+            let name = cap.name("name").map(|value| value.as_str()).unwrap_or("");
+            if dart_ident_public(name) {
+                let tail = normalize_signature(&format!("extension type {name}"));
+                if !tail.is_empty() {
+                    signatures.push(format!(
+                        "dart:type {}",
+                        dart_qualified_library_prefix(&library_prefix, &tail)
+                    ));
+                }
+            }
+        }
+
+        if let Some(cap) = regex.dart_extension.captures(trimmed) {
+            let on = cap
+                .name("on")
+                .map(|value| normalize_signature(value.as_str()))
+                .unwrap_or_default();
+            if !on.is_empty() {
+                if let Some(named) = cap.name("named").map(|value| value.as_str()) {
+                    if dart_ident_public(named) {
+                        let tail = normalize_signature(&format!("extension {named} on {on}"));
+                        if !tail.is_empty() {
+                            signatures.push(format!(
+                                "dart:type {}",
+                                dart_qualified_library_prefix(&library_prefix, &tail)
+                            ));
+                        }
+                    }
+                } else {
+                    let tail = normalize_signature(&format!("extension on {on}"));
+                    if !tail.is_empty() {
+                        signatures.push(format!(
+                            "dart:type {}",
+                            dart_qualified_library_prefix(&library_prefix, &tail)
+                        ));
+                    }
+                }
+            }
+        }
+
+        if let Some(cap) = regex.dart_typedef_equals.captures(trimmed) {
+            let name = cap.name("name").map(|value| value.as_str()).unwrap_or("");
+            if dart_ident_public(name) {
+                let tail = normalize_signature(&format!("typedef {name} ="));
+                if !tail.is_empty() {
+                    signatures.push(format!(
+                        "dart:type {}",
+                        dart_qualified_library_prefix(&library_prefix, &tail)
+                    ));
+                }
+            }
+        }
+
+        if let Some(cap) = regex.dart_static_const.captures(trimmed) {
+            let name = cap.name("name").map(|value| value.as_str()).unwrap_or("");
+            if dart_ident_public(name) {
+                let ty = cap.name("ty").map(|value| value.as_str()).unwrap_or("");
+                let tail = normalize_signature(&format!("static const {ty} {name} ="));
+                if !tail.is_empty() {
+                    signatures.push(format!(
+                        "dart:field {}",
+                        dart_qualified_library_prefix(&library_prefix, &tail)
+                    ));
+                }
+            }
+        }
+
+        if let Some(cap) = regex.dart_getter.captures(trimmed) {
+            let ret = cap.name("ret").map(|value| value.as_str()).unwrap_or("").trim();
+            let name = cap.name("name").map(|value| value.as_str()).unwrap_or("");
+            if dart_ident_public(name) {
+                let tail = normalize_signature(&format!("{ret} get {name}"));
+                if !tail.is_empty() {
+                    signatures.push(format!(
+                        "dart:getter {}",
+                        dart_qualified_library_prefix(&library_prefix, &tail)
+                    ));
+                }
+            }
+        }
+
+        if let Some(cap) = regex.dart_setter.captures(trimmed) {
+            let name = cap.name("name").map(|value| value.as_str()).unwrap_or("");
+            if dart_ident_public(name) {
+                let tail = normalize_signature(&format!("void set {name}"));
+                if !tail.is_empty() {
+                    signatures.push(format!(
+                        "dart:setter {}",
+                        dart_qualified_library_prefix(&library_prefix, &tail)
+                    ));
+                }
+            }
+        }
+
+        if let Some(cap) = regex.dart_callable.captures(trimmed) {
+            let ret = cap.name("ret").map(|value| value.as_str()).unwrap_or("").trim();
+            let name = cap.name("name").map(|value| value.as_str()).unwrap_or("");
+            let args = cap.name("args").map(|value| value.as_str()).unwrap_or("");
+            if matches!(ret, "if" | "for" | "while" | "switch" | "catch" | "return") {
+                continue;
+            }
+            if dart_ident_public(name) {
+                let tail = normalize_signature(&format!("{ret} {name}({args})"));
+                if !tail.is_empty() {
+                    signatures.push(format!(
+                        "dart:function {}",
+                        dart_qualified_library_prefix(&library_prefix, &tail)
+                    ));
+                }
+            }
+        }
+
+        if let Some(cap) = regex.dart_field.captures(trimmed) {
+            let ty = cap.name("ty").map(|value| value.as_str()).unwrap_or("").trim();
+            let name = cap.name("name").map(|value| value.as_str()).unwrap_or("");
+            if matches!(ty, "if" | "for" | "while" | "return") {
+                continue;
+            }
+            if dart_ident_public(name) {
+                let tail = normalize_signature(&format!("{ty} {name}"));
+                if !tail.is_empty() {
+                    signatures.push(format!(
+                        "dart:field {}",
+                        dart_qualified_library_prefix(&library_prefix, &tail)
+                    ));
+                }
+            }
+        }
+    }
+
+    signatures.sort();
+    signatures.dedup();
+    signatures
+}
+
 fn extract_regex_public_api(
     language: SourceLanguage,
     source: &str,
     regex: &ApiRegexPack,
 ) -> Vec<String> {
+    if language == SourceLanguage::Dart {
+        return extract_dart_public_api(source, regex);
+    }
+
     let mut signatures = Vec::new();
 
     for line in source.lines() {
@@ -1976,7 +2246,8 @@ fn extract_regex_public_api(
             | SourceLanguage::Ruby
             | SourceLanguage::Swift
             | SourceLanguage::Lua
-            | SourceLanguage::Luau => {}
+            | SourceLanguage::Luau
+            | SourceLanguage::Dart => {}
             SourceLanguage::Go => {
                 if let Some(capture) = regex.go_func.captures(trimmed) {
                     let recv = capture
@@ -5214,6 +5485,67 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("hidden")));
+    }
+
+    #[test]
+    fn dart_regex_captures_public_types_functions_and_fields() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("api.dart"),
+            r#"
+            library demo;
+
+            class AuthApi {
+              static const String VERSION = 'v1';
+              String status = 'ready';
+
+              String login(String username) {
+                return username;
+              }
+
+              void _hidden() {}
+            }
+
+            String greet(String name) => 'Hi';
+        "#,
+        )
+        .expect("failed to write dart fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature.starts_with("dart:type ")
+                && entry.signature.contains("demo.")
+                && entry.signature.contains("class AuthApi")
+        }));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature.starts_with("dart:field ")
+                && entry.signature.contains("demo.")
+                && entry.signature.contains("VERSION")
+        }));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature.starts_with("dart:field ")
+                && entry.signature.contains("demo.")
+                && entry.signature.contains("status")
+        }));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature.starts_with("dart:function ")
+                && entry.signature.contains("demo.")
+                && entry.signature.contains("login(String username)")
+        }));
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature.starts_with("dart:function ")
+                && entry.signature.contains("demo.")
+                && entry.signature.contains("greet(String name)")
+        }));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains("_hidden")));
     }
 
     #[test]

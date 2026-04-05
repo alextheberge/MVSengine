@@ -186,7 +186,7 @@ This reduces formatting noise in `public_api_inventory` and makes policy pattern
 
 ## Scanner Precision
 
-The crawler now tokenizes source before matching decorators, uses AST extraction for Rust, and uses parser-backed public API adapters for every other supported language: TypeScript/JavaScript, Go, Python, Java, Kotlin, C#, PHP, Ruby, Swift, Lua, and Luau.
+The crawler now tokenizes source before matching decorators, uses AST extraction for Rust, and uses parser-backed public API adapters for every other supported language: TypeScript/JavaScript, Go, Python, Java, Kotlin, C#, PHP, Ruby, Swift, Lua, Luau, and Dart (Dart uses line-regex extraction today because the published Tree-sitter grammar targets a newer ABI than the `tree-sitter` 0.24 stack pinned here; see `docs/USAGE.md`).
 
 Internally, parser-backed extraction now dispatches through dedicated language adapters under `src/mvs/crawler/adapters/`, with shared language metadata in `src/mvs/crawler/language.rs`. That keeps new language work localized instead of expanding one monolithic extractor path.
 
@@ -207,6 +207,7 @@ Member signatures inside class-like scopes are now owner-qualified, and Java/C#/
 - Lua public API extraction tracks global `function` declarations and returned module-table exports such as `Api.connect = function(...) end`, `function Api:refresh(...)`, and named fields from returned tables, while `--` and long-bracket comments remain decorator-aware; when a file returns a module root such as `return Api`, that returned root becomes the export boundary and unrelated globals stop counting; `scan_policy.lua_export_following` or `--lua-export-following` can disable returned-root following or require explicit returned roots before runtime exports are inferred
 - Swift public API extraction tracks `public` and `open` types, functions, properties, and inherited protocol requirements, and the scanner masks multiline Swift string literals so embedded examples do not pollute evidence; type and protocol members are owner-qualified as `swift:public func AuthApi.login(...)` and `swift:public var SessionContract.token: ...`
 - Luau public API extraction tracks global `function` declarations, `export type` definitions, and returned module-table exports such as `Api.connect = function(...) end`, `function Api:refresh(...)`, and named fields from returned tables; when a file returns a module root such as `return Api`, that returned root becomes the runtime export boundary while `export type` declarations remain explicit API
+- Dart public API extraction uses comment-aware scanning plus line-regex heuristics for classes, mixins, enums, extensions, typedefs, fields, getters, setters, and callables; a `library` directive qualifies signatures with a dotted prefix, and names starting with `_` are skipped as library-private. Typical stored forms include `dart:type demo.class AuthApi`, `dart:field demo.static const String VERSION =`, and `dart:function demo.String login(String username)`
 
 If you already track Java, C#, or Kotlin API evidence, expect one regeneration after this change because canonical signatures now include declared package or namespace prefixes.
 

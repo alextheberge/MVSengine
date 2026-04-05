@@ -20,6 +20,7 @@ pub(super) enum SourceLanguage {
     Swift,
     Lua,
     Luau,
+    Dart,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -49,6 +50,7 @@ impl SourceLanguage {
             Some("swift") => Some(Self::Swift),
             Some("lua") => Some(Self::Lua),
             Some("luau") => Some(Self::Luau),
+            Some("dart") => Some(Self::Dart),
             _ => None,
         }
     }
@@ -70,6 +72,7 @@ impl SourceLanguage {
             Self::Swift => "swift",
             Self::Lua => "lua",
             Self::Luau => "luau",
+            Self::Dart => "dart",
         }
     }
 
@@ -102,7 +105,7 @@ impl SourceLanguage {
             Self::TypeScript => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
             Self::Tsx => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
             Self::JavaScript | Self::Jsx => Some(tree_sitter_javascript::LANGUAGE.into()),
-            Self::Rust => None,
+            Self::Dart | Self::Rust => None,
         }
     }
 }
