@@ -2153,7 +2153,11 @@ fn extract_dart_public_api(source: &str, regex: &ApiRegexPack) -> Vec<String> {
         }
 
         if let Some(cap) = regex.dart_getter.captures(trimmed) {
-            let ret = cap.name("ret").map(|value| value.as_str()).unwrap_or("").trim();
+            let ret = cap
+                .name("ret")
+                .map(|value| value.as_str())
+                .unwrap_or("")
+                .trim();
             let name = cap.name("name").map(|value| value.as_str()).unwrap_or("");
             if dart_ident_public(name) {
                 let tail = normalize_signature(&format!("{ret} get {name}"));
@@ -2180,7 +2184,11 @@ fn extract_dart_public_api(source: &str, regex: &ApiRegexPack) -> Vec<String> {
         }
 
         if let Some(cap) = regex.dart_callable.captures(trimmed) {
-            let ret = cap.name("ret").map(|value| value.as_str()).unwrap_or("").trim();
+            let ret = cap
+                .name("ret")
+                .map(|value| value.as_str())
+                .unwrap_or("")
+                .trim();
             let name = cap.name("name").map(|value| value.as_str()).unwrap_or("");
             let args = cap.name("args").map(|value| value.as_str()).unwrap_or("");
             if matches!(ret, "if" | "for" | "while" | "switch" | "catch" | "return") {
@@ -2198,7 +2206,11 @@ fn extract_dart_public_api(source: &str, regex: &ApiRegexPack) -> Vec<String> {
         }
 
         if let Some(cap) = regex.dart_field.captures(trimmed) {
-            let ty = cap.name("ty").map(|value| value.as_str()).unwrap_or("").trim();
+            let ty = cap
+                .name("ty")
+                .map(|value| value.as_str())
+                .unwrap_or("")
+                .trim();
             let name = cap.name("name").map(|value| value.as_str()).unwrap_or("");
             if matches!(ty, "if" | "for" | "while" | "return") {
                 continue;

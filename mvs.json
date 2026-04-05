@@ -1,20 +1,20 @@
 {
   "$schema": "https://mvs.dev/schema/v1",
   "identity": {
-    "mvs": "1.5.9-cli",
+    "mvs": "1.6.0-cli",
     "arch": 1,
-    "feat": 5,
-    "prot": 9,
+    "feat": 6,
+    "prot": 0,
     "cont": "cli"
   },
   "compatibility": {
     "host_range": {
       "min_prot": 0,
-      "max_prot": 9
+      "max_prot": 0
     },
     "extension_range": {
       "min_prot": 0,
-      "max_prot": 9
+      "max_prot": 0
     },
     "legacy_shims": []
   },
@@ -168,6 +168,17 @@
         "Protocol incremented due to @mvs-protocol surface drift (example source: src/commands/generator.rs)."
       ],
       "changed_at_unix": 1775138015
+    },
+    {
+      "mvs": "1.6.0-cli",
+      "arch": 1,
+      "feat": 6,
+      "prot": 0,
+      "cont": "cli",
+      "reasons": [
+        "Feature incremented for Dart language support in the codebase crawler and public API inventory."
+      ],
+      "changed_at_unix": 1775390400
     }
   ]
 }
