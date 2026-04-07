@@ -186,7 +186,7 @@ This reduces formatting noise in `public_api_inventory` and makes policy pattern
 
 ## Scanner Precision
 
-The crawler now tokenizes source before matching decorators, uses AST extraction for Rust, and uses parser-backed public API adapters for every other supported language: TypeScript/JavaScript, Go, Python, Java, Kotlin, C#, PHP, Ruby, Swift, Lua, Luau, and Dart (Dart uses line-regex extraction today because the published Tree-sitter grammar targets a newer ABI than the `tree-sitter` 0.24 stack pinned here; see `docs/USAGE.md`).
+The crawler now tokenizes source before matching decorators, uses AST extraction for Rust, and uses parser-backed public API adapters for every other supported language: TypeScript/JavaScript, Go, Python, Java, Kotlin, C#, PHP, Ruby, Swift, Lua, Luau, and Dart (Dart uses line-regex extraction today because the published Tree-sitter grammar targets a newer ABI than the `tree-sitter` 0.24 stack pinned here; see `docs/USAGE.md`). Shopify-style Liquid (`.liquid`) is scanned for decorators inside HTML comments, `{% comment %}…{% endcomment %}`, and `{% # … %}` tags; templates do not emit `public_api` entries.
 
 Internally, parser-backed extraction now dispatches through dedicated language adapters under `src/mvs/crawler/adapters/`, with shared language metadata in `src/mvs/crawler/language.rs`. That keeps new language work localized instead of expanding one monolithic extractor path.
 

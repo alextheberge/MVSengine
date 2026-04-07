@@ -2259,7 +2259,8 @@ fn extract_regex_public_api(
             | SourceLanguage::Swift
             | SourceLanguage::Lua
             | SourceLanguage::Luau
-            | SourceLanguage::Dart => {}
+            | SourceLanguage::Dart
+            | SourceLanguage::Liquid => {}
             SourceLanguage::Go => {
                 if let Some(capture) = regex.go_func.captures(trimmed) {
                     let recv = capture
@@ -2369,12 +2370,194 @@ fn extract_regex_public_api(
 }
 
 fn lex_source(source: &str, language: SourceLanguage) -> LexedSource {
+    if language == SourceLanguage::Liquid {
+        return lex_liquid_source(source);
+    }
     match language.lex_strategy() {
         LexStrategy::CStyle => lex_c_style_source(source, language),
         LexStrategy::Python => lex_python_source(source),
         LexStrategy::Php => lex_php_source(source),
         LexStrategy::Ruby => lex_ruby_source(source),
         LexStrategy::LuaFamily => lex_lua_family_source(source),
+    }
+}
+
+fn liquid_tag_opens_comment(inner: &str) -> bool {
+    let mut parts = inner.trim().split_ascii_whitespace();
+    matches!(parts.next(), Some(word) if word.eq_ignore_ascii_case("comment"))
+}
+
+fn liquid_tag_is_endcomment(inner: &str) -> bool {
+    let mut parts = inner.trim().split_ascii_whitespace();
+    matches!(parts.next(), Some(word) if word.eq_ignore_ascii_case("endcomment"))
+}
+
+fn parse_liquid_tag<'a>(source: &'a str, open: usize) -> Option<(&'a str, usize)> {
+    let bytes = source.as_bytes();
+    if bytes.get(open..open + 2) != Some(b"{%") {
+        return None;
+    }
+    let mut i = open + 2;
+    if bytes.get(i) == Some(&b'-') {
+        i += 1;
+    }
+    let inner_start = i;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' | b'"' => {
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' {
+                        i = (i + 2).min(bytes.len());
+                        continue;
+                    }
+                    if bytes[i] == quote {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            b'%' => {
+                if bytes.get(i + 1) == Some(&b'}') {
+                    let inner = source.get(inner_start..i)?;
+                    return Some((inner, i + 2));
+                }
+                if bytes.get(i + 1) == Some(&b'-') && bytes.get(i + 2) == Some(&b'}') {
+                    let inner = source.get(inner_start..i)?;
+                    return Some((inner, i + 3));
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    let inner = source.get(inner_start..bytes.len())?;
+    Some((inner, bytes.len()))
+}
+
+fn skip_liquid_output(bytes: &[u8], open: usize) -> usize {
+    let mut i = open + 2;
+    if bytes.get(i) == Some(&b'-') {
+        i += 1;
+    }
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' | b'"' => {
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' {
+                        i = (i + 2).min(bytes.len());
+                        continue;
+                    }
+                    if bytes[i] == quote {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            b'-' => {
+                if bytes.get(i + 1..i + 3) == Some(b"}}") {
+                    return i + 3;
+                }
+                i += 1;
+            }
+            b'}' => {
+                if bytes.get(i + 1) == Some(&b'}') {
+                    return i + 2;
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    bytes.len()
+}
+
+fn find_byte_subsequence(haystack: &[u8], start: usize, needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(start);
+    }
+    haystack[start..]
+        .windows(needle.len())
+        .position(|window| window == needle)
+        .map(|offset| start + offset)
+}
+
+fn lex_liquid_source(source: &str) -> LexedSource {
+    let bytes = source.as_bytes();
+    let mut masked = bytes.to_vec();
+    let mut comments = Vec::new();
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        if bytes.get(i..i + 4) == Some(b"<!--") {
+            if let Some(end) = find_byte_subsequence(bytes, i + 4, b"-->") {
+                comments.push(source[i + 4..end].to_string());
+                mask_range(&mut masked, bytes, i, end + 3);
+                i = end + 3;
+                continue;
+            }
+        }
+
+        if bytes.get(i..i + 2) == Some(b"{{") {
+            let end = skip_liquid_output(bytes, i);
+            mask_range(&mut masked, bytes, i, end);
+            i = end;
+            continue;
+        }
+
+        if bytes.get(i..i + 2) == Some(b"{%") {
+            if let Some((inner, open_tag_end)) = parse_liquid_tag(source, i) {
+                if liquid_tag_opens_comment(inner) {
+                    let body_start = open_tag_end;
+                    let mut j = open_tag_end;
+                    let mut closed = false;
+                    while j < bytes.len() {
+                        if bytes.get(j..j + 2) == Some(b"{%") {
+                            if let Some((inner2, end2)) = parse_liquid_tag(source, j) {
+                                if liquid_tag_is_endcomment(inner2) {
+                                    comments.push(source[body_start..j].to_string());
+                                    mask_range(&mut masked, bytes, i, end2);
+                                    i = end2;
+                                    closed = true;
+                                    break;
+                                }
+                                j = end2;
+                                continue;
+                            }
+                        }
+                        j += 1;
+                    }
+                    if closed {
+                        continue;
+                    }
+                    comments.push(source[body_start..].to_string());
+                    mask_range(&mut masked, bytes, i, bytes.len());
+                    break;
+                }
+                if let Some(rest) = inner.trim_start().strip_prefix('#') {
+                    comments.push(rest.to_string());
+                    mask_range(&mut masked, bytes, i, open_tag_end);
+                    i = open_tag_end;
+                    continue;
+                }
+
+                mask_range(&mut masked, bytes, i, open_tag_end);
+                i = open_tag_end;
+                continue;
+            }
+        }
+
+        i += 1;
+    }
+
+    LexedSource {
+        comments,
+        masked_code: String::from_utf8(masked).unwrap_or_else(|_| source.to_string()),
     }
 }
 
@@ -3290,6 +3473,12 @@ fn is_comment_line(line: &str, extension: &str) -> bool {
         "php" => line.starts_with('#') || line.starts_with("//") || line.starts_with("/*"),
         "rb" => line.starts_with('#') || line.starts_with("=begin"),
         "lua" | "luau" => line.starts_with("--"),
+        "liquid" => {
+            let t = line.trim_start();
+            t.starts_with("<!--")
+                || t.starts_with("{%")
+                || t.starts_with("{%-")
+        }
         _ => line.starts_with("//") || line.starts_with("/*") || line.starts_with('*'),
     }
 }
@@ -3483,6 +3672,38 @@ mod tests {
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("login")));
+    }
+
+    #[test]
+    fn liquid_extracts_mvs_tags_from_comments_not_from_markup() {
+        let workspace = TempWorkspace::new();
+        let src = workspace.path().join("src");
+        fs::create_dir_all(&src).expect("failed to create src");
+
+        fs::write(
+            src.join("theme.liquid"),
+            r#"
+            <div>{{ "@mvs-feature(\"fake\")" }}</div>
+            <!-- @mvs-feature("storefront_theme") -->
+            {% comment %}
+              @mvs-protocol("liquid-templates-v1")
+            {% endcomment %}
+            {%- # @mvs-feature("inline_liquid_comment") -%}
+        "#,
+        )
+        .expect("failed to write liquid fixture");
+
+        let report =
+            crawl_codebase(workspace.path(), &ScanPolicy::default()).expect("crawler failed");
+
+        assert!(report.feature_tags.contains("storefront_theme"));
+        assert!(report.feature_tags.contains("inline_liquid_comment"));
+        assert!(report.protocol_tags.contains("liquid-templates-v1"));
+        assert!(!report.feature_tags.contains("fake"));
+        assert!(
+            report.public_api.is_empty(),
+            "liquid templates should not contribute public_api signatures"
+        );
     }
 
     #[test]

@@ -81,6 +81,6 @@ pub(super) fn extract_tree_sitter_public_api(
         SourceLanguage::Swift => swift::extract(root, source),
         SourceLanguage::Lua => lua::extract(root, source, context.lua_export_following),
         SourceLanguage::Luau => luau::extract(root, source, context.lua_export_following),
-        SourceLanguage::Rust => Vec::new(),
+        SourceLanguage::Rust | SourceLanguage::Liquid => Vec::new(),
     }
 }
