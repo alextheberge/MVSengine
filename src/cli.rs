@@ -10,6 +10,7 @@ use crate::mvs::manifest::{
 };
 
 pub const EXIT_SUCCESS: i32 = 0;
+pub const EXIT_INIT_ERROR: i32 = 5;
 pub const EXIT_GENERATE_ERROR: i32 = 10;
 pub const EXIT_LINT_FAILED: i32 = 20;
 pub const EXIT_LINT_ERROR: i32 = 21;
@@ -28,10 +29,15 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Init(InitArgs),
     Generate(GenerateArgs),
     Lint(LintArgs),
     Validate(ValidateArgs),
+    ValidateAll(ValidateAllArgs),
+    CheckManifest(CheckManifestArgs),
+    Constraint(ConstraintArgs),
     Report(ReportArgs),
+    Schema(SchemaArgs),
     SelfUpdate(SelfUpdateArgs),
 }
 
@@ -138,6 +144,36 @@ impl From<LuaExportFollowingArg> for LuaExportFollowing {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct InitArgs {
+    /// Root directory of the project to initialize.
+    #[arg(long, default_value = ".")]
+    pub root: PathBuf,
+
+    /// Path (relative to --root) where the manifest will be written.
+    #[arg(long, default_value = "mvs.json")]
+    pub manifest: PathBuf,
+
+    /// Deployment context label (e.g. "cli", "lib", "plugin").
+    #[arg(long)]
+    pub context: Option<String>,
+
+    /// Overwrite an existing manifest.
+    #[arg(long, default_value_t = false)]
+    pub force: bool,
+
+    /// Print the generated manifest without writing it.
+    #[arg(long, default_value_t = false)]
+    pub dry_run: bool,
+
+    /// Apply a named scan-policy preset: library, cli, plugin, sdk.
+    #[arg(long, value_name = "PRESET")]
+    pub preset: Option<String>,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct GenerateArgs {
     #[arg(long, default_value = ".")]
     pub root: PathBuf,
@@ -220,6 +256,14 @@ pub struct LintArgs {
     #[arg(long, value_delimiter = ',')]
     pub available_model_capabilities: Vec<String>,
 
+    /// Print per-failure remediation steps and list specific drifted symbols.
+    #[arg(long, default_value_t = false)]
+    pub explain: bool,
+
+    /// Automatically run `generate` when drift is detected, then re-lint.
+    #[arg(long, default_value_t = false)]
+    pub remediate: bool,
+
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 }
@@ -246,6 +290,38 @@ pub struct ValidateArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct ValidateAllArgs {
+    /// Directory to recursively search for mvs.json files.
+    /// Mutually exclusive with explicit --manifest paths.
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
+
+    /// Explicit mvs.json paths to validate against each other.
+    /// When provided, --dir is ignored.
+    #[arg(long = "manifest", value_name = "PATH")]
+    pub manifests: Vec<PathBuf>,
+
+    /// Optional deployment context filter.
+    #[arg(long)]
+    pub context: Option<String>,
+
+    /// Allow legacy shims to satisfy compatibility.
+    #[arg(long, default_value_t = true)]
+    pub allow_shims: bool,
+
+    /// Only validate pairs that share the same ARCH value.
+    #[arg(long, default_value_t = false)]
+    pub same_arch_only: bool,
+
+    /// Maximum directory depth when searching for mvs.json files.
+    #[arg(long, default_value_t = 6)]
+    pub max_depth: usize,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct ReportArgs {
     #[arg(long)]
     pub base_manifest: PathBuf,
@@ -255,6 +331,45 @@ pub struct ReportArgs {
 
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct CheckManifestArgs {
+    /// Path to the manifest file to validate.
+    #[arg(long, default_value = "mvs.json")]
+    pub manifest: PathBuf,
+
+    /// Root directory used to resolve relative `public_api_roots` paths.
+    #[arg(long, default_value = ".")]
+    pub root: PathBuf,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ConstraintArgs {
+    /// First manifest (acts as host in the suggested ranges).
+    #[arg(long)]
+    pub host_manifest: PathBuf,
+
+    /// Second manifest (acts as extension in the suggested ranges).
+    #[arg(long)]
+    pub extension_manifest: PathBuf,
+
+    /// Allow a looser range: extend N versions beyond the current PROT on each side.
+    #[arg(long, value_name = "N", default_value_t = 0)]
+    pub lookahead: u64,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct SchemaArgs {
+    /// Write the schema to a file instead of stdout.
+    #[arg(long, value_name = "PATH")]
+    pub output: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -270,10 +385,15 @@ pub fn run() -> i32 {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::Init(args) => run_with_update_notification(commands::init::run(args)),
         Command::Generate(args) => run_with_update_notification(commands::generator::run(args)),
         Command::Lint(args) => run_with_update_notification(commands::linter::run(args)),
         Command::Validate(args) => run_with_update_notification(commands::reader::run(args)),
+        Command::ValidateAll(args) => run_with_update_notification(commands::validate_all::run(args)),
+        Command::CheckManifest(args) => run_with_update_notification(commands::check_manifest::run(args)),
+        Command::Constraint(args) => run_with_update_notification(commands::constraint::run(args)),
         Command::Report(args) => run_with_update_notification(commands::report::run(args)),
+        Command::Schema(args) => commands::schema::run(args),
         Command::SelfUpdate(args) => commands::self_update::run(args),
     }
 }

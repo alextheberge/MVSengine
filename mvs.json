@@ -1,20 +1,20 @@
 {
   "$schema": "https://mvs.dev/schema/v1",
   "identity": {
-    "mvs": "1.6.0-cli",
+    "mvs": "1.8.2-cli",
     "arch": 1,
-    "feat": 6,
-    "prot": 0,
+    "feat": 8,
+    "prot": 2,
     "cont": "cli"
   },
   "compatibility": {
     "host_range": {
       "min_prot": 0,
-      "max_prot": 0
+      "max_prot": 2
     },
     "extension_range": {
       "min_prot": 0,
-      "max_prot": 0
+      "max_prot": 2
     },
     "legacy_shims": []
   },
@@ -53,21 +53,31 @@
     ]
   },
   "evidence": {
-    "feature_hash": "2f2d9e3d7d4495bf6f7d274603e2073de7d803e2f4bb5b48947e84b3ebe8cf34",
-    "protocol_hash": "dfe6af4cad3a6c3d6151880d51bf912bcb8e3741547b0f4e16348fea3c8b30f0",
+    "feature_hash": "65c66eca5552f50acc1dcd0dd190e2b44349b6775b6c457a65280a4fd136eab1",
+    "protocol_hash": "8873c54cd8d56904a5b98e3a0f26b4320831d5dbd8ada5d86626a1012808fdd2",
     "public_api_hash": "6a86f0b108e171c5e4bf8275bed49230b4cec90d0f16270e6eedabeaa6fa11f3",
     "feature_inventory": [
+      "constraint_suggestion",
       "manager_self_update",
+      "manifest_batch_validation",
       "manifest_comparison_reporting",
       "manifest_compatibility_validation",
       "manifest_generation",
-      "manifest_linting"
+      "manifest_init",
+      "manifest_linting",
+      "manifest_schema_output",
+      "manifest_self_validation"
     ],
     "protocol_inventory": [
+      "cli_check_manifest_command",
+      "cli_constraint_command",
       "cli_generate_command",
+      "cli_init_command",
       "cli_lint_command",
       "cli_report_command",
+      "cli_schema_command",
       "cli_self_update_command",
+      "cli_validate_all_command",
       "cli_validate_command"
     ],
     "public_api_inventory": [
@@ -179,6 +189,30 @@
         "Feature incremented for Dart language support in the codebase crawler and public API inventory."
       ],
       "changed_at_unix": 1775390400
+    },
+    {
+      "mvs": "1.7.1-cli",
+      "arch": 1,
+      "feat": 7,
+      "prot": 1,
+      "cont": "cli",
+      "reasons": [
+        "Feature incremented due to @mvs-feature set drift (example source: src/commands/self_update.rs).",
+        "Protocol incremented due to @mvs-protocol surface drift (example source: src/commands/generator.rs)."
+      ],
+      "changed_at_unix": 1776215922
+    },
+    {
+      "mvs": "1.8.2-cli",
+      "arch": 1,
+      "feat": 8,
+      "prot": 2,
+      "cont": "cli",
+      "reasons": [
+        "Feature incremented due to @mvs-feature set drift (example source: src/commands/constraint.rs).",
+        "Protocol incremented due to @mvs-protocol surface drift (example source: src/commands/check_manifest.rs)."
+      ],
+      "changed_at_unix": 1776216546
     }
   ]
 }

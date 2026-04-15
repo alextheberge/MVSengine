@@ -5,7 +5,8 @@ use anyhow::Context;
 use serde::Serialize;
 
 use crate::cli::{
-    LintArgs, OutputFormat, EXIT_LINT_ERROR, EXIT_LINT_FAILED, EXIT_MANIFEST_ERROR, EXIT_SUCCESS,
+    GenerateArgs, LintArgs, OutputFormat, EXIT_LINT_ERROR, EXIT_LINT_FAILED, EXIT_MANIFEST_ERROR,
+    EXIT_SUCCESS,
 };
 use crate::commands::boundary_debug::{build_boundary_debug, BoundaryDebugReport};
 use crate::commands::output::{emit_error, emit_json, CommandFailure};
@@ -16,13 +17,62 @@ use crate::mvs::manifest::{InventoryDiff, Manifest, PublicApiSnapshot};
 /// @mvs-feature("manifest_linting")
 /// @mvs-protocol("cli_lint_command")
 pub fn run(args: LintArgs) -> i32 {
+    let explain = args.explain;
+    let remediate = args.remediate;
+    let format = args.format;
     match try_run(&args) {
-        Ok(report) => match render_lint_report(&report, args.format) {
-            Ok(()) => report.exit_code,
-            Err(error) => emit_error("lint", args.format, error.exit_code, &error.message),
-        },
-        Err(error) => emit_error("lint", args.format, error.exit_code, &error.message),
+        Ok(report) => {
+            let exit_code = report.exit_code;
+            match render_lint_report(&report, format, explain) {
+                Ok(()) => {}
+                Err(error) => return emit_error("lint", format, error.exit_code, &error.message),
+            }
+            if exit_code != EXIT_SUCCESS && remediate {
+                return run_remediate(&args);
+            }
+            exit_code
+        }
+        Err(error) => emit_error("lint", format, error.exit_code, &error.message),
     }
+}
+
+fn run_remediate(args: &LintArgs) -> i32 {
+    println!("\n-- Remediating: running `generate` to update manifest evidence --");
+    let generate_args = GenerateArgs {
+        root: args.root.clone(),
+        manifest: args.manifest.clone(),
+        context: None,
+        ai_schema: args.ai_schema.clone(),
+        arch_break: false,
+        arch_reason: None,
+        lock_step: false,
+        backwards_compatible: None,
+        dry_run: false,
+        exclude_paths: vec![],
+        public_api_roots: vec![],
+        ts_export_following: None,
+        go_export_following: None,
+        rust_export_following: None,
+        ruby_export_following: None,
+        lua_export_following: None,
+        python_module_roots: vec![],
+        rust_workspace_members: vec![],
+        python_export_following: None,
+        public_api_includes: vec![],
+        public_api_excludes: vec![],
+        format: args.format,
+    };
+    let gen_exit = crate::commands::generator::run(generate_args);
+    if gen_exit != EXIT_SUCCESS {
+        return gen_exit;
+    }
+    println!("\n-- Re-linting after remediation --");
+    // Re-run lint; don't pass --remediate again to avoid infinite loop
+    let re_lint_args = LintArgs {
+        remediate: false,
+        ..args.clone()
+    };
+    run(re_lint_args)
 }
 
 fn try_run(args: &LintArgs) -> std::result::Result<LintReport, CommandFailure> {
@@ -234,6 +284,7 @@ fn summarize_public_api_diff(diff: &crate::mvs::manifest::PublicApiInventoryDiff
 fn render_lint_report(
     report: &LintReport,
     format: OutputFormat,
+    explain: bool,
 ) -> std::result::Result<(), CommandFailure> {
     match format {
         OutputFormat::Text => {
@@ -256,10 +307,87 @@ fn render_lint_report(
                 );
             }
             render_scan_policy(&report.scan_policy);
+            if explain && report.exit_code != EXIT_SUCCESS {
+                render_explain(&report.evidence);
+            }
+            emit_github_annotations(report);
             Ok(())
         }
         OutputFormat::Json => emit_json(report),
     }
+}
+
+fn render_explain(evidence: &LintEvidenceReport) {
+    let diff = &evidence.diff;
+    let has_feature_drift = !diff.features.added.is_empty() || !diff.features.removed.is_empty();
+    let has_protocol_drift =
+        !diff.protocols.added.is_empty() || !diff.protocols.removed.is_empty();
+    let has_api_drift =
+        !diff.public_api.added.is_empty() || !diff.public_api.removed.is_empty();
+
+    println!("\n--- Explanation & Remediation ---");
+
+    if has_feature_drift {
+        println!("\n[Feature drift]");
+        for tag in &diff.features.added {
+            println!("  + added @mvs-feature: {tag}");
+        }
+        for tag in &diff.features.removed {
+            println!("  - removed @mvs-feature: {tag}");
+        }
+        println!("  → A FEAT increment may be warranted. Run: mvs-manager generate");
+    }
+
+    if has_protocol_drift {
+        println!("\n[Protocol surface drift]");
+        for tag in &diff.protocols.added {
+            println!("  + added @mvs-protocol: {tag}");
+        }
+        for tag in &diff.protocols.removed {
+            println!("  - removed @mvs-protocol: {tag}");
+        }
+        println!("  → A PROT increment is required. Run: mvs-manager generate");
+    }
+
+    if has_api_drift {
+        println!("\n[Public API signature drift]");
+        for item in &diff.public_api.added {
+            println!("  + {}  ({})", item.signature, item.file);
+        }
+        for item in &diff.public_api.removed {
+            println!("  - {}  ({})", item.signature, item.file);
+        }
+        println!("  → A PROT increment is required. Run: mvs-manager generate");
+        println!("  → If this change is intentional, update host_range / extension_range in mvs.json to reflect the new protocol.");
+    }
+
+    if !has_feature_drift && !has_protocol_drift && !has_api_drift {
+        println!("\nEvidence hashes are stale but inventories match.");
+        println!("  → Run: mvs-manager generate  (this will refresh the hashes without changing the version)");
+    }
+
+    println!();
+}
+
+/// Emit GitHub Actions workflow commands when running inside a GitHub Actions
+/// environment (`GITHUB_ACTIONS=true`).  Failures become `::error::` lines
+/// that appear as inline annotations on the PR diff.
+fn emit_github_annotations(report: &LintReport) {
+    if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true") {
+        return;
+    }
+    if report.exit_code == EXIT_SUCCESS {
+        println!("::notice title=MVS Lint::Manifest evidence is up to date for {}", report.manifest_path);
+        return;
+    }
+    for failure in &report.failures {
+        // Emit a workflow error annotation.  We don't have a precise file/line
+        // for every failure type, so we emit a title-level annotation.
+        println!("::error title=MVS Lint::{failure}");
+    }
+    println!(
+        "::error title=MVS Lint::Run `mvs-manager generate` to update evidence hashes, then re-commit."
+    );
 }
 
 fn render_scan_policy(scan_policy: &crate::mvs::manifest::ScanPolicy) {

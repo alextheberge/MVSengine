@@ -78,3 +78,41 @@
 - [x] Add baseline domain modules (`manifest`, `crawler`, `reader`).
 - [x] Generate initial `mvs.json` for dogfooding.
 - [x] Pass `cargo fmt` and `cargo check`.
+
+---
+
+## Phase 7 - Developer Experience & Onboarding
+
+### High Priority
+- [x] **`mvs init` command**: Detect project language from filesystem (Cargo.toml → Rust, package.json → TS/JS, go.mod → Go, etc.), generate a starter `mvs.json` with sensible scan_policy defaults. Accept `--context`, `--root`, `--force`, `--dry-run`, `--preset` flags. (`src/commands/init.rs`)
+- [x] **GitHub Actions annotations**: When `GITHUB_ACTIONS=true` is set in the environment, emit `::error::` and `::warning::` annotation lines from `lint` so failures appear inline on PR diffs rather than as a raw exit code. (`src/commands/linter.rs`)
+- [x] **`mvs schema` command**: Output the canonical JSON Schema for `mvs.json` to stdout (or write it to a file with `--output`). Enables `$schema`-based editor autocompletion and external validation. (`src/commands/schema.rs`)
+- [x] **`--explain` flag on `lint`**: Augment lint failure output with per-failure remediation steps, specific drifted symbol names and their source files, and the exact `mvs-manager generate` invocation needed to resolve each issue. (`src/commands/linter.rs`)
+- [x] **`mvs validate-all` command**: Accept a directory or explicit list of `mvs.json` files and run host/extension matrix validation across all pairs, emitting a structured compatibility report. Closes the monorepo batch-validation gap. (`src/commands/validate_all.rs`)
+
+### Medium Priority
+- [ ] **Scan policy presets**: Add named presets (`library`, `cli`, `plugin`, `sdk`) that configure sensible `scan_policy` defaults. Usable via `mvs init --preset library` or as a `scan_policy.preset` field in `mvs.json`.
+- [ ] **`mvs watch` command**: Re-run `generate` + `lint` on file-save via filesystem watching. Useful during active development on a public API.
+- [x] **`--remediate` flag on `lint`**: Auto-run `generate` when lint detects drift, then re-lint. (`src/commands/linter.rs`)
+- [ ] **`report` command `--with-source-context` flag**: Re-crawl both manifests' source trees and attach `boundary_debug` information to the diff, showing which code change triggered each manifest delta.
+- [x] **Manifest self-validation command (`mvs check-manifest`)**: Validates schema field, identity string consistency, range inversion, shim integrity, missing API root files, and stale evidence hashes. (`src/commands/check_manifest.rs`)
+- [x] **Version constraint authoring helper (`mvs constraint`)**: Given two manifests, computes and prints the tightest valid `extension_range`/`host_range` pair, with optional `--lookahead N` to widen. (`src/commands/constraint.rs`)
+
+### Low Priority
+- [ ] **Dart adapter module**: Refactor the inlined Dart extraction (~200 lines in `crawler.rs`) into `src/mvs/crawler/adapters/dart.rs` following the same module pattern as other languages. Create a `DartRegexPack` sub-struct to decouple from the monolithic `ApiRegexPack`. Enables a clean path to tree-sitter integration when the grammar ABI is compatible.
+- [ ] **C/C++ support**: Add public API extraction for `.h`/`.hpp` headers — function declarations, `extern "C"` blocks, struct/class definitions. High value for plugin/SDK scenarios with a C ABI layer.
+- [ ] **IDE/LSP integration**: VS Code extension or language server that shows inline warnings when a public symbol is modified without a corresponding version bump.
+- [ ] **GitHub Actions output annotations for `generate`**: Emit `::notice::` lines for auto-derived version increments so PR checks show exactly which axis bumped and why.
+- [ ] **Plugin/custom extractor protocol**: Allow users to plug in their own language extractor via a subprocess protocol (stdin/stdout JSON) or WASM module, for niche DSLs or generated code.
+- [ ] **Larger fixture corpora**: Add integration test fixtures from real open-source projects for each supported language to stress-test edge cases in export following and API boundary detection.
+- [ ] **Replace test `panic!` placeholders**: `src/commands/generator.rs` test code uses `panic!("unexpected strategy")` as a fallback assertion. Replace with proper `assert!` or `assert_eq!` calls.
+
+---
+
+## Backlog (Post-1.x)
+- [ ] **Zig / Nim / Odin support**: Emerging systems languages used in plugin/embedding contexts.
+- [ ] **Ruby metaprogramming coverage**: `define_method`, `method_missing`, eval-based definitions. Intentionally deferred past 1.x.
+- [ ] **Python dynamic `__all__` assembly**: Purely dynamic or metaprogramming-heavy export patterns. Deferred by design.
+- [ ] **Lua/Luau complex module export tables**: Multiple return statements, conditional exports. Falls back to heuristics in 1.x.
+- [ ] **Namespace-like Python layouts**: Deeper nested package hierarchies with namespace packages.
+- [ ] **Changelog / release notes generation**: Given that MVSengine already knows exactly what changed (features, protocols, API drift), generate structured changelogs or release note drafts from manifest history.
