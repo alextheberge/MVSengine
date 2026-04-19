@@ -1,20 +1,20 @@
 {
   "$schema": "https://mvs.dev/schema/v1",
   "identity": {
-    "mvs": "1.8.2-cli",
+    "mvs": "1.9.3-cli",
     "arch": 1,
-    "feat": 8,
-    "prot": 2,
+    "feat": 9,
+    "prot": 3,
     "cont": "cli"
   },
   "compatibility": {
     "host_range": {
       "min_prot": 0,
-      "max_prot": 2
+      "max_prot": 3
     },
     "extension_range": {
       "min_prot": 0,
-      "max_prot": 2
+      "max_prot": 3
     },
     "legacy_shims": []
   },
@@ -53,8 +53,8 @@
     ]
   },
   "evidence": {
-    "feature_hash": "65c66eca5552f50acc1dcd0dd190e2b44349b6775b6c457a65280a4fd136eab1",
-    "protocol_hash": "8873c54cd8d56904a5b98e3a0f26b4320831d5dbd8ada5d86626a1012808fdd2",
+    "feature_hash": "6ff1430d7f90742bfc59e89a47d21bad4e5e1f1a8af97aa6f67b781c18a74496",
+    "protocol_hash": "139f1bb3f1a16ae9ede6006e6bd373e54ed5e7b6665f9fe6ed06bac727d5800b",
     "public_api_hash": "6a86f0b108e171c5e4bf8275bed49230b4cec90d0f16270e6eedabeaa6fa11f3",
     "feature_inventory": [
       "constraint_suggestion",
@@ -66,7 +66,8 @@
       "manifest_init",
       "manifest_linting",
       "manifest_schema_output",
-      "manifest_self_validation"
+      "manifest_self_validation",
+      "manifest_watch"
     ],
     "protocol_inventory": [
       "cli_check_manifest_command",
@@ -78,7 +79,8 @@
       "cli_schema_command",
       "cli_self_update_command",
       "cli_validate_all_command",
-      "cli_validate_command"
+      "cli_validate_command",
+      "cli_watch_command"
     ],
     "public_api_inventory": [
       {
@@ -213,6 +215,18 @@
         "Protocol incremented due to @mvs-protocol surface drift (example source: src/commands/check_manifest.rs)."
       ],
       "changed_at_unix": 1776216546
+    },
+    {
+      "mvs": "1.9.3-cli",
+      "arch": 1,
+      "feat": 9,
+      "prot": 3,
+      "cont": "cli",
+      "reasons": [
+        "Feature incremented due to @mvs-feature set drift (example source: src/commands/constraint.rs).",
+        "Protocol incremented due to @mvs-protocol surface drift (example source: src/commands/check_manifest.rs)."
+      ],
+      "changed_at_unix": 1776625444
     }
   ]
 }

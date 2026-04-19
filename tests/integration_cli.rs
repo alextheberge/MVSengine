@@ -221,6 +221,105 @@ fn lint_fails_after_public_api_drift_without_regeneration() {
 }
 
 #[test]
+fn watch_once_remediates_manifest_drift() {
+    let temp = TempWorkspace::new();
+    let (project_root, manifest_path) = generator_fixture_workspace(&temp);
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+        ])
+        .assert()
+        .success();
+
+    let api_file = project_root.join("src/api.ts");
+    let updated = format!(
+        "{}\nexport function rotateToken(token: string): string {{ return token; }}\n",
+        fs::read_to_string(&api_file).expect("failed to read API file")
+    );
+    fs::write(&api_file, updated).expect("failed to write API file drift");
+
+    let output = binary_cmd()
+        .args([
+            "watch",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--once",
+            "--remediate",
+        ])
+        .output()
+        .expect("watch --once should run");
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).expect("watch output should be utf-8");
+    assert!(stdout.contains("-- Remediating: running `generate` to update manifest evidence --"));
+    assert!(stdout
+        .contains("Watch summary: 1 cycle(s), 1 maintenance run(s), 0 skipped, last exit code 0."));
+
+    let mut lint = binary_cmd();
+    lint.args([
+        "lint",
+        "--root",
+        project_root.to_str().expect("non-utf8 path"),
+        "--manifest",
+        manifest_path.to_str().expect("non-utf8 path"),
+    ])
+    .assert()
+    .success()
+    .stdout(contains("Lint passed"));
+}
+
+#[test]
+fn watch_skips_unchanged_cycles_by_default() {
+    let temp = TempWorkspace::new();
+    let (project_root, manifest_path) = generator_fixture_workspace(&temp);
+
+    let mut generate = binary_cmd();
+    generate
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+        ])
+        .assert()
+        .success();
+
+    let output = binary_cmd()
+        .args([
+            "watch",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--max-runs",
+            "2",
+            "--interval-secs",
+            "0",
+        ])
+        .output()
+        .expect("watch should run");
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).expect("watch output should be utf-8");
+    assert_eq!(stdout.matches("Lint passed").count(), 1);
+    assert!(stdout
+        .contains("Watch summary: 2 cycle(s), 1 maintenance run(s), 1 skipped, last exit code 0."));
+}
+
+#[test]
 fn self_update_check_reports_available_release_in_text_mode() {
     let temp = TempWorkspace::new();
     let update_state = temp.path().join("update-state.json");

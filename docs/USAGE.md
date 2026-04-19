@@ -80,6 +80,22 @@ AI liveness checks (runtime capability validation):
 mvs-manager lint --root . --manifest mvs.json --available-model-capabilities tool_calling,json_schema,reasoning-v1
 ```
 
+## 2b) Run periodic maintenance
+
+Interactive maintenance loop:
+
+```bash
+mvs-manager watch --root . --manifest mvs.json --remediate --interval-secs 30
+```
+
+Scheduler-friendly single pass:
+
+```bash
+mvs-manager watch --root . --manifest mvs.json --once --remediate
+```
+
+`watch` reuses the normal lint flow, so `--explain`, `--ai-schema`, and `--available-model-capabilities` still apply. By default it fingerprints the workspace and skips unchanged cycles; add `--run-every-interval` if you want a strict cadence regardless of filesystem changes.
+
 ## 3) Validate host/extension compatibility
 
 ```bash

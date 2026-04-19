@@ -92,7 +92,7 @@
 
 ### Medium Priority
 - [ ] **Scan policy presets**: Add named presets (`library`, `cli`, `plugin`, `sdk`) that configure sensible `scan_policy` defaults. Usable via `mvs init --preset library` or as a `scan_policy.preset` field in `mvs.json`.
-- [ ] **`mvs watch` command**: Re-run `generate` + `lint` on file-save via filesystem watching. Useful during active development on a public API.
+- [x] **`mvs watch` command**: Re-run maintenance on a cadence using workspace fingerprinting, with optional `--remediate` for auto-generating manifest updates and `--once` for scheduler-friendly single-pass runs. (`src/commands/watch.rs`)
 - [x] **`--remediate` flag on `lint`**: Auto-run `generate` when lint detects drift, then re-lint. (`src/commands/linter.rs`)
 - [ ] **`report` command `--with-source-context` flag**: Re-crawl both manifests' source trees and attach `boundary_debug` information to the diff, showing which code change triggered each manifest delta.
 - [x] **Manifest self-validation command (`mvs check-manifest`)**: Validates schema field, identity string consistency, range inversion, shim integrity, missing API root files, and stale evidence hashes. (`src/commands/check_manifest.rs`)

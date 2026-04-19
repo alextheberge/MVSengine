@@ -32,6 +32,7 @@ enum Command {
     Init(InitArgs),
     Generate(GenerateArgs),
     Lint(LintArgs),
+    Watch(WatchArgs),
     Validate(ValidateArgs),
     ValidateAll(ValidateAllArgs),
     CheckManifest(CheckManifestArgs),
@@ -269,6 +270,45 @@ pub struct LintArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct WatchArgs {
+    #[arg(long, default_value = ".")]
+    pub root: PathBuf,
+
+    #[arg(long, default_value = "mvs.json")]
+    pub manifest: PathBuf,
+
+    #[arg(long)]
+    pub ai_schema: Option<PathBuf>,
+
+    #[arg(long, value_delimiter = ',')]
+    pub available_model_capabilities: Vec<String>,
+
+    /// Print per-failure remediation steps and list specific drifted symbols.
+    #[arg(long, default_value_t = false)]
+    pub explain: bool,
+
+    /// Automatically run `generate` when drift is detected, then re-lint.
+    #[arg(long, default_value_t = false)]
+    pub remediate: bool,
+
+    /// Run a single maintenance cycle and exit.
+    #[arg(long, default_value_t = false, conflicts_with = "max_runs")]
+    pub once: bool,
+
+    /// Maximum number of watch cycles to run before exiting.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    pub max_runs: Option<u64>,
+
+    /// Seconds to wait between watch cycles.
+    #[arg(long, default_value_t = 30)]
+    pub interval_secs: u64,
+
+    /// Run lint every interval instead of only after detected workspace changes.
+    #[arg(long, default_value_t = false)]
+    pub run_every_interval: bool,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct ValidateArgs {
     #[arg(long)]
     pub host_manifest: PathBuf,
@@ -388,9 +428,14 @@ pub fn run() -> i32 {
         Command::Init(args) => run_with_update_notification(commands::init::run(args)),
         Command::Generate(args) => run_with_update_notification(commands::generator::run(args)),
         Command::Lint(args) => run_with_update_notification(commands::linter::run(args)),
+        Command::Watch(args) => commands::watch::run(args),
         Command::Validate(args) => run_with_update_notification(commands::reader::run(args)),
-        Command::ValidateAll(args) => run_with_update_notification(commands::validate_all::run(args)),
-        Command::CheckManifest(args) => run_with_update_notification(commands::check_manifest::run(args)),
+        Command::ValidateAll(args) => {
+            run_with_update_notification(commands::validate_all::run(args))
+        }
+        Command::CheckManifest(args) => {
+            run_with_update_notification(commands::check_manifest::run(args))
+        }
         Command::Constraint(args) => run_with_update_notification(commands::constraint::run(args)),
         Command::Report(args) => run_with_update_notification(commands::report::run(args)),
         Command::Schema(args) => commands::schema::run(args),

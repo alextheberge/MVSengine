@@ -64,6 +64,18 @@ mvs-manager lint --root . --manifest mvs.json
 mvs-manager generate --root . --manifest mvs.json --context cli
 ```
 
+Or keep it running as a maintenance loop while you work:
+
+```bash
+mvs-manager watch --root . --manifest mvs.json --remediate --interval-secs 30
+```
+
+For schedulers such as `cron`, `launchd`, or `systemd`, use one-shot mode:
+
+```bash
+mvs-manager watch --root . --manifest mvs.json --once --remediate
+```
+
 ## Enforce MVS on Commit
 ```bash
 make install-hooks
@@ -120,6 +132,8 @@ mvs-manager generate --root . --manifest mvs.json --context cli --format json
 mvs-manager lint --root . --manifest mvs.json
 mvs-manager lint --root . --manifest mvs.json --format json
 mvs-manager lint --root . --manifest mvs.json --available-model-capabilities tool_calling,json_schema,reasoning-v1
+mvs-manager watch --root . --manifest mvs.json --remediate --interval-secs 30
+mvs-manager watch --root . --manifest mvs.json --once --remediate
 mvs-manager validate --host-manifest host.json --extension-manifest extension.json
 mvs-manager validate --host-manifest host.json --extension-manifest extension.json --format json
 mvs-manager validate --host-manifest host.json --extension-manifest extension.json --host-model-capabilities tool_calling,reasoning-v1
@@ -130,6 +144,8 @@ mvs-manager self-update
 ```
 
 `mvs.json` persists version-change rationale in `history`, enabling compatibility reports to explain protocol breaks (for example, auth-flow changes tied to a specific `PROT`).
+
+`watch` is the maintenance-oriented workflow: it repeatedly runs `lint`, can auto-run `generate` when drift is found via `--remediate`, skips unchanged cycles by default, and supports `--once` for scheduler-friendly single-pass runs.
 
 The stable `1.x` manifest and command-output contract is documented in [docs/CONTRACT_1X.md](docs/CONTRACT_1X.md). Checked-in golden fixtures under `tests/fixtures/contracts/` back that contract so output and canonical evidence changes stay deliberate.
 
