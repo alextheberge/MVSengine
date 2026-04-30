@@ -27,7 +27,17 @@ Once installed, `mvs-manager` can update itself with:
 mvs-manager self-update
 ```
 
-Interactive runs of the CLI also notify on `stderr` when a newer stable release is available.
+`self-update` installs next to the running binary and **refuses** Cargo `target/debug|release`, Nix store, or read-only locations unless you set `MVS_ALLOW_UNSAFE_SELF_UPDATE=1`. Forks should set `MVS_REPO` / `MVS_UPDATE_REPO` to `owner/name` so updates match `install.sh`.
+
+Interactive runs of the CLI also notify on `stderr` when a newer stable release is available (GitHub `releases/latest` only—prereleases are not advertised there).
+
+Diagnostics and install troubleshooting:
+
+```bash
+mvs-manager doctor
+```
+
+See [docs/INSTALL_AND_CI.md](docs/INSTALL_AND_CI.md) for CI env vars and pinned installs, and [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) for packaging options.
 
 ### 2) Initialize your project manifest
 ```bash

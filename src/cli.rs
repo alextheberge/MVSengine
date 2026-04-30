@@ -40,6 +40,7 @@ enum Command {
     Report(ReportArgs),
     Schema(SchemaArgs),
     SelfUpdate(SelfUpdateArgs),
+    Doctor(DoctorArgs),
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum)]
@@ -166,7 +167,7 @@ pub struct InitArgs {
     #[arg(long, default_value_t = false)]
     pub dry_run: bool,
 
-    /// Apply a named scan-policy preset: library, cli, plugin, sdk.
+    /// Apply a named scan-policy preset: library, cli, plugin, plugin-host, sdk.
     #[arg(long, value_name = "PRESET")]
     pub preset: Option<String>,
 
@@ -306,6 +307,10 @@ pub struct WatchArgs {
     /// Run lint every interval instead of only after detected workspace changes.
     #[arg(long, default_value_t = false)]
     pub run_every_interval: bool,
+
+    /// Exit with a non-zero code if workspace fingerprinting fails instead of warning and running lint.
+    #[arg(long, default_value_t = false)]
+    pub strict_fingerprint: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -421,6 +426,20 @@ pub struct SelfUpdateArgs {
     pub format: OutputFormat,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct DoctorArgs {
+    /// Project root (used to resolve default manifest path for the report).
+    #[arg(long, default_value = ".")]
+    pub root: PathBuf,
+
+    /// Manifest path relative to --root.
+    #[arg(long, default_value = "mvs.json")]
+    pub manifest: PathBuf,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
 pub fn run() -> i32 {
     let cli = Cli::parse();
 
@@ -440,6 +459,7 @@ pub fn run() -> i32 {
         Command::Report(args) => run_with_update_notification(commands::report::run(args)),
         Command::Schema(args) => commands::schema::run(args),
         Command::SelfUpdate(args) => commands::self_update::run(args),
+        Command::Doctor(args) => commands::doctor::run(args),
     }
 }
 

@@ -26,7 +26,10 @@ fn try_run(args: &ConstraintArgs) -> Result<ConstraintReport, CommandFailure> {
     let host = Manifest::load(&args.host_manifest).map_err(|e| {
         CommandFailure::new(
             EXIT_MANIFEST_ERROR,
-            format!("failed to load host manifest `{}`: {e:#}", args.host_manifest.display()),
+            format!(
+                "failed to load host manifest `{}`: {e:#}",
+                args.host_manifest.display()
+            ),
         )
     })?;
     let ext = Manifest::load(&args.extension_manifest).map_err(|e| {
@@ -69,8 +72,7 @@ fn try_run(args: &ConstraintArgs) -> Result<ConstraintReport, CommandFailure> {
     let result = validate_host_extension(&probe_host, &probe_ext, None, false, None);
 
     // Current ranges
-    let current_compatible =
-        validate_host_extension(&host, &ext, None, false, None).compatible;
+    let current_compatible = validate_host_extension(&host, &ext, None, false, None).compatible;
 
     Ok(ConstraintReport {
         exit_code: EXIT_SUCCESS,
@@ -104,7 +106,11 @@ fn render_report(report: &ConstraintReport, format: OutputFormat) -> Result<(), 
             println!();
             println!(
                 "Current compatibility: {}",
-                if report.currently_compatible { "COMPATIBLE" } else { "INCOMPATIBLE" }
+                if report.currently_compatible {
+                    "COMPATIBLE"
+                } else {
+                    "INCOMPATIBLE"
+                }
             );
             println!();
             println!("Suggested ranges (lookahead={}):", report.lookahead);
@@ -120,7 +126,11 @@ fn render_report(report: &ConstraintReport, format: OutputFormat) -> Result<(), 
             );
             println!(
                 "  Suggestion passes validation: {}",
-                if report.suggestion_valid { "yes" } else { "no (check ARCH mismatch or other axes)" }
+                if report.suggestion_valid {
+                    "yes"
+                } else {
+                    "no (check ARCH mismatch or other axes)"
+                }
             );
 
             if report.current_host_extension_range != report.suggested_host_extension_range

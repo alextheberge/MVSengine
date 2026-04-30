@@ -2,7 +2,7 @@
 use std::env;
 use std::fs;
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -11,26 +11,23 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-const REPO_OWNER: &str = "alextheberge";
-const REPO_NAME: &str = "MVSengine";
-const REPO_SLUG: &str = "alextheberge/MVSengine";
+const DEFAULT_REPO_OWNER: &str = "alextheberge";
+const DEFAULT_REPO_NAME: &str = "MVSengine";
 const BIN_NAME: &str = "mvs-manager";
 const DEFAULT_CHECK_INTERVAL_SECS: u64 = 60 * 60 * 24;
-const UPDATE_DISABLE_ENV: &str = "MVS_NO_UPDATE_CHECK";
+pub const UPDATE_DISABLE_ENV: &str = "MVS_NO_UPDATE_CHECK";
 const UPDATE_FORCE_ENV: &str = "MVS_FORCE_UPDATE_CHECK";
 const UPDATE_STATE_FILE_ENV: &str = "MVS_UPDATE_STATE_FILE";
 const UPDATE_INTERVAL_ENV: &str = "MVS_UPDATE_CHECK_INTERVAL_SECS";
 const UPDATE_LATEST_VERSION_ENV: &str = "MVS_UPDATE_LATEST_VERSION";
 const UPDATE_LATEST_URL_ENV: &str = "MVS_UPDATE_LATEST_URL";
-const UPDATE_GITHUB_TOKEN_ENV: &str = "MVS_GITHUB_TOKEN";
-const GITHUB_LATEST_RELEASE_URL: &str =
-    "https://api.github.com/repos/alextheberge/MVSengine/releases/latest";
-#[cfg(not(target_os = "windows"))]
-const INSTALL_SH_URL: &str =
-    "https://raw.githubusercontent.com/alextheberge/MVSengine/master/scripts/install.sh";
-#[cfg(target_os = "windows")]
-const INSTALL_PS1_URL: &str =
-    "https://raw.githubusercontent.com/alextheberge/MVSengine/master/scripts/install.ps1";
+pub const UPDATE_GITHUB_TOKEN_ENV: &str = "MVS_GITHUB_TOKEN";
+/// When set to `1`/`true`/`yes`/`on`, allows `self-update` from Cargo build dirs, Nix store, etc.
+pub const ALLOW_UNSAFE_SELF_UPDATE_ENV: &str = "MVS_ALLOW_UNSAFE_SELF_UPDATE";
+/// GitHub `owner/name` for releases and install scripts (same as `install.sh` `MVS_REPO`).
+pub const MVS_REPO_ENV: &str = "MVS_REPO";
+/// Alias for `MVS_REPO` (forks / private mirrors).
+pub const MVS_UPDATE_REPO_ENV: &str = "MVS_UPDATE_REPO";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReleaseInfo {
@@ -55,6 +52,55 @@ struct UpdateState {
 
 pub fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
+}
+
+/// Resolved `owner/repo` for GitHub API and install scripts (from `MVS_REPO` / `MVS_UPDATE_REPO` or default).
+pub fn repo_slug() -> String {
+    env::var(MVS_REPO_ENV)
+        .or_else(|_| env::var(MVS_UPDATE_REPO_ENV))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| format!("{DEFAULT_REPO_OWNER}/{DEFAULT_REPO_NAME}"))
+}
+
+fn parse_repo_slug(slug: &str) -> Result<(String, String)> {
+    let slug = slug.trim();
+    let parts: Vec<&str> = slug.split('/').filter(|p| !p.is_empty()).collect();
+    if parts.len() != 2 {
+        bail!(
+            "invalid repository slug `{slug}`: expected `owner/name` (set {MVS_REPO_ENV} or {MVS_UPDATE_REPO_ENV})"
+        );
+    }
+    Ok((parts[0].to_string(), parts[1].to_string()))
+}
+
+pub fn github_latest_release_api_url() -> Result<String> {
+    let (owner, name) = parse_repo_slug(&repo_slug())?;
+    Ok(format!(
+        "https://api.github.com/repos/{owner}/{name}/releases/latest"
+    ))
+}
+
+pub fn install_sh_raw_url() -> Result<String> {
+    let (owner, name) = parse_repo_slug(&repo_slug())?;
+    Ok(format!(
+        "https://raw.githubusercontent.com/{owner}/{name}/master/scripts/install.sh"
+    ))
+}
+
+pub fn install_ps1_raw_url() -> Result<String> {
+    let (owner, name) = parse_repo_slug(&repo_slug())?;
+    Ok(format!(
+        "https://raw.githubusercontent.com/{owner}/{name}/master/scripts/install.ps1"
+    ))
+}
+
+fn release_url_for(version: &str) -> Result<String> {
+    let (owner, name) = parse_repo_slug(&repo_slug())?;
+    Ok(format!(
+        "https://github.com/{owner}/{name}/releases/tag/v{version}"
+    ))
 }
 
 pub fn maybe_notify_new_version() {
@@ -112,6 +158,7 @@ pub fn perform_self_update() -> Result<ReleaseInfo> {
         return Ok(release);
     }
 
+    ensure_self_update_safe()?;
     run_installer(&release.tag)?;
 
     let mut state = load_state().unwrap_or_default();
@@ -122,6 +169,84 @@ pub fn perform_self_update() -> Result<ReleaseInfo> {
     save_state(&state)?;
 
     Ok(release)
+}
+
+/// Whether `self-update` would refuse to run (without `MVS_ALLOW_UNSAFE_SELF_UPDATE`).
+/// When `Some`, `self-update` would refuse to replace the binary (unless `MVS_ALLOW_UNSAFE_SELF_UPDATE` is set).
+pub fn self_update_block_reason() -> Option<String> {
+    if env_flag(ALLOW_UNSAFE_SELF_UPDATE_ENV) {
+        return None;
+    }
+    self_update_unsafe_reason().err()
+}
+
+fn self_update_unsafe_reason() -> Result<(), String> {
+    let exe = env::current_exe().map_err(|e| e.to_string())?;
+    let Some(parent) = exe.parent() else {
+        return Err("current executable has no parent directory".to_string());
+    };
+
+    let lossy = exe.to_string_lossy();
+    let lower = lossy.to_ascii_lowercase();
+
+    if lower.contains("/target/debug/")
+        || lower.contains("/target/release/")
+        || lower.contains("\\target\\debug\\")
+        || lower.contains("\\target\\release\\")
+    {
+        return Err(format!(
+            "refusing self-update: binary appears to be a Cargo build (`{}`). \
+Install a release build to e.g. $HOME/.local/bin (see scripts/install.sh) or set {}=1 to override.",
+            lossy, ALLOW_UNSAFE_SELF_UPDATE_ENV
+        ));
+    }
+
+    if lower.contains("/.cargo/") || lower.contains("\\.cargo\\") {
+        return Err(format!(
+            "refusing self-update: binary is under `.cargo` (`{}`). \
+Use `cargo install` refresh or a release install path, or set {}=1.",
+            lossy, ALLOW_UNSAFE_SELF_UPDATE_ENV
+        ));
+    }
+
+    if lower.contains("/nix/store/") {
+        return Err(format!(
+            "refusing self-update: binary is in the Nix store (`{}`), which is read-only. \
+Update via your Nix flake or package, or set {}=1.",
+            lossy, ALLOW_UNSAFE_SELF_UPDATE_ENV
+        ));
+    }
+
+    let probe = parent.join(format!(
+        ".mvs-manager-writetest-{}-{}",
+        std::process::id(),
+        now_unix()
+    ));
+    match fs::File::create(&probe) {
+        Ok(_) => {
+            let _ = fs::remove_file(&probe);
+        }
+        Err(error) => {
+            return Err(format!(
+                "refusing self-update: cannot write next to the binary at `{}` ({error}). \
+Set MVS_INSTALL_DIR and run the install script, or set {}=1.",
+                parent.display(),
+                ALLOW_UNSAFE_SELF_UPDATE_ENV
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn ensure_self_update_safe() -> Result<()> {
+    if env_flag(ALLOW_UNSAFE_SELF_UPDATE_ENV) {
+        return Ok(());
+    }
+    if let Err(msg) = self_update_unsafe_reason() {
+        bail!("{msg}");
+    }
+    Ok(())
 }
 
 fn should_auto_check() -> bool {
@@ -167,7 +292,7 @@ fn fetch_latest_release() -> Result<ReleaseInfo> {
         let release_url = env::var(UPDATE_LATEST_URL_ENV)
             .ok()
             .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| release_url_for(&version));
+            .unwrap_or_else(|| release_url_for(&version).unwrap_or_default());
         return Ok(ReleaseInfo {
             tag: format!("v{version}"),
             version,
@@ -187,7 +312,7 @@ fn fetch_latest_release() -> Result<ReleaseInfo> {
         .as_str()
         .filter(|value| !value.trim().is_empty())
         .map(str::to_string)
-        .unwrap_or_else(|| release_url_for(&version));
+        .unwrap_or_else(|| release_url_for(&version).unwrap_or_default());
 
     Ok(ReleaseInfo {
         tag,
@@ -197,7 +322,8 @@ fn fetch_latest_release() -> Result<ReleaseInfo> {
 }
 
 fn fetch_latest_release_payload() -> Result<Value> {
-    fetch_json(GITHUB_LATEST_RELEASE_URL)
+    let url = github_latest_release_api_url()?;
+    fetch_json(&url)
 }
 
 fn github_token() -> Option<String> {
@@ -205,6 +331,10 @@ fn github_token() -> Option<String> {
         .ok()
         .or_else(|| env::var("GITHUB_TOKEN").ok())
         .filter(|value| !value.trim().is_empty())
+}
+
+pub fn github_token_configured() -> bool {
+    github_token().is_some()
 }
 
 fn is_newer_than_current(version: &str) -> Result<bool> {
@@ -301,13 +431,17 @@ fn run_json_command(program: &str, args: &[&str]) -> Result<Value> {
 
 fn run_installer(tag: &str) -> Result<()> {
     let install_dir = current_install_dir()?;
+    let repo = repo_slug();
 
     #[cfg(target_os = "windows")]
     {
-        let install_dir = escape_powershell_single_quoted(&install_dir.to_string_lossy());
-        let tag = escape_powershell_single_quoted(tag);
+        let install_dir_esc = escape_powershell_single_quoted(&install_dir.to_string_lossy());
+        let tag_esc = escape_powershell_single_quoted(tag);
+        let repo_esc = escape_powershell_single_quoted(&repo);
+        let script_url = install_ps1_raw_url()?;
+        let script_url_esc = escape_powershell_single_quoted(&script_url);
         let script = format!(
-            "$env:MVS_REPO = '{REPO_SLUG}'; $env:MVS_VERSION = '{tag}'; $env:MVS_INSTALL_DIR = '{install_dir}'; irm '{INSTALL_PS1_URL}' | iex"
+            "$env:MVS_REPO = '{repo_esc}'; $env:MVS_VERSION = '{tag_esc}'; $env:MVS_INSTALL_DIR = '{install_dir_esc}'; irm '{script_url_esc}' | iex"
         );
         let output = Command::new("powershell")
             .args(["-NoProfile", "-Command", &script])
@@ -324,9 +458,10 @@ fn run_installer(tag: &str) -> Result<()> {
 
     #[cfg(not(target_os = "windows"))]
     {
+        let install_sh_url = install_sh_raw_url()?;
         let output = Command::new("bash")
-            .args(["-lc", &format!("curl -fsSL {INSTALL_SH_URL} | bash")])
-            .env("MVS_REPO", REPO_SLUG)
+            .args(["-lc", &format!("curl -fsSL {install_sh_url} | bash")])
+            .env(MVS_REPO_ENV, &repo)
             .env("MVS_VERSION", tag)
             .env("MVS_INSTALL_DIR", &install_dir)
             .output()
@@ -362,7 +497,7 @@ fn release_from_state(state: &UpdateState) -> Option<ReleaseInfo> {
     let release_url = state
         .release_url
         .clone()
-        .unwrap_or_else(|| release_url_for(&version));
+        .or_else(|| release_url_for(&version).ok())?;
     Some(ReleaseInfo {
         tag: format!("v{version}"),
         version,
@@ -409,7 +544,8 @@ fn state_file_path() -> Result<PathBuf> {
     default_state_file_path().context("unable to determine update state file path")
 }
 
-fn default_state_file_path() -> Option<PathBuf> {
+/// Path used for update-check cache (for diagnostics).
+pub fn default_state_file_path() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
         env::var("LOCALAPPDATA")
@@ -442,10 +578,6 @@ fn default_state_file_path() -> Option<PathBuf> {
     }
 }
 
-fn release_url_for(version: &str) -> String {
-    format!("https://github.com/{REPO_OWNER}/{REPO_NAME}/releases/tag/v{version}")
-}
-
 fn env_flag(name: &str) -> bool {
     env::var(name)
         .ok()
@@ -463,4 +595,75 @@ fn now_unix() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// Best-effort: first `mvs-manager` on `PATH` (may differ from `current_exe` when multiple installs exist).
+pub fn which_mvs_manager() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("where").arg(BIN_NAME).output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let line = text.lines().find(|l| !l.trim().is_empty())?;
+        let path = PathBuf::from(line.trim());
+        if path.exists() {
+            Some(path)
+        } else {
+            None
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let output = Command::new("which").arg(BIN_NAME).output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let line = text.lines().next()?;
+        let path = PathBuf::from(line.trim());
+        if path.exists() {
+            Some(path)
+        } else {
+            None
+        }
+    }
+}
+
+/// True if `which mvs-manager` resolves to the same file as `current_exe` (when both exist).
+pub fn path_matches_primary_install() -> bool {
+    match (env::current_exe().ok(), which_mvs_manager()) {
+        (Some(a), Some(b)) => same_file(&a, &b),
+        _ => false,
+    }
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn install_urls_reflect_mvs_repo_env() {
+        let prev = env::var(MVS_REPO_ENV).ok();
+        env::set_var(MVS_REPO_ENV, "myfork/MVSengine");
+        assert!(install_sh_raw_url().unwrap().contains("myfork/MVSengine"));
+        assert!(github_latest_release_api_url()
+            .unwrap()
+            .contains("myfork/MVSengine"));
+        match prev {
+            Some(v) => env::set_var(MVS_REPO_ENV, v),
+            None => env::remove_var(MVS_REPO_ENV),
+        }
+    }
 }

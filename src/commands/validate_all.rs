@@ -78,13 +78,8 @@ fn try_run(args: &ValidateAllArgs) -> Result<ValidateAllReport, CommandFailure> 
                 continue;
             }
 
-            let result = validate_host_extension(
-                host,
-                ext,
-                args.context.as_deref(),
-                args.allow_shims,
-                None,
-            );
+            let result =
+                validate_host_extension(host, ext, args.context.as_deref(), args.allow_shims, None);
 
             let status = if !result.compatible {
                 any_incompatible = true;
@@ -110,13 +105,35 @@ fn try_run(args: &ValidateAllArgs) -> Result<ValidateAllReport, CommandFailure> 
 
     let total = pairs.len();
     let incompatible_count = pairs.iter().filter(|p| !p.compatible).count();
-    let degraded_count = pairs
-        .iter()
-        .filter(|p| p.compatible && p.degraded)
-        .count();
+    let degraded_count = pairs.iter().filter(|p| p.compatible && p.degraded).count();
     let ok_count = pairs.iter().filter(|p| p.compatible && !p.degraded).count();
 
+    let compatibility_digest = CompatibilityDigest {
+        incompatible: pairs
+            .iter()
+            .filter(|p| !p.compatible)
+            .map(|p| IncompatiblePairSummary {
+                host: p.host.clone(),
+                extension: p.extension.clone(),
+                host_version: p.host_version.clone(),
+                extension_version: p.extension_version.clone(),
+                reasons: p.reasons.clone(),
+            })
+            .collect(),
+        degraded: pairs
+            .iter()
+            .filter(|p| p.compatible && p.degraded)
+            .map(|p| DegradedPairSummary {
+                host: p.host.clone(),
+                extension: p.extension.clone(),
+                host_version: p.host_version.clone(),
+                extension_version: p.extension_version.clone(),
+            })
+            .collect(),
+    };
+
     Ok(ValidateAllReport {
+        command: "validate-all",
         exit_code: if any_incompatible {
             EXIT_VALIDATE_INCOMPATIBLE
         } else {
@@ -128,6 +145,7 @@ fn try_run(args: &ValidateAllArgs) -> Result<ValidateAllReport, CommandFailure> 
         ok_count,
         degraded_count,
         incompatible_count,
+        compatibility: compatibility_digest,
         pairs,
     })
 }
@@ -171,10 +189,7 @@ fn collect_manifests_in_dir(
     }
 }
 
-fn render_report(
-    report: &ValidateAllReport,
-    format: OutputFormat,
-) -> Result<(), CommandFailure> {
+fn render_report(report: &ValidateAllReport, format: OutputFormat) -> Result<(), CommandFailure> {
     match format {
         OutputFormat::Text => {
             println!(
@@ -205,17 +220,16 @@ fn render_report(
             }
             if report.degraded_count > 0 {
                 println!("\nDegraded pairs (shim path):");
-                for pair in report
-                    .pairs
-                    .iter()
-                    .filter(|p| p.compatible && p.degraded)
-                {
+                for pair in report.pairs.iter().filter(|p| p.compatible && p.degraded) {
                     println!(
                         "  HOST {}  <->  EXT {}",
                         pair.host_version, pair.extension_version
                     );
                 }
             }
+            println!(
+                "\nMachine-readable compatibility summary: use `--format json` (see `compatibility` object)."
+            );
             Ok(())
         }
         OutputFormat::Json => emit_json(report),
@@ -224,6 +238,7 @@ fn render_report(
 
 #[derive(Debug, Serialize)]
 struct ValidateAllReport {
+    command: &'static str,
     exit_code: i32,
     manifests_loaded: usize,
     load_errors: Vec<String>,
@@ -231,7 +246,32 @@ struct ValidateAllReport {
     ok_count: usize,
     degraded_count: usize,
     incompatible_count: usize,
+    /// Short compatibility lists for automation (subset of `pairs`).
+    compatibility: CompatibilityDigest,
     pairs: Vec<MatrixPair>,
+}
+
+#[derive(Debug, Serialize)]
+struct CompatibilityDigest {
+    incompatible: Vec<IncompatiblePairSummary>,
+    degraded: Vec<DegradedPairSummary>,
+}
+
+#[derive(Debug, Serialize)]
+struct IncompatiblePairSummary {
+    host: String,
+    extension: String,
+    host_version: String,
+    extension_version: String,
+    reasons: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct DegradedPairSummary {
+    host: String,
+    extension: String,
+    host_version: String,
+    extension_version: String,
 }
 
 #[derive(Debug, Serialize)]

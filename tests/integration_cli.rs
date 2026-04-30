@@ -3025,3 +3025,25 @@ fn lint_accepts_legacy_rust_signature_format_and_generate_rewrites_it() {
         "rust:fn handshake(version: u32) -> bool"
     );
 }
+
+#[test]
+fn doctor_json_includes_version_and_compatibility_fields() {
+    let output = binary_cmd()
+        .args(["doctor", "--format", "json", "--root", "."])
+        .output()
+        .expect("doctor should run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let payload: Value = serde_json::from_slice(&output.stdout).expect("doctor json should parse");
+    assert_eq!(payload["command"], "doctor");
+    assert!(payload["version"].is_string());
+    assert!(payload["current_exe"].is_string());
+    assert!(payload["repo_slug"].is_string());
+    assert!(payload["github_latest_release_url"].is_string());
+    assert!(payload["tools"].is_object());
+}

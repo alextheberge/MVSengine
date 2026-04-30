@@ -187,57 +187,54 @@ fn collect_definition(
                 );
             }
         }
-        "assignment" => {
-            if !inside_callable {
-                let is_explicit_export = extract_python_assignment_name(node, source)
-                    .as_deref()
-                    .map(|name| {
-                        python_is_explicit_export(
-                            name,
-                            class_namespace,
-                            extraction_context.explicit_exports,
-                        )
-                    })
-                    .unwrap_or(false);
-                if let Some(signature) = extract_python_constant_signature(
-                    node,
-                    source,
-                    class_namespace,
-                    extraction_context.explicit_exports,
-                    is_explicit_export,
-                ) {
-                    signatures.push(format!("python:{signature}"));
-                }
+        "assignment" if !inside_callable => {
+            let is_explicit_export = extract_python_assignment_name(node, source)
+                .as_deref()
+                .map(|name| {
+                    python_is_explicit_export(
+                        name,
+                        class_namespace,
+                        extraction_context.explicit_exports,
+                    )
+                })
+                .unwrap_or(false);
+            if let Some(signature) = extract_python_constant_signature(
+                node,
+                source,
+                class_namespace,
+                extraction_context.explicit_exports,
+                is_explicit_export,
+            ) {
+                signatures.push(format!("python:{signature}"));
             }
         }
-        "type_alias_statement" => {
-            if !inside_callable {
-                let alias_name = node
-                    .child_by_field_name("left")
-                    .and_then(|child| node_text(child, source))
-                    .map(normalize_tree_sitter_signature)
-                    .and_then(|left| python_type_alias_name(&left).map(ToString::to_string));
-                let is_explicit_export = alias_name
-                    .as_deref()
-                    .map(|name| {
-                        python_is_explicit_export(
-                            name,
-                            class_namespace,
-                            extraction_context.explicit_exports,
-                        )
-                    })
-                    .unwrap_or(false);
-                if let Some(signature) = extract_python_type_alias_signature(
-                    node,
-                    source,
-                    class_namespace,
-                    extraction_context.explicit_exports,
-                    is_explicit_export,
-                ) {
-                    signatures.push(format!("python:{signature}"));
-                }
+        "type_alias_statement" if !inside_callable => {
+            let alias_name = node
+                .child_by_field_name("left")
+                .and_then(|child| node_text(child, source))
+                .map(normalize_tree_sitter_signature)
+                .and_then(|left| python_type_alias_name(&left).map(ToString::to_string));
+            let is_explicit_export = alias_name
+                .as_deref()
+                .map(|name| {
+                    python_is_explicit_export(
+                        name,
+                        class_namespace,
+                        extraction_context.explicit_exports,
+                    )
+                })
+                .unwrap_or(false);
+            if let Some(signature) = extract_python_type_alias_signature(
+                node,
+                source,
+                class_namespace,
+                extraction_context.explicit_exports,
+                is_explicit_export,
+            ) {
+                signatures.push(format!("python:{signature}"));
             }
         }
+        "assignment" | "type_alias_statement" => {}
         "decorated_definition" => {
             if let Some(definition) = node.child_by_field_name("definition") {
                 collect_definition(
@@ -450,7 +447,7 @@ fn extract_python_explicit_export_names(
 
 fn parse_python_string_literal(raw: &str) -> Option<String> {
     let raw = raw.trim();
-    let quote_start = raw.find(|character| character == '\'' || character == '"')?;
+    let quote_start = raw.find(|character| ['\'', '"'].contains(&character))?;
     let prefix = &raw[..quote_start];
     if !prefix
         .chars()

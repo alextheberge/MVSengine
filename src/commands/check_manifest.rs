@@ -176,27 +176,23 @@ fn try_run(args: &CheckManifestArgs) -> Result<CheckManifestReport, CommandFailu
     })
 }
 
-fn render_report(
-    report: &CheckManifestReport,
-    format: OutputFormat,
-) -> Result<(), CommandFailure> {
+fn render_report(report: &CheckManifestReport, format: OutputFormat) -> Result<(), CommandFailure> {
     match format {
         OutputFormat::Text => {
             if report.issues.is_empty() {
-                println!(
-                    "Manifest OK: {} — no issues found.",
-                    report.manifest_path
-                );
+                println!("Manifest OK: {} — no issues found.", report.manifest_path);
             } else {
                 println!(
                     "Manifest check for {} ({}) — {} error(s), {} warning(s):",
-                    report.manifest_path,
-                    report.version,
-                    report.error_count,
-                    report.warning_count
+                    report.manifest_path, report.version, report.error_count, report.warning_count
                 );
                 for issue in &report.issues {
-                    println!("  [{}] {}: {}", issue.severity.to_uppercase(), issue.field, issue.message);
+                    println!(
+                        "  [{}] {}: {}",
+                        issue.severity.to_uppercase(),
+                        issue.field,
+                        issue.message
+                    );
                 }
             }
             Ok(())
@@ -224,9 +220,17 @@ struct Issue {
 
 impl Issue {
     fn error(field: &'static str, message: String) -> Self {
-        Self { severity: "error", field, message }
+        Self {
+            severity: "error",
+            field,
+            message,
+        }
     }
     fn warning(field: &'static str, message: String) -> Self {
-        Self { severity: "warning", field, message }
+        Self {
+            severity: "warning",
+            field,
+            message,
+        }
     }
 }

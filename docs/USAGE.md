@@ -94,7 +94,7 @@ Scheduler-friendly single pass:
 mvs-manager watch --root . --manifest mvs.json --once --remediate
 ```
 
-`watch` reuses the normal lint flow, so `--explain`, `--ai-schema`, and `--available-model-capabilities` still apply. By default it fingerprints the workspace and skips unchanged cycles; add `--run-every-interval` if you want a strict cadence regardless of filesystem changes.
+`watch` reuses the normal lint flow, so `--explain`, `--ai-schema`, and `--available-model-capabilities` still apply. By default it fingerprints the workspace and skips unchanged cycles; add `--run-every-interval` if you want a strict cadence regardless of filesystem changes. Use `--strict-fingerprint` to exit with a non-zero code when fingerprinting fails instead of warning and running lint anyway.
 
 ## 3) Validate host/extension compatibility
 
@@ -120,6 +120,14 @@ mvs-manager validate \
   --extension-manifest extension.json \
   --host-model-capabilities tool_calling,reasoning-v1
 ```
+
+### `validate-all` (host/extension matrix)
+
+```bash
+mvs-manager validate-all --dir ./packages --format json
+```
+
+`--format json` includes a `compatibility` object with `incompatible` and `degraded` short lists (for bots) in addition to the full `pairs` matrix.
 
 ## 4) Compare two manifests directly
 
@@ -270,6 +278,28 @@ Pattern matching rules:
 - legacy Rust function patterns like `rust:fn fn *` still match during migration, but `generate` rewrites inventories to the canonical form
 
 See also: [docs/CONTRACT_1X.md](CONTRACT_1X.md) for the frozen `1.x` manifest and command-output contract, and [docs/TODO_1.0.md](TODO_1.0.md) for the remaining release-readiness work.
+
+## Doctor and environment
+
+```bash
+mvs-manager doctor
+mvs-manager doctor --format json --root .
+```
+
+Prints the resolved binary path, optional `PATH` resolution, `MVS_REPO`-derived GitHub URLs, update-check-related environment, and presence of tools used by the installers (`curl`, `tar`, `sha256sum` / `shasum`, `bash`, `powershell`).
+
+## Forks and `self-update`
+
+- Set **`MVS_REPO`** (or **`MVS_UPDATE_REPO`**) to `owner/name` so `self-update`, `install.sh`, and `doctor` all target your fork’s releases and raw scripts on `raw.githubusercontent.com`.
+- **`self-update`** refuses to run when the current executable looks like a **Cargo** build (`target/debug` / `target/release`), lives under **`.cargo`**, is in the **Nix store**, or when the install directory is not writable—unless **`MVS_ALLOW_UNSAFE_SELF_UPDATE=1`** is set. Use a normal install prefix (for example `$HOME/.local/bin`) or re-run `scripts/install.sh` with `MVS_INSTALL_DIR`.
+
+## Prereleases and the GitHub API
+
+Update checks use the **`releases/latest`** API endpoint, which returns the newest **non-prerelease** tag. Pre-release tags are not surfaced there; install a prerelease explicitly with `MVS_VERSION=v1.2.3-rc1` and `install.sh` / `install.ps1`.
+
+## CI and pinned installs
+
+See [docs/INSTALL_AND_CI.md](INSTALL_AND_CI.md) for GitHub Actions examples, pinning, and environment variables (`MVS_NO_UPDATE_CHECK`, tokens, and checksum-verified installs).
 
 ## Exit Codes
 

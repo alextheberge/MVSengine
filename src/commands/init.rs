@@ -37,7 +37,10 @@ fn try_run(args: &InitArgs) -> Result<InitReport, CommandFailure> {
     }
 
     let detected = detect_project(&args.root).map_err(|error| {
-        CommandFailure::new(EXIT_GENERATE_ERROR, format!("project detection failed: {error:#}"))
+        CommandFailure::new(
+            EXIT_GENERATE_ERROR,
+            format!("project detection failed: {error:#}"),
+        )
     })?;
 
     let context = args
@@ -51,8 +54,9 @@ fn try_run(args: &InitArgs) -> Result<InitReport, CommandFailure> {
     manifest.scan_policy = scan_policy;
 
     if args.dry_run {
-        let preview = serde_json::to_string_pretty(&manifest)
-            .map_err(|e| CommandFailure::new(EXIT_GENERATE_ERROR, format!("serialization failed: {e}")))?;
+        let preview = serde_json::to_string_pretty(&manifest).map_err(|e| {
+            CommandFailure::new(EXIT_GENERATE_ERROR, format!("serialization failed: {e}"))
+        })?;
         return Ok(InitReport {
             exit_code: EXIT_SUCCESS,
             manifest_path: manifest_path.display().to_string(),
@@ -64,9 +68,10 @@ fn try_run(args: &InitArgs) -> Result<InitReport, CommandFailure> {
         });
     }
 
-    manifest.write(&manifest_path).with_context(|| {
-        format!("failed to write manifest to `{}`", manifest_path.display())
-    }).map_err(|e| CommandFailure::new(EXIT_GENERATE_ERROR, format!("{e:#}")))?;
+    manifest
+        .write(&manifest_path)
+        .with_context(|| format!("failed to write manifest to `{}`", manifest_path.display()))
+        .map_err(|e| CommandFailure::new(EXIT_GENERATE_ERROR, format!("{e:#}")))?;
 
     Ok(InitReport {
         exit_code: EXIT_SUCCESS,
@@ -95,7 +100,6 @@ fn detect_project(root: &Path) -> anyhow::Result<ProjectDetection> {
     let marker_map: &[(&str, &str)] = &[
         ("Cargo.toml", "rust"),
         ("go.mod", "go"),
-        ("package.json", "typescript"),
         ("pyproject.toml", "python"),
         ("setup.py", "python"),
         ("setup.cfg", "python"),
@@ -132,6 +136,15 @@ fn detect_project(root: &Path) -> anyhow::Result<ProjectDetection> {
         }
     }
 
+    if root.join("package.json").exists() {
+        markers.push("package.json".to_string());
+        if root.join("tsconfig.json").exists() || root.join("jsconfig.json").exists() {
+            languages.insert("typescript");
+        } else {
+            languages.insert("javascript");
+        }
+    }
+
     // If no markers found, fall back to extension counting
     if languages.is_empty() {
         let ext_map: &[(&str, &str)] = &[
@@ -148,6 +161,8 @@ fn detect_project(root: &Path) -> anyhow::Result<ProjectDetection> {
             ("rb", "ruby"),
             ("swift", "swift"),
             ("lua", "lua"),
+            ("luau", "luau"),
+            ("liquid", "liquid"),
             ("dart", "dart"),
         ];
         scan_extensions(root, ext_map, &mut languages, 0)?;
@@ -197,11 +212,7 @@ fn scan_extensions(
 
 // ── Scan policy inference ────────────────────────────────────────────────────
 
-fn build_scan_policy(
-    root: &Path,
-    detected: &ProjectDetection,
-    preset: Option<&str>,
-) -> ScanPolicy {
+fn build_scan_policy(root: &Path, detected: &ProjectDetection, preset: Option<&str>) -> ScanPolicy {
     let mut policy = ScanPolicy::default();
 
     // Common excludes regardless of language
@@ -225,7 +236,7 @@ fn build_scan_policy(
                     }
                 }
             }
-            "typescript" => {
+            "typescript" | "javascript" => {
                 policy.ts_export_following = TsExportFollowing::WorkspaceOnly;
                 // Try to detect the main entry
                 for candidate in &["src/index.ts", "index.ts", "src/index.js", "index.js"] {
@@ -268,8 +279,9 @@ fn build_scan_policy(
 fn apply_preset(policy: &mut ScanPolicy, preset: &str) {
     match preset {
         "library" => {
-            // Libraries export everything that isn't explicitly excluded
-            // Keep existing roots, ensure no over-filtering
+            policy
+                .public_api_excludes
+                .push("**/testdata/**".to_string());
         }
         "cli" => {
             // CLI tools: the public surface is just the CLI interface, not internal modules
@@ -281,6 +293,15 @@ fn apply_preset(policy: &mut ScanPolicy, preset: &str) {
                 .public_api_excludes
                 .push("**/internal/**".to_string());
             policy.public_api_excludes.push("**/tests/**".to_string());
+        }
+        "plugin-host" => {
+            policy
+                .public_api_excludes
+                .push("**/internal/**".to_string());
+            policy.public_api_excludes.push("**/tests/**".to_string());
+            policy
+                .public_api_excludes
+                .push("**/fixtures/**".to_string());
         }
         "sdk" => {
             // SDKs: strict roots, explicit include lists encouraged
@@ -297,7 +318,7 @@ fn infer_context(detected: &ProjectDetection) -> &'static str {
     // Use the first (alphabetically) detected language as context hint
     if let Some(lang) = detected.languages.iter().next() {
         match *lang {
-            "typescript" | "javascript" => "lib",
+            "typescript" | "javascript" | "luau" => "lib",
             "rust" => {
                 // Can't easily distinguish lib vs cli without reading Cargo.toml here
                 "lib"
@@ -323,14 +344,14 @@ struct InitReport {
     preview: Option<String>,
 }
 
-fn render_init_report(
-    report: &InitReport,
-    format: OutputFormat,
-) -> Result<(), CommandFailure> {
+fn render_init_report(report: &InitReport, format: OutputFormat) -> Result<(), CommandFailure> {
     match format {
         OutputFormat::Text => {
             if report.dry_run {
-                println!("Dry run — manifest would be written to: {}", report.manifest_path);
+                println!(
+                    "Dry run — manifest would be written to: {}",
+                    report.manifest_path
+                );
             } else {
                 println!("Initialized manifest at: {}", report.manifest_path);
             }
@@ -352,7 +373,9 @@ fn render_init_report(
                     println!("\n--- mvs.json preview ---\n{preview}");
                 }
             } else {
-                println!("Run `mvs-manager generate` to scan the codebase and populate evidence hashes.");
+                println!(
+                    "Run `mvs-manager generate` to scan the codebase and populate evidence hashes."
+                );
             }
             Ok(())
         }

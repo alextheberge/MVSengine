@@ -6,7 +6,7 @@ use std::{
     time::{Duration, UNIX_EPOCH},
 };
 
-use crate::cli::{LintArgs, OutputFormat, WatchArgs, EXIT_SUCCESS};
+use crate::cli::{LintArgs, OutputFormat, WatchArgs, EXIT_LINT_ERROR, EXIT_SUCCESS};
 use crate::mvs::hashing::hash_items;
 use crate::mvs::manifest::{Manifest, ScanPolicy};
 
@@ -45,6 +45,19 @@ pub fn run(args: WatchArgs) -> i32 {
             match workspace_fingerprint(&args.root, &args.manifest, args.ai_schema.as_deref()) {
                 Ok(current) => last_fingerprint.as_deref() != Some(current.as_str()),
                 Err(error) => {
+                    if args.strict_fingerprint {
+                        eprintln!(
+                            "error: failed to fingerprint workspace before cycle {cycle_count}: {error}"
+                        );
+                        println!(
+                            "\nWatch summary: {cycle_count} cycle(s), {run_count} maintenance run(s), {skipped_count} skipped, last exit code {exit}.",
+                            cycle_count = cycle_count,
+                            run_count = run_count,
+                            skipped_count = skipped_count,
+                            exit = EXIT_LINT_ERROR
+                        );
+                        return EXIT_LINT_ERROR;
+                    }
                     eprintln!(
                         "warning: failed to fingerprint workspace before cycle {cycle_count}: {error}"
                     );
@@ -65,6 +78,19 @@ pub fn run(args: WatchArgs) -> i32 {
                     last_fingerprint = Some(fingerprint);
                 }
                 Err(error) => {
+                    if args.strict_fingerprint {
+                        eprintln!(
+                            "error: failed to fingerprint workspace after cycle {cycle_count}: {error}"
+                        );
+                        println!(
+                            "\nWatch summary: {cycle_count} cycle(s), {run_count} maintenance run(s), {skipped_count} skipped, last exit code {exit}.",
+                            cycle_count = cycle_count,
+                            run_count = run_count,
+                            skipped_count = skipped_count,
+                            exit = EXIT_LINT_ERROR
+                        );
+                        return EXIT_LINT_ERROR;
+                    }
                     eprintln!(
                         "warning: failed to fingerprint workspace after cycle {cycle_count}: {error}"
                     );

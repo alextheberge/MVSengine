@@ -2392,7 +2392,7 @@ fn liquid_tag_is_endcomment(inner: &str) -> bool {
     matches!(parts.next(), Some(word) if word.eq_ignore_ascii_case("endcomment"))
 }
 
-fn parse_liquid_tag<'a>(source: &'a str, open: usize) -> Option<(&'a str, usize)> {
+fn parse_liquid_tag(source: &str, open: usize) -> Option<(&str, usize)> {
     let bytes = source.as_bytes();
     if bytes.get(open..open + 2) != Some(b"{%") {
         return None;
@@ -3475,9 +3475,7 @@ fn is_comment_line(line: &str, extension: &str) -> bool {
         "lua" | "luau" => line.starts_with("--"),
         "liquid" => {
             let t = line.trim_start();
-            t.starts_with("<!--")
-                || t.starts_with("{%")
-                || t.starts_with("{%-")
+            t.starts_with("<!--") || t.starts_with("{%") || t.starts_with("{%-")
         }
         _ => line.starts_with("//") || line.starts_with("/*") || line.starts_with('*'),
     }

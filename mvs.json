@@ -1,20 +1,20 @@
 {
   "$schema": "https://mvs.dev/schema/v1",
   "identity": {
-    "mvs": "1.9.3-cli",
+    "mvs": "1.10.4-cli",
     "arch": 1,
-    "feat": 9,
-    "prot": 3,
+    "feat": 10,
+    "prot": 4,
     "cont": "cli"
   },
   "compatibility": {
     "host_range": {
       "min_prot": 0,
-      "max_prot": 3
+      "max_prot": 4
     },
     "extension_range": {
       "min_prot": 0,
-      "max_prot": 3
+      "max_prot": 4
     },
     "legacy_shims": []
   },
@@ -53,11 +53,12 @@
     ]
   },
   "evidence": {
-    "feature_hash": "6ff1430d7f90742bfc59e89a47d21bad4e5e1f1a8af97aa6f67b781c18a74496",
-    "protocol_hash": "139f1bb3f1a16ae9ede6006e6bd373e54ed5e7b6665f9fe6ed06bac727d5800b",
+    "feature_hash": "c53a6b10c77874b381e48b5aed96e3ffe21ee8b26017650221ef9e2dc30326bc",
+    "protocol_hash": "98428dc06b246a69efa1f0acf5dc6fb40fd9eb7455bb93acf71ab96e8f419c60",
     "public_api_hash": "6a86f0b108e171c5e4bf8275bed49230b4cec90d0f16270e6eedabeaa6fa11f3",
     "feature_inventory": [
       "constraint_suggestion",
+      "manager_doctor",
       "manager_self_update",
       "manifest_batch_validation",
       "manifest_comparison_reporting",
@@ -72,6 +73,7 @@
     "protocol_inventory": [
       "cli_check_manifest_command",
       "cli_constraint_command",
+      "cli_doctor_command",
       "cli_generate_command",
       "cli_init_command",
       "cli_lint_command",
@@ -227,6 +229,18 @@
         "Protocol incremented due to @mvs-protocol surface drift (example source: src/commands/check_manifest.rs)."
       ],
       "changed_at_unix": 1776625444
+    },
+    {
+      "mvs": "1.10.4-cli",
+      "arch": 1,
+      "feat": 10,
+      "prot": 4,
+      "cont": "cli",
+      "reasons": [
+        "Feature incremented due to @mvs-feature set drift (example source: src/commands/constraint.rs).",
+        "Protocol incremented due to @mvs-protocol surface drift (example source: src/commands/check_manifest.rs)."
+      ],
+      "changed_at_unix": 1777583429
     }
   ]
 }

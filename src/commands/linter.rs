@@ -320,10 +320,8 @@ fn render_lint_report(
 fn render_explain(evidence: &LintEvidenceReport) {
     let diff = &evidence.diff;
     let has_feature_drift = !diff.features.added.is_empty() || !diff.features.removed.is_empty();
-    let has_protocol_drift =
-        !diff.protocols.added.is_empty() || !diff.protocols.removed.is_empty();
-    let has_api_drift =
-        !diff.public_api.added.is_empty() || !diff.public_api.removed.is_empty();
+    let has_protocol_drift = !diff.protocols.added.is_empty() || !diff.protocols.removed.is_empty();
+    let has_api_drift = !diff.public_api.added.is_empty() || !diff.public_api.removed.is_empty();
 
     println!("\n--- Explanation & Remediation ---");
 
@@ -377,7 +375,10 @@ fn emit_github_annotations(report: &LintReport) {
         return;
     }
     if report.exit_code == EXIT_SUCCESS {
-        println!("::notice title=MVS Lint::Manifest evidence is up to date for {}", report.manifest_path);
+        println!(
+            "::notice title=MVS Lint::Manifest evidence is up to date for {}",
+            report.manifest_path
+        );
         return;
     }
     for failure in &report.failures {

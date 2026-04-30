@@ -17,7 +17,10 @@ pub fn run(args: SchemaArgs) -> i32 {
                 EXIT_SUCCESS
             }
             Err(error) => {
-                eprintln!("error: failed to write schema to `{}`: {error}", path.display());
+                eprintln!(
+                    "error: failed to write schema to `{}`: {error}",
+                    path.display()
+                );
                 EXIT_OUTPUT_ERROR
             }
         },

@@ -147,23 +147,21 @@ fn collect_public_api(
                 );
             }
         }
-        "method" => {
-            if visibility == Visibility::Public {
-                push_ruby_method_signature(
-                    node,
-                    source,
-                    signatures,
-                    state,
-                    singleton_receiver,
-                    namespace,
-                );
-            }
+        "method" if visibility == Visibility::Public => {
+            push_ruby_method_signature(
+                node,
+                source,
+                signatures,
+                state,
+                singleton_receiver,
+                namespace,
+            );
         }
-        "singleton_method" => {
-            if visibility == Visibility::Public {
-                push_ruby_singleton_method_signature(node, source, signatures, state, namespace);
-            }
+        "method" => {}
+        "singleton_method" if visibility == Visibility::Public => {
+            push_ruby_singleton_method_signature(node, source, signatures, state, namespace);
         }
+        "singleton_method" => {}
         "singleton_class" => {
             if let Some(body) = node.child_by_field_name("body") {
                 let receiver = node

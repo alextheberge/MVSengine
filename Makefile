@@ -51,7 +51,7 @@ DOGFOOD_REQUIRE_CANONICAL ?= false
 HOST_TARGET := $(shell rustc -vV 2>/dev/null | awk '/host:/ {print $$2}')
 CARGO_TARGET_FLAG := $(if $(strip $(TARGET)),--target $(TARGET),)
 
-.PHONY: help print-config bootstrap fmt fmt-check check clippy test test-unit test-integration build build-release docs clean ci generate generate-dry lint-manifest validate fixture-smoke release-local release-host release-target release-matrix-local release-merge-checksums release-sign-checksums release-verify release-github release-rc install install-hooks run-precommit dogfood-check dogfood-sync-version watch doctor
+.PHONY: help print-config bootstrap fmt fmt-check check clippy test test-unit test-integration build build-release docs clean ci generate generate-dry lint-manifest validate fixture-smoke release-local release-host release-target release-matrix-local release-merge-checksums release-sign-checksums release-verify release-github release-rc install install-hooks run-precommit dogfood-check dogfood-sync-version watch doctor doctor-tools
 
 help: ## Show all available targets.
 	@awk 'BEGIN {FS = ":.*##"; printf "\nMVS Engine Make Targets\n\n"} /^[a-zA-Z0-9_.-]+:.*##/ { printf "  %-26s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -247,7 +247,10 @@ watch: ## Run cargo watch loop if available.
 		exit 1; \
 	fi
 
-doctor: ## Verify required developer tools are available.
+doctor: ## Run mvs-manager environment diagnostics (PATH, repo URLs, installer tools).
+	@$(CARGO) run -q -- doctor --format text
+
+doctor-tools: ## Verify required developer tools are available for building this repo.
 	@for tool in $(CARGO) make; do \
 		if ! command -v $$tool >/dev/null 2>&1; then \
 			echo "missing required tool: $$tool"; \
