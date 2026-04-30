@@ -50,7 +50,7 @@ jobs:
           mvs-manager lint --root . --manifest mvs.json --format json
 ```
 
-The installer verifies `checksums.txt` for the downloaded archive.
+The `install.sh` script verifies `checksums.txt` for the downloaded archive. The `mvs-manager self-update` command performs the same style of verification in-process (HTTPS download, SHA-256 of the archive, extract) without executing the remote install script.
 
 ## CI environment variables
 
@@ -60,7 +60,8 @@ The installer verifies `checksums.txt` for the downloaded archive.
 | `GITHUB_TOKEN` or `MVS_GITHUB_TOKEN` | Authenticated GitHub API access for update checks or `self-update --check` if you hit rate limits. |
 | `MVS_REPO` / `MVS_UPDATE_REPO` | `owner/name` for releases and raw install scripts (forks and private mirrors). Same semantics as `install.sh`. |
 | `MVS_ALLOW_UNSAFE_SELF_UPDATE` | Set to `1`/`true`/`yes`/`on` only if you intentionally run `self-update` from a Cargo build directory or other non-standard location. |
+| `MVS_LEGACY_SHELL_INSTALL` | Set to `1`/`true`/`yes`/`on` to force `self-update` to use the legacy `curl \| bash` / `irm \| iex` install script path. Default is in-process verified install; this escape hatch is for troubleshooting only. |
 
 ## Diagnostics
 
-Run `mvs-manager doctor --format json` in CI to dump resolved paths, tool availability, and update-related configuration when debugging install issues.
+Run `mvs-manager doctor --format json` in CI to dump resolved paths, tool availability, update-related configuration, and the active `self_update_install` mode (`verified_in_process` vs `legacy_shell`) when debugging install issues.

@@ -3045,5 +3045,6 @@ fn doctor_json_includes_version_and_compatibility_fields() {
     assert!(payload["current_exe"].is_string());
     assert!(payload["repo_slug"].is_string());
     assert!(payload["github_latest_release_url"].is_string());
+    assert!(payload["self_update_install"].is_string());
     assert!(payload["tools"].is_object());
 }

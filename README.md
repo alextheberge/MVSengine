@@ -27,7 +27,11 @@ Once installed, `mvs-manager` can update itself with:
 mvs-manager self-update
 ```
 
-`self-update` installs next to the running binary and **refuses** Cargo `target/debug|release`, Nix store, or read-only locations unless you set `MVS_ALLOW_UNSAFE_SELF_UPDATE=1`. Forks should set `MVS_REPO` / `MVS_UPDATE_REPO` to `owner/name` so updates match `install.sh`.
+`self-update` downloads the release archive and `checksums.txt` over HTTPS inside the running binary, verifies SHA-256, extracts `mvs-manager` (or `mvs-manager.exe`), and installs next to the current executable. It does **not** run `curl | bash` or `irm | iex` on the install scripts. For debugging only, you can set `MVS_LEGACY_SHELL_INSTALL=1` to restore that legacy path (not recommended for production).
+
+`self-update` **refuses** Cargo `target/debug|release`, Nix store, or read-only locations unless you set `MVS_ALLOW_UNSAFE_SELF_UPDATE=1`. Forks should set `MVS_REPO` / `MVS_UPDATE_REPO` to `owner/name` so updates match `install.sh`.
+
+See [docs/SUPPLY_CHAIN.md](docs/SUPPLY_CHAIN.md) for what is verified on upgrade and what is not.
 
 Interactive runs of the CLI also notify on `stderr` when a newer stable release is available (GitHub `releases/latest` only—prereleases are not advertised there).
 

@@ -1,0 +1,2 @@
+ebeb09bce56466c2300f9bf17468c3eeb8ae59877b760d0a0a58f2e62ca7c804  mvs-manager-9.9.9-fixture-x86_64-unknown-linux-gnu.tar.gz
+1fbdc13975c9174e421b562a4675bb433b6ea9485d6712df3748ef7ae5b38c0e  mvs-manager-9.9.9-fixture-x86_64-pc-windows-msvc.zip

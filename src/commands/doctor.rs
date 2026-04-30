@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use crate::cli::{DoctorArgs, OutputFormat, EXIT_OUTPUT_ERROR, EXIT_SUCCESS};
 use crate::commands::output::{emit_error, emit_json, CommandFailure};
+use crate::install_release::{self_update_install_mode, LEGACY_SHELL_INSTALL_ENV};
 use crate::update::{
     self, github_latest_release_api_url, github_token_configured, install_ps1_raw_url,
     install_sh_raw_url, path_matches_primary_install, repo_slug, self_update_block_reason,
@@ -67,6 +68,8 @@ fn try_run(args: &DoctorArgs) -> Result<DoctorReport, CommandFailure> {
         CommandFailure::new(EXIT_OUTPUT_ERROR, format!("invalid {MVS_REPO_ENV}: {e:#}"))
     })?;
 
+    let self_update_install = self_update_install_mode().to_string();
+
     Ok(DoctorReport {
         command: "doctor",
         version: update::current_version().to_string(),
@@ -85,6 +88,7 @@ fn try_run(args: &DoctorArgs) -> Result<DoctorReport, CommandFailure> {
             .is_some_and(|v| !v.trim().is_empty()),
         github_token_configured: github_token_configured(),
         update_state_file: update_state_path,
+        self_update_install,
         tools: tool_presence(),
         warnings,
     })
@@ -154,6 +158,10 @@ fn render(report: &DoctorReport, format: OutputFormat) -> Result<(), CommandFail
                 report.github_token_configured, UPDATE_GITHUB_TOKEN_ENV,
             );
             println!("  update state file:   {}", report.update_state_file);
+            println!(
+                "  self-update install: {} ({}=1 enables legacy remote shell; not recommended)",
+                report.self_update_install, LEGACY_SHELL_INSTALL_ENV
+            );
             println!("  tools:");
             println!("    curl:        {}", report.tools.curl);
             println!("    tar:         {}", report.tools.tar);
@@ -193,6 +201,8 @@ struct DoctorReport {
     update_check_disabled: bool,
     github_token_configured: bool,
     update_state_file: String,
+    /// `verified_in_process` or `legacy_shell` (see `MVS_LEGACY_SHELL_INSTALL`).
+    self_update_install: String,
     tools: ToolPresence,
     warnings: Vec<String>,
 }

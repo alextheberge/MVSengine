@@ -64,7 +64,7 @@ pub fn repo_slug() -> String {
         .unwrap_or_else(|| format!("{DEFAULT_REPO_OWNER}/{DEFAULT_REPO_NAME}"))
 }
 
-fn parse_repo_slug(slug: &str) -> Result<(String, String)> {
+pub(crate) fn parse_repo_slug(slug: &str) -> Result<(String, String)> {
     let slug = slug.trim();
     let parts: Vec<&str> = slug.split('/').filter(|p| !p.is_empty()).collect();
     if parts.len() != 2 {
@@ -326,7 +326,7 @@ fn fetch_latest_release_payload() -> Result<Value> {
     fetch_json(&url)
 }
 
-fn github_token() -> Option<String> {
+pub(crate) fn github_token() -> Option<String> {
     env::var(UPDATE_GITHUB_TOKEN_ENV)
         .ok()
         .or_else(|| env::var("GITHUB_TOKEN").ok())
@@ -431,6 +431,14 @@ fn run_json_command(program: &str, args: &[&str]) -> Result<Value> {
 
 fn run_installer(tag: &str) -> Result<()> {
     let install_dir = current_install_dir()?;
+    if crate::install_release::self_update_install_mode() == "legacy_shell" {
+        return run_installer_shell(tag, &install_dir);
+    }
+    crate::install_release::install_verified_release(tag, &install_dir)
+        .context("in-process verified install failed")
+}
+
+fn run_installer_shell(tag: &str, install_dir: &Path) -> Result<()> {
     let repo = repo_slug();
 
     #[cfg(target_os = "windows")]
@@ -463,7 +471,7 @@ fn run_installer(tag: &str) -> Result<()> {
             .args(["-lc", &format!("curl -fsSL {install_sh_url} | bash")])
             .env(MVS_REPO_ENV, &repo)
             .env("MVS_VERSION", tag)
-            .env("MVS_INSTALL_DIR", &install_dir)
+            .env("MVS_INSTALL_DIR", install_dir)
             .output()
             .context("failed to launch installer shell")?;
         if !output.status.success() {
@@ -590,7 +598,7 @@ fn env_flag(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn now_unix() -> u64 {
+pub(crate) fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

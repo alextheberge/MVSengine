@@ -6,7 +6,7 @@ The primary supported install path today is **GitHub Releases** plus [`scripts/i
 
 | Channel | Pros | Cons / notes |
 |---------|------|----------------|
-| **GitHub Releases + curl installer** (current) | Checksums, multi-target archives, no registry account required | Requires trusting the script host + release org; `self-update` shells out to the same installer. |
+| **GitHub Releases + curl installer** (current) | Checksums, multi-target archives, no registry account required | First-time install still trusts the script host + release org; `self-update` uses the same release bytes as `install.sh` but fetches and verifies them in-process (see [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md)). |
 | **`cargo install` from crates.io** | Familiar to Rust developers; `cargo install --locked` pins deps | AGPL-3.0 affects downstream packaging expectations; crate name availability and release cadence must align with Git tags. |
 | **Homebrew tap (third-party or official)** | Great macOS UX; `brew upgrade` | Requires maintaining a formula, bottles per OS, and review if submitted to `homebrew-core`. |
 | **Nix flake** | Reproducible hashes; fits NixOS and devshells | Higher maintenance; users must use Nix. |
