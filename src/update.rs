@@ -323,7 +323,7 @@ fn fetch_latest_release() -> Result<ReleaseInfo> {
 
 fn fetch_latest_release_payload() -> Result<Value> {
     let url = github_latest_release_api_url()?;
-    fetch_json(&url)
+    crate::github_http::fetch_github_json(&url)
 }
 
 pub(crate) fn github_token() -> Option<String> {
@@ -346,87 +346,6 @@ fn is_newer_than_current(version: &str) -> Result<bool> {
 fn validate_version(version: &str) -> Result<Version> {
     Version::parse(version)
         .with_context(|| format!("release version `{version}` is not valid semver"))
-}
-
-fn fetch_json(url: &str) -> Result<Value> {
-    #[cfg(target_os = "windows")]
-    {
-        fetch_json_with_powershell(url).or_else(|_| fetch_json_with_curl(url))
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        fetch_json_with_curl(url).or_else(|_| fetch_json_with_wget(url))
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn fetch_json_with_powershell(url: &str) -> Result<Value> {
-    let auth = github_token()
-        .map(|token| {
-            format!(
-                "$headers.Authorization = 'Bearer {}'; ",
-                escape_powershell_single_quoted(&token)
-            )
-        })
-        .unwrap_or_default();
-    let script = format!(
-        "$headers = @{{ 'User-Agent' = 'mvs-manager'; 'Accept' = 'application/vnd.github+json' }}; {auth}Invoke-RestMethod -Method Get -Headers $headers -Uri '{url}' | ConvertTo-Json -Depth 100"
-    );
-    run_json_command("powershell", &["-NoProfile", "-Command", &script])
-}
-
-fn fetch_json_with_curl(url: &str) -> Result<Value> {
-    let mut owned_args = vec![
-        "-fsSL".to_string(),
-        "-H".to_string(),
-        "Accept: application/vnd.github+json".to_string(),
-        "-H".to_string(),
-        "User-Agent: mvs-manager".to_string(),
-    ];
-    if let Some(token) = github_token() {
-        owned_args.push("-H".to_string());
-        owned_args.push(format!("Authorization: Bearer {token}"));
-    }
-    owned_args.push(url.to_string());
-    let borrowed = owned_args.iter().map(String::as_str).collect::<Vec<_>>();
-    run_json_command("curl", &borrowed)
-}
-
-#[cfg(not(target_os = "windows"))]
-fn fetch_json_with_wget(url: &str) -> Result<Value> {
-    let mut owned_args = vec![
-        "--quiet".to_string(),
-        "-O".to_string(),
-        "-".to_string(),
-        "--header".to_string(),
-        "Accept: application/vnd.github+json".to_string(),
-        "--header".to_string(),
-        "User-Agent: mvs-manager".to_string(),
-    ];
-    if let Some(token) = github_token() {
-        owned_args.push("--header".to_string());
-        owned_args.push(format!("Authorization: Bearer {token}"));
-    }
-    owned_args.push(url.to_string());
-    let borrowed = owned_args.iter().map(String::as_str).collect::<Vec<_>>();
-    run_json_command("wget", &borrowed)
-}
-
-fn run_json_command(program: &str, args: &[&str]) -> Result<Value> {
-    let output = Command::new(program)
-        .args(args)
-        .output()
-        .with_context(|| format!("failed to execute `{program}`"))?;
-    if !output.status.success() {
-        bail!(
-            "`{program}` failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-
-    serde_json::from_slice(&output.stdout)
-        .with_context(|| format!("`{program}` returned invalid JSON"))
 }
 
 fn run_installer(tag: &str) -> Result<()> {

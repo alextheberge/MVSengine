@@ -19,3 +19,5 @@ The primary supported install path today is **GitHub Releases** plus [`scripts/i
 3. Add **Homebrew** or **Nix** when there is sustained demand from a specific community; both are thin wrappers around the same release binaries.
 
 Forks should set `MVS_REPO` (or `MVS_UPDATE_REPO`) consistently for `install.sh`, `self-update`, and `mvs-manager doctor` output so all tooling points at the same `owner/name`.
+
+Upstream CI runs the full Rust gate on **Linux, macOS, and Windows** so release-style paths stay healthy across platforms (see [INSTALL_AND_CI.md](INSTALL_AND_CI.md)).

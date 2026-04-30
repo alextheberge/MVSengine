@@ -61,6 +61,18 @@ The `install.sh` script verifies `checksums.txt` for the downloaded archive. The
 | `MVS_REPO` / `MVS_UPDATE_REPO` | `owner/name` for releases and raw install scripts (forks and private mirrors). Same semantics as `install.sh`. |
 | `MVS_ALLOW_UNSAFE_SELF_UPDATE` | Set to `1`/`true`/`yes`/`on` only if you intentionally run `self-update` from a Cargo build directory or other non-standard location. |
 | `MVS_LEGACY_SHELL_INSTALL` | Set to `1`/`true`/`yes`/`on` to force `self-update` to use the legacy `curl \| bash` / `irm \| iex` install script path. Default is in-process verified install; this escape hatch is for troubleshooting only. |
+| `MVS_MINISIGN_PUBLIC_KEY` | Optional override of the embedded minisign public key (two-line `minisign.pub` contents) used when verifying `checksums.txt.minisig` during `self-update`. |
+
+## First-party CI (this repository)
+
+Pull requests run the same Rust gate on **ubuntu-latest**, **macos-latest**, and **windows-latest** via [`scripts/ci/run_full_ci.sh`](../scripts/ci/run_full_ci.sh) (bash + `cargo`, no GNU `make` required on Windows). A separate job runs **`cargo deny check`** against [`deny.toml`](../deny.toml).
+
+- **`make ci`** — full gate when GNU make is available (local Linux/macOS habit).
+- **`make ci-bash`** or **`bash scripts/ci/run_full_ci.sh`** — same steps as CI on any host with bash + Rust.
+
+## Optional fuzz workflow
+
+The **Fuzz** GitHub Actions workflow (manual `workflow_dispatch`) performs a short `cargo fuzz` run against the checksum parser harness under `fuzz/`.
 
 ## Diagnostics
 

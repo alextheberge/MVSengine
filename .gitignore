@@ -1,2 +1,5 @@
 /target
 /dist
+/fuzz/artifacts/
+/fuzz/corpus/
+/fuzz/target/

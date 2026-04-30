@@ -4,13 +4,25 @@
 
 use std::env;
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::io::{self, Cursor};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
-use sha2::{Digest, Sha256};
+use minisign::{PublicKeyBox, SignatureBox};
 
-use crate::update::{github_token, parse_repo_slug, repo_slug};
+use crate::github_http::{
+    download_to_file_sha256_limited, get_github_bytes_optional, MAX_ARCHIVE_DOWNLOAD_BYTES,
+    MAX_SMALL_DOWNLOAD_BYTES,
+};
+use crate::update::{parse_repo_slug, repo_slug};
+
+/// Override embedded [`MINISIGN_PUBLIC_KEY_EMBED`]: full minisign public key file contents (two lines).
+pub const MVS_MINISIGN_PUBLIC_KEY_ENV: &str = "MVS_MINISIGN_PUBLIC_KEY";
+
+const MINISIGN_PUBLIC_KEY_EMBED: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/packaging/minisign.pub"
+));
 
 const BIN_NAME: &str = "mvs-manager";
 
@@ -94,58 +106,62 @@ fn release_download_base(tag: &str) -> Result<String> {
     ))
 }
 
-fn ureq_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .user_agent(&format!(
-            "mvs-manager/{} self-update",
-            crate::update::current_version()
-        ))
-        .build()
-}
-
-fn apply_github_auth(mut request: ureq::Request) -> ureq::Request {
-    if let Some(token) = github_token() {
-        let value = format!("Bearer {token}");
-        request = request.set("Authorization", value.as_str());
+fn load_minisign_public_key() -> Result<minisign::PublicKey> {
+    if let Ok(raw) = env::var(MVS_MINISIGN_PUBLIC_KEY_ENV) {
+        let t = raw.trim();
+        if !t.is_empty() {
+            return PublicKeyBox::from_string(t)
+                .and_then(|b| b.into_public_key())
+                .map_err(|e| anyhow!("{e}"));
+        }
     }
-    request
-}
-
-/// Stream `GET url` to `dest_path` and return SHA-256 of the bytes (streaming hash).
-fn download_and_sha256(url: &str, dest_path: &Path) -> Result<[u8; 32]> {
-    let request = apply_github_auth(ureq_agent().get(url));
-    let response = request
-        .call()
-        .with_context(|| format!("HTTP GET failed for {url}"))?;
-    if !(200..300).contains(&response.status()) {
+    let t = MINISIGN_PUBLIC_KEY_EMBED.trim();
+    if t.is_empty() || t.starts_with('#') {
         bail!(
-            "HTTP {} for {url}: {}",
-            response.status(),
-            response.status_text()
+            "release includes checksums.txt.minisig but no minisign public key is configured; set {} to the public key file contents (see packaging/minisign.pub in this repository)",
+            MVS_MINISIGN_PUBLIC_KEY_ENV
         );
     }
-
-    let mut reader = response.into_reader();
-    let mut file = File::create(dest_path)
-        .with_context(|| format!("failed to create `{}`", dest_path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 8192];
-    loop {
-        let n = reader
-            .read(&mut buf)
-            .context("failed reading download stream")?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-        file.write_all(&buf[..n])
-            .with_context(|| format!("failed writing `{}`", dest_path.display()))?;
-    }
-    let digest = hasher.finalize();
-    Ok(digest.into())
+    PublicKeyBox::from_string(t)
+        .and_then(|b| b.into_public_key())
+        .map_err(|e| anyhow!("{e}"))
 }
 
-fn parse_hex_sha256(word: &str) -> Result<[u8; 32]> {
+/// When `checksums.txt.minisig` exists on the release, verify it before trusting `checksums.txt`.
+fn verify_checksums_minisig_if_present(base: &str, checksums_bytes: &[u8]) -> Result<()> {
+    let sig_url = format!("{base}/checksums.txt.minisig");
+    let Some(sig_raw) = get_github_bytes_optional(&sig_url)? else {
+        return Ok(());
+    };
+    let sig_text =
+        std::str::from_utf8(&sig_raw).context("checksums.txt.minisig is not valid UTF-8")?;
+    let pk = load_minisign_public_key()?;
+    let sig_box = SignatureBox::from_string(sig_text.trim()).map_err(|e| anyhow!("{e}"))?;
+    let mut cursor = Cursor::new(checksums_bytes.to_vec());
+    minisign::verify(&pk, &sig_box, &mut cursor, true, false, false).map_err(|e| anyhow!("{e}"))
+}
+
+fn is_safe_root_archive_path(name: &str, expected_file: &str) -> bool {
+    let normalized = name.replace('\\', "/");
+    let trimmed = normalized.trim_start_matches("./");
+    if trimmed.is_empty() || trimmed.contains("..") {
+        return false;
+    }
+    let pb = Path::new(trimmed);
+    if pb
+        .components()
+        .any(|c| matches!(c, Component::ParentDir | Component::RootDir))
+    {
+        return false;
+    }
+    if pb.components().count() != 1 {
+        return false;
+    }
+    trimmed == expected_file
+}
+
+/// Parse a 64-character hex SHA-256 token (used by tests and fuzz targets).
+pub fn parse_hex_sha256(word: &str) -> Result<[u8; 32]> {
     let s = word.trim();
     if s.len() != 64 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
         bail!("invalid SHA-256 hex token (expected 64 hex chars): `{s}`");
@@ -195,29 +211,41 @@ fn extract_tar_gz_binary(archive_path: &Path, work_dir: &Path) -> Result<PathBuf
     let file = File::open(archive_path).context("open archive")?;
     let gz = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(gz);
-    let mut found = None;
+    let mut found: Option<PathBuf> = None;
     for entry in archive.entries().context("read tar entries")? {
         let mut entry = entry.context("tar entry")?;
-        if !entry.header().entry_type().is_file() {
-            continue;
-        }
         let path = entry
             .path()
             .context("tar entry path")?
             .to_string_lossy()
             .into_owned();
-        if path == BIN_NAME || path == format!("./{BIN_NAME}") {
-            let dest = work_dir.join(BIN_NAME);
-            entry.unpack(&dest).with_context(|| {
-                format!(
-                    "failed to unpack `{}` from {}",
-                    dest.display(),
-                    archive_path.display()
-                )
-            })?;
-            found = Some(dest);
-            break;
+        if !is_safe_root_archive_path(&path, BIN_NAME) {
+            continue;
         }
+        if entry.header().entry_type().is_symlink() {
+            bail!(
+                "refusing symlink entry masquerading as `{BIN_NAME}` in {}",
+                archive_path.display()
+            );
+        }
+        if !entry.header().entry_type().is_file() {
+            continue;
+        }
+        if found.is_some() {
+            bail!(
+                "archive {} contains multiple `{BIN_NAME}` file entries",
+                archive_path.display()
+            );
+        }
+        let dest = work_dir.join(BIN_NAME);
+        entry.unpack(&dest).with_context(|| {
+            format!(
+                "failed to unpack `{}` from {}",
+                dest.display(),
+                archive_path.display()
+            )
+        })?;
+        found = Some(dest);
     }
     found.ok_or_else(|| {
         anyhow!(
@@ -232,20 +260,39 @@ fn extract_zip_binary(archive_path: &Path, work_dir: &Path) -> Result<PathBuf> {
     let file = File::open(archive_path).context("open zip")?;
     let mut archive = zip::ZipArchive::new(file).context("read zip")?;
     let exe_name = format!("{BIN_NAME}.exe");
+    let mut found: Option<PathBuf> = None;
     for i in 0..archive.len() {
         let mut inner = archive.by_index(i).context("zip index")?;
         let name = inner.name().replace('\\', "/");
-        if name == exe_name || name == format!("./{exe_name}") {
-            let dest = work_dir.join(&exe_name);
-            let mut out = File::create(&dest).context("create extracted exe")?;
-            io::copy(&mut inner, &mut out).context("copy zip member")?;
-            return Ok(dest);
+        if !is_safe_root_archive_path(&name, &exe_name) {
+            continue;
         }
+        if inner.is_symlink() {
+            bail!(
+                "refusing symlink entry masquerading as `{exe_name}` in {}",
+                archive_path.display()
+            );
+        }
+        if inner.is_dir() {
+            continue;
+        }
+        if found.is_some() {
+            bail!(
+                "archive {} contains multiple `{exe_name}` file entries",
+                archive_path.display()
+            );
+        }
+        let dest = work_dir.join(&exe_name);
+        let mut out = File::create(&dest).context("create extracted exe")?;
+        io::copy(&mut inner, &mut out).context("copy zip member")?;
+        found = Some(dest);
     }
-    bail!(
-        "archive {} did not contain `{exe_name}` at zip root",
-        archive_path.display()
-    )
+    found.ok_or_else(|| {
+        anyhow!(
+            "archive {} did not contain `{exe_name}` at zip root",
+            archive_path.display()
+        )
+    })
 }
 
 #[cfg(unix)]
@@ -328,13 +375,20 @@ pub fn install_verified_release(tag: &str, dest_dir: &Path) -> Result<()> {
         let archive_path = work_root.join(&basename);
         let extract_dir = work_root.join("extract");
 
-        download_and_sha256(&checksums_url, &checksums_path)
+        download_to_file_sha256_limited(&checksums_url, &checksums_path, MAX_SMALL_DOWNLOAD_BYTES)
             .with_context(|| format!("download checksums from {checksums_url}"))?;
-        let checksums_txt = fs::read_to_string(&checksums_path).context("read checksums.txt")?;
+        let checksums_bytes = fs::read(&checksums_path).context("read checksums.txt")?;
+        verify_checksums_minisig_if_present(&base, &checksums_bytes)?;
+        let checksums_txt =
+            String::from_utf8(checksums_bytes).context("checksums.txt is not valid UTF-8")?;
         let expected = expected_sha256_from_checksums(&checksums_txt, &basename)?;
 
-        let actual = download_and_sha256(&archive_url, &archive_path)
-            .with_context(|| format!("download archive from {archive_url}"))?;
+        let actual = download_to_file_sha256_limited(
+            &archive_url,
+            &archive_path,
+            MAX_ARCHIVE_DOWNLOAD_BYTES,
+        )
+        .with_context(|| format!("download archive from {archive_url}"))?;
         if actual != expected {
             bail!(
                 "SHA-256 mismatch for {}: expected {}, got {}",
@@ -362,6 +416,8 @@ mod tests {
     use super::*;
     use flate2::write::GzEncoder;
     use flate2::Compression;
+    use sha2::{Digest, Sha256};
+    use std::io::{Read, Write};
     use tar::Header;
 
     fn fixture_dir() -> PathBuf {
@@ -503,5 +559,29 @@ mod tests {
     fn rejects_invalid_sha256_hex_token() {
         assert!(parse_hex_sha256("not-hex").is_err());
         assert!(parse_hex_sha256("abcd").is_err());
+    }
+
+    #[test]
+    fn fixture_checksums_minisig_verifies_with_embedded_pubkey() -> Result<()> {
+        let dir = fixture_dir();
+        let sums = fs::read(dir.join("checksums.txt"))?;
+        let sig_txt = fs::read_to_string(dir.join("checksums.txt.minisig"))?;
+        let pk = load_minisign_public_key()?;
+        let sig_box = SignatureBox::from_string(sig_txt.trim()).map_err(|e| anyhow!("{e}"))?;
+        let mut cursor = Cursor::new(sums);
+        minisign::verify(&pk, &sig_box, &mut cursor, true, false, false).map_err(|e| anyhow!("{e}"))
+    }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn parse_hex_sha256_never_panics(s in ".{0,256}") {
+            let _ = parse_hex_sha256(&s);
+        }
+        #[test]
+        fn expected_sha256_from_checksums_never_panics(content in ".{0,512}", basename in "[a-z0-9._-]{1,64}") {
+            let _ = expected_sha256_from_checksums(&content, &basename);
+        }
     }
 }

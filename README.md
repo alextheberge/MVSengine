@@ -41,7 +41,7 @@ Diagnostics and install troubleshooting:
 mvs-manager doctor
 ```
 
-See [docs/INSTALL_AND_CI.md](docs/INSTALL_AND_CI.md) for CI env vars and pinned installs, and [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) for packaging options.
+See [docs/INSTALL_AND_CI.md](docs/INSTALL_AND_CI.md) for CI env vars, the Linux/macOS/Windows PR gate, and pinned installs; [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) for packaging; [docs/SUPPLY_CHAIN.md](docs/SUPPLY_CHAIN.md) for TLS, minisign, and download limits on `self-update`.
 
 ### 2) Initialize your project manifest
 ```bash

@@ -51,7 +51,7 @@ DOGFOOD_REQUIRE_CANONICAL ?= false
 HOST_TARGET := $(shell rustc -vV 2>/dev/null | awk '/host:/ {print $$2}')
 CARGO_TARGET_FLAG := $(if $(strip $(TARGET)),--target $(TARGET),)
 
-.PHONY: help print-config bootstrap fmt fmt-check check clippy test test-unit test-integration build build-release docs clean ci generate generate-dry lint-manifest validate fixture-smoke release-local release-host release-target release-matrix-local release-merge-checksums release-sign-checksums release-verify release-github release-rc install install-hooks run-precommit dogfood-check dogfood-sync-version watch doctor doctor-tools
+.PHONY: help print-config bootstrap fmt fmt-check check clippy test test-unit test-integration build build-release docs clean ci ci-bash generate generate-dry lint-manifest validate fixture-smoke release-local release-host release-target release-matrix-local release-merge-checksums release-sign-checksums release-verify release-github release-rc install install-hooks run-precommit dogfood-check dogfood-sync-version watch doctor doctor-tools
 
 help: ## Show all available targets.
 	@awk 'BEGIN {FS = ":.*##"; printf "\nMVS Engine Make Targets\n\n"} /^[a-zA-Z0-9_.-]+:.*##/ { printf "  %-26s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -238,6 +238,9 @@ dogfood-sync-version: ## Sync Cargo.toml version from mvs.json identity (ARCH.FE
 
 ci: fmt-check check clippy test fixture-smoke lint-manifest dogfood-check ## Full local/CI quality gate.
 	@echo "CI checks passed."
+
+ci-bash: ## Same gate as GitHub Actions (bash + cargo; use on Windows or without GNU make).
+	bash scripts/ci/run_full_ci.sh
 
 watch: ## Run cargo watch loop if available.
 	@if command -v cargo-watch >/dev/null 2>&1; then \
