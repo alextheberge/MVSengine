@@ -3742,9 +3742,10 @@ mod tests {
             entry.signature == "rust:impl-fn HostAdapter::connect(&self, target: &str) -> bool"
         }));
         // Must match load-time canonicalize (`:&` → `: &`) so generate/lint agree.
-        assert!(report.public_api.iter().any(|entry| {
-            entry.signature == "rust:const DEFAULT_PROFILE_ID: &str"
-        }));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| { entry.signature == "rust:const DEFAULT_PROFILE_ID: &str" }));
         assert!(report
             .public_api
             .iter()

@@ -916,7 +916,9 @@ fn is_three_part_identity(mvs: &str) -> bool {
         return false;
     };
     numeric.bytes().filter(|&b| b == b'.').count() == 2
-        && numeric.split('.').all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+        && numeric
+            .split('.')
+            .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
 }
 
 fn current_unix_timestamp() -> u64 {

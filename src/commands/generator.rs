@@ -306,20 +306,19 @@ fn derive_axis_decision(inputs: AxisInputs<'_>) -> AxisDecision {
         ));
     }
 
-    let other_axes_changed = decision.arch_increment > 0
-        || decision.feat_increment > 0
-        || decision.prot_increment > 0;
+    let other_axes_changed =
+        decision.arch_increment > 0 || decision.feat_increment > 0 || decision.prot_increment > 0;
 
     if inputs.bump_fix && !other_axes_changed {
         decision.fix_increment = 1;
-        decision.reasons.push(
-            "Fix incremented due to explicit --fix (bug fix / minor release).".to_string(),
-        );
+        decision
+            .reasons
+            .push("Fix incremented due to explicit --fix (bug fix / minor release).".to_string());
     } else if inputs.auto_fix && !other_axes_changed {
         decision.fix_increment = 1;
-        decision.reasons.push(
-            "Fix incremented due to --auto-fix with no FEAT/PROT/ARCH drift.".to_string(),
-        );
+        decision
+            .reasons
+            .push("Fix incremented due to --auto-fix with no FEAT/PROT/ARCH drift.".to_string());
     }
 
     decision
