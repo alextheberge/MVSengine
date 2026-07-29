@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::mvs::hashing::hash_items;
 
+pub const SCHEMA_V1: &str = "https://mvs.dev/schema/v1";
+pub const SCHEMA_V2: &str = "https://mvs.dev/schema/v2";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
     #[serde(rename = "$schema")]
@@ -46,7 +49,30 @@ pub struct Identity {
     pub arch: u64,
     pub feat: u64,
     pub prot: u64,
+    /// Patch / bugfix release axis. SemVer projection uses `arch.feat.fix`.
+    #[serde(default)]
+    pub fix: u64,
     pub cont: String,
+}
+
+impl Identity {
+    /// Canonical identity string: `ARCH.FEAT.PROT.FIX-CONT`.
+    pub fn format_mvs(arch: u64, feat: u64, prot: u64, fix: u64, cont: &str) -> String {
+        format!("{arch}.{feat}.{prot}.{fix}-{cont}")
+    }
+
+    /// Package-manager SemVer projection: `ARCH.FEAT.FIX`.
+    pub fn semver_projection(arch: u64, feat: u64, fix: u64) -> String {
+        format!("{arch}.{feat}.{fix}")
+    }
+
+    pub fn expected_mvs(&self) -> String {
+        Self::format_mvs(self.arch, self.feat, self.prot, self.fix, &self.cont)
+    }
+
+    pub fn package_semver(&self) -> String {
+        Self::semver_projection(self.arch, self.feat, self.fix)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -191,6 +217,8 @@ pub struct HistoryEntry {
     pub arch: u64,
     pub feat: u64,
     pub prot: u64,
+    #[serde(default)]
+    pub fix: u64,
     pub cont: String,
     pub reasons: Vec<String>,
     pub changed_at_unix: u64,
@@ -250,12 +278,13 @@ impl Default for AiContract {
 impl Manifest {
     pub fn default_for_context(context: &str) -> Self {
         let mut manifest = Self {
-            schema: "https://mvs.dev/schema/v1".to_string(),
+            schema: SCHEMA_V2.to_string(),
             identity: Identity {
                 mvs: String::new(),
                 arch: 0,
                 feat: 0,
                 prot: 0,
+                fix: 0,
                 cont: context.to_string(),
             },
             compatibility: Compatibility::default(),
@@ -286,9 +315,41 @@ impl Manifest {
             .with_context(|| format!("failed to read manifest: {}", path.display()))?;
         let mut manifest: Self = serde_json::from_str(&raw)
             .with_context(|| format!("failed to parse manifest: {}", path.display()))?;
+        manifest.migrate_to_v2_if_needed();
         manifest.evidence = manifest.evidence.canonicalized();
         manifest.validate()?;
         Ok(manifest)
+    }
+
+    /// Upgrade v1 (`ARCH.FEAT.PROT-CONT`) manifests to v2 (`ARCH.FEAT.PROT.FIX-CONT`).
+    ///
+    /// When the identity string is three-part, initialize `fix = prot` so SemVer
+    /// `arch.feat.fix` preserves the legacy third digit.
+    pub fn migrate_to_v2_if_needed(&mut self) {
+        let three_part = is_three_part_identity(&self.identity.mvs);
+        let needs_schema_bump = self.schema != SCHEMA_V2;
+
+        if three_part {
+            self.identity.fix = self.identity.prot;
+        }
+
+        for entry in &mut self.history {
+            if is_three_part_identity(&entry.mvs) {
+                entry.fix = entry.prot;
+                entry.mvs = Identity::format_mvs(
+                    entry.arch,
+                    entry.feat,
+                    entry.prot,
+                    entry.fix,
+                    &entry.cont,
+                );
+            }
+        }
+
+        if needs_schema_bump || three_part {
+            self.schema = SCHEMA_V2.to_string();
+            self.sync_identity_string();
+        }
     }
 
     pub fn load_if_exists(path: &Path, context: &str) -> Result<Self> {
@@ -308,10 +369,7 @@ impl Manifest {
     }
 
     pub fn sync_identity_string(&mut self) {
-        self.identity.mvs = format!(
-            "{}.{}.{}-{}",
-            self.identity.arch, self.identity.feat, self.identity.prot, self.identity.cont
-        );
+        self.identity.mvs = self.identity.expected_mvs();
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -319,10 +377,7 @@ impl Manifest {
             bail!("identity.cont must be non-empty");
         }
 
-        let expected = format!(
-            "{}.{}.{}-{}",
-            self.identity.arch, self.identity.feat, self.identity.prot, self.identity.cont
-        );
+        let expected = self.identity.expected_mvs();
         if self.identity.mvs != expected {
             bail!(
                 "identity.mvs mismatch: found `{}`, expected `{}`",
@@ -341,6 +396,41 @@ impl Manifest {
         Ok(())
     }
 
+    /// Apply axis increments with reset / coupling rules:
+    /// - `arch` bump resets feat/prot/fix to 0, then applies feat/prot increments
+    /// - `feat` or `prot` bump resets fix to 0
+    /// - `prot` bump then sets `fix += 1` so SemVer still moves
+    /// - otherwise apply `fix_increment` alone
+    pub fn apply_axis_increments(
+        &mut self,
+        arch_increment: u64,
+        feat_increment: u64,
+        prot_increment: u64,
+        fix_increment: u64,
+    ) {
+        if arch_increment > 0 {
+            self.identity.feat = 0;
+            self.identity.prot = 0;
+            self.identity.fix = 0;
+            self.identity.arch += arch_increment;
+        }
+
+        if feat_increment > 0 || prot_increment > 0 {
+            self.identity.fix = 0;
+        }
+
+        self.identity.feat += feat_increment;
+        self.identity.prot += prot_increment;
+
+        if prot_increment > 0 {
+            self.identity.fix += 1;
+        } else if fix_increment > 0 && feat_increment == 0 && arch_increment == 0 {
+            self.identity.fix += fix_increment;
+        } else if feat_increment > 0 {
+            // feat-only: fix stays 0 after reset
+        }
+    }
+
     pub fn append_history_entry(&mut self, reasons: Vec<String>) {
         if reasons.is_empty() {
             return;
@@ -351,6 +441,7 @@ impl Manifest {
             arch: self.identity.arch,
             feat: self.identity.feat,
             prot: self.identity.prot,
+            fix: self.identity.fix,
             cont: self.identity.cont.clone(),
             reasons,
             changed_at_unix: current_unix_timestamp(),
@@ -819,6 +910,15 @@ fn validate_range(label: &str, range: &ProtocolRange) -> Result<()> {
     Ok(())
 }
 
+/// True when `mvs` looks like legacy `ARCH.FEAT.PROT-CONT` (exactly three numeric components).
+fn is_three_part_identity(mvs: &str) -> bool {
+    let Some((numeric, _)) = mvs.split_once('-') else {
+        return false;
+    };
+    numeric.bytes().filter(|&b| b == b'.').count() == 2
+        && numeric.split('.').all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+}
+
 fn current_unix_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -837,8 +937,81 @@ mod tests {
     #[test]
     fn default_manifest_has_valid_identity() {
         let manifest = Manifest::default_for_context("cli");
-        assert_eq!(manifest.identity.mvs, "0.0.0-cli");
+        assert_eq!(manifest.identity.mvs, "0.0.0.0-cli");
+        assert_eq!(manifest.schema, super::SCHEMA_V2);
         assert!(manifest.validate().is_ok());
+    }
+
+    #[test]
+    fn migrate_v1_sets_fix_equal_to_prot() {
+        let raw = r#"{
+          "$schema": "https://mvs.dev/schema/v1",
+          "identity": {
+            "mvs": "1.10.4-cli",
+            "arch": 1,
+            "feat": 10,
+            "prot": 4,
+            "cont": "cli"
+          }
+        }"#;
+        let mut manifest: Manifest = serde_json::from_str(raw).expect("parse");
+        manifest.migrate_to_v2_if_needed();
+        assert_eq!(manifest.identity.fix, 4);
+        assert_eq!(manifest.identity.mvs, "1.10.4.4-cli");
+        assert_eq!(manifest.identity.package_semver(), "1.10.4");
+        assert_eq!(manifest.schema, super::SCHEMA_V2);
+        assert!(manifest.validate().is_ok());
+    }
+
+    #[test]
+    fn apply_axis_increments_fix_only() {
+        let mut manifest = Manifest::default_for_context("cli");
+        manifest.identity.arch = 1;
+        manifest.identity.feat = 10;
+        manifest.identity.prot = 4;
+        manifest.identity.fix = 4;
+        manifest.apply_axis_increments(0, 0, 0, 1);
+        assert_eq!(manifest.identity.fix, 5);
+        assert_eq!(manifest.identity.prot, 4);
+    }
+
+    #[test]
+    fn apply_axis_increments_prot_resets_then_bumps_fix() {
+        let mut manifest = Manifest::default_for_context("cli");
+        manifest.identity.arch = 1;
+        manifest.identity.feat = 10;
+        manifest.identity.prot = 4;
+        manifest.identity.fix = 7;
+        manifest.apply_axis_increments(0, 0, 1, 0);
+        assert_eq!(manifest.identity.prot, 5);
+        assert_eq!(manifest.identity.fix, 1);
+    }
+
+    #[test]
+    fn apply_axis_increments_feat_resets_fix() {
+        let mut manifest = Manifest::default_for_context("cli");
+        manifest.identity.arch = 1;
+        manifest.identity.feat = 10;
+        manifest.identity.prot = 4;
+        manifest.identity.fix = 7;
+        manifest.apply_axis_increments(0, 1, 0, 0);
+        assert_eq!(manifest.identity.feat, 11);
+        assert_eq!(manifest.identity.fix, 0);
+        assert_eq!(manifest.identity.prot, 4);
+    }
+
+    #[test]
+    fn apply_axis_increments_arch_resets_all() {
+        let mut manifest = Manifest::default_for_context("cli");
+        manifest.identity.arch = 1;
+        manifest.identity.feat = 10;
+        manifest.identity.prot = 4;
+        manifest.identity.fix = 7;
+        manifest.apply_axis_increments(1, 0, 1, 0);
+        assert_eq!(manifest.identity.arch, 2);
+        assert_eq!(manifest.identity.feat, 0);
+        assert_eq!(manifest.identity.prot, 1);
+        assert_eq!(manifest.identity.fix, 1);
     }
 
     #[test]

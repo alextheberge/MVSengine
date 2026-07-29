@@ -41,8 +41,8 @@ if [[ -z "${mvs_identity}" ]]; then
   exit 1
 fi
 
-numeric_version="${mvs_identity%%-*}"
-release_tag="v${numeric_version}-${tag_suffix}"
+semver_version="$(scripts/release/semver_from_mvs.sh mvs.json)"
+release_tag="v${semver_version}-${tag_suffix}"
 EXPECTED_TAG="${release_tag}" scripts/release/check_dogfood.sh
 
 version_files=()

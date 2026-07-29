@@ -78,13 +78,19 @@ fn try_run(args: &GenerateArgs) -> std::result::Result<GenerateReport, CommandFa
         ai_schema_hash: &ai_schema_hash,
         arch_break: args.arch_break,
         arch_reason: args.arch_reason.as_deref(),
+        bump_fix: args.fix,
+        auto_fix: args.auto_fix,
     });
     let range_strategy = resolve_range_strategy(args);
 
-    manifest.identity.arch += decision.arch_increment;
-    manifest.identity.feat += decision.feat_increment;
-    manifest.identity.prot += decision.prot_increment;
+    manifest.apply_axis_increments(
+        decision.arch_increment,
+        decision.feat_increment,
+        decision.prot_increment,
+        decision.fix_increment,
+    );
     manifest.identity.cont = context.to_string();
+    manifest.schema = crate::mvs::manifest::SCHEMA_V2.to_string();
     manifest.sync_identity_string();
 
     manifest.evidence.feature_hash = feature_hash;
@@ -143,6 +149,7 @@ fn try_run(args: &GenerateArgs) -> std::result::Result<GenerateReport, CommandFa
             arch_increment: decision.arch_increment,
             feat_increment: decision.feat_increment,
             prot_increment: decision.prot_increment,
+            fix_increment: decision.fix_increment,
         },
         reasons: reasons_to_persist,
         evidence: GenerateEvidenceReport {
@@ -162,6 +169,7 @@ struct AxisDecision {
     arch_increment: u64,
     feat_increment: u64,
     prot_increment: u64,
+    fix_increment: u64,
     reasons: Vec<String>,
 }
 
@@ -174,6 +182,8 @@ struct AxisInputs<'a> {
     ai_schema_hash: &'a str,
     arch_break: bool,
     arch_reason: Option<&'a str>,
+    bump_fix: bool,
+    auto_fix: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -219,6 +229,7 @@ struct GenerateIdentityReport {
     arch_increment: u64,
     feat_increment: u64,
     prot_increment: u64,
+    fix_increment: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -293,6 +304,22 @@ fn derive_axis_decision(inputs: AxisInputs<'_>) -> AxisDecision {
             "Architecture incremented due to declared data/system break: {}",
             inputs.arch_reason.unwrap_or("manual --arch-break flag")
         ));
+    }
+
+    let other_axes_changed = decision.arch_increment > 0
+        || decision.feat_increment > 0
+        || decision.prot_increment > 0;
+
+    if inputs.bump_fix && !other_axes_changed {
+        decision.fix_increment = 1;
+        decision.reasons.push(
+            "Fix incremented due to explicit --fix (bug fix / minor release).".to_string(),
+        );
+    } else if inputs.auto_fix && !other_axes_changed {
+        decision.fix_increment = 1;
+        decision.reasons.push(
+            "Fix incremented due to --auto-fix with no FEAT/PROT/ARCH drift.".to_string(),
+        );
     }
 
     decision
@@ -704,11 +731,14 @@ mod tests {
             ai_schema_hash: "same-ai",
             arch_break: true,
             arch_reason: Some("schema migration changed persistence layout"),
+            bump_fix: false,
+            auto_fix: false,
         });
 
         assert_eq!(decision.arch_increment, 1);
         assert_eq!(decision.prot_increment, 1);
         assert_eq!(decision.feat_increment, 0);
+        assert_eq!(decision.fix_increment, 0);
         assert!(decision
             .reasons
             .iter()
@@ -717,6 +747,84 @@ mod tests {
             .reasons
             .iter()
             .any(|reason| reason.contains("public API signature drift")));
+    }
+
+    #[test]
+    fn increments_fix_when_explicit_fix_and_no_other_drift() {
+        let mut manifest = Manifest::default_for_context("cli");
+        manifest.evidence.feature_hash = "same-feature".to_string();
+        manifest.evidence.protocol_hash = "same-protocol".to_string();
+        manifest.evidence.public_api_hash = "same-api".to_string();
+        manifest.ai_contract.tool_schema_hash = "same-ai".to_string();
+
+        let crawl = CrawlReport {
+            feature_tags: Default::default(),
+            protocol_tags: Default::default(),
+            feature_occurrences: Vec::new(),
+            protocol_occurrences: Vec::new(),
+            public_api: Vec::new(),
+            public_api_boundary_decisions: Vec::new(),
+            excluded_paths: Vec::new(),
+        };
+
+        let decision = derive_axis_decision(AxisInputs {
+            manifest: &manifest,
+            crawl: &crawl,
+            feature_hash: "same-feature",
+            protocol_hash: "same-protocol",
+            public_api_hash: "same-api",
+            ai_schema_hash: "same-ai",
+            arch_break: false,
+            arch_reason: None,
+            bump_fix: true,
+            auto_fix: false,
+        });
+
+        assert_eq!(decision.fix_increment, 1);
+        assert_eq!(decision.feat_increment, 0);
+        assert_eq!(decision.prot_increment, 0);
+        assert!(decision
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("explicit --fix")));
+    }
+
+    #[test]
+    fn auto_fix_skipped_when_prot_also_changes() {
+        let mut manifest = Manifest::default_for_context("cli");
+        manifest.evidence.feature_hash = "same-feature".to_string();
+        manifest.evidence.protocol_hash = "same-protocol".to_string();
+        manifest.evidence.public_api_hash = "old-api".to_string();
+        manifest.ai_contract.tool_schema_hash = "same-ai".to_string();
+
+        let crawl = CrawlReport {
+            feature_tags: Default::default(),
+            protocol_tags: Default::default(),
+            feature_occurrences: Vec::new(),
+            protocol_occurrences: Vec::new(),
+            public_api: vec![ApiSignature {
+                file: "src/cli.rs".to_string(),
+                signature: "rust:fn run() -> i32".to_string(),
+            }],
+            public_api_boundary_decisions: Vec::new(),
+            excluded_paths: Vec::new(),
+        };
+
+        let decision = derive_axis_decision(AxisInputs {
+            manifest: &manifest,
+            crawl: &crawl,
+            feature_hash: "same-feature",
+            protocol_hash: "same-protocol",
+            public_api_hash: "new-api",
+            ai_schema_hash: "same-ai",
+            arch_break: false,
+            arch_reason: None,
+            bump_fix: true,
+            auto_fix: true,
+        });
+
+        assert_eq!(decision.prot_increment, 1);
+        assert_eq!(decision.fix_increment, 0);
     }
 
     #[test]
@@ -776,6 +884,8 @@ mod tests {
             ai_schema: None,
             arch_break: false,
             arch_reason: None,
+            fix: false,
+            auto_fix: false,
             lock_step: false,
             backwards_compatible: Some(2),
             dry_run: false,

@@ -4,7 +4,7 @@ use crate::cli::{SchemaArgs, EXIT_OUTPUT_ERROR, EXIT_SUCCESS};
 /// @mvs-feature("manifest_schema_output")
 /// @mvs-protocol("cli_schema_command")
 pub fn run(args: SchemaArgs) -> i32 {
-    let schema = MVS_JSON_SCHEMA_V1;
+    let schema = MVS_JSON_SCHEMA_V2;
 
     match args.output {
         None => {
@@ -27,41 +27,45 @@ pub fn run(args: SchemaArgs) -> i32 {
     }
 }
 
-/// Canonical JSON Schema for mvs.json (schema version 1).
+/// Canonical JSON Schema for mvs.json (schema version 2).
 ///
-/// Mirrors the `Manifest` struct in `src/mvs/manifest.rs`.  Keep in sync
-/// whenever new top-level fields are added (additive changes only in 1.x).
-pub const MVS_JSON_SCHEMA_V1: &str = r##"{
+/// Four-axis identity: ARCH.FEAT.PROT.FIX-CONT. Keep in sync with `Manifest`.
+pub const MVS_JSON_SCHEMA_V2: &str = r##"{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mvs.dev/schema/v1",
+  "$id": "https://mvs.dev/schema/v2",
   "title": "MVS Manifest",
-  "description": "Multidimensional versioning manifest (mvs.json).  Tracks ARCH.FEAT.PROT-CONT version axes, public API evidence, host/extension compatibility ranges, and AI contract metadata.",
+  "description": "Multidimensional versioning manifest (mvs.json).  Tracks ARCH.FEAT.PROT.FIX-CONT version axes, public API evidence, host/extension compatibility ranges, and AI contract metadata. Package SemVer projects to ARCH.FEAT.FIX.",
   "type": "object",
   "required": ["$schema", "identity"],
   "additionalProperties": false,
   "properties": {
     "$schema": {
       "type": "string",
-      "description": "Must be 'https://mvs.dev/schema/v1'.",
-      "const": "https://mvs.dev/schema/v1"
+      "description": "Must be 'https://mvs.dev/schema/v2'.",
+      "const": "https://mvs.dev/schema/v2"
     },
     "identity": {
       "type": "object",
       "description": "Version identity block.",
-      "required": ["mvs", "arch", "feat", "prot", "cont"],
+      "required": ["mvs", "arch", "feat", "prot", "fix", "cont"],
       "additionalProperties": false,
       "properties": {
         "mvs": {
           "type": "string",
-          "description": "Canonical version string in the form ARCH.FEAT.PROT-CONT.",
-          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+-[A-Za-z0-9_-]+$"
+          "description": "Canonical version string in the form ARCH.FEAT.PROT.FIX-CONT.",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+-[A-Za-z0-9_.-]+$"
         },
         "arch": { "type": "integer", "minimum": 0 },
         "feat": { "type": "integer", "minimum": 0 },
         "prot": { "type": "integer", "minimum": 0 },
+        "fix": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Bug fix / minor release axis. SemVer projection uses arch.feat.fix."
+        },
         "cont": {
           "type": "string",
-          "description": "Deployment context label, e.g. 'cli', 'lib', 'plugin'.",
+          "description": "Deployment context label, e.g. 'cli', 'lib', 'plugin', 'edge.mobile'.",
           "minLength": 1
         }
       }
@@ -280,13 +284,14 @@ pub const MVS_JSON_SCHEMA_V1: &str = r##"{
     },
     "historyEntry": {
       "type": "object",
-      "required": ["mvs", "arch", "feat", "prot", "cont", "reasons", "changed_at_unix"],
+      "required": ["mvs", "arch", "feat", "prot", "fix", "cont", "reasons", "changed_at_unix"],
       "additionalProperties": false,
       "properties": {
         "mvs": { "type": "string" },
         "arch": { "type": "integer", "minimum": 0 },
         "feat": { "type": "integer", "minimum": 0 },
         "prot": { "type": "integer", "minimum": 0 },
+        "fix": { "type": "integer", "minimum": 0 },
         "cont": { "type": "string" },
         "reasons": {
           "type": "array",

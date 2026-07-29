@@ -77,10 +77,12 @@ Notes:
   ```
 
 This enforces:
-- `Cargo.toml` version = MVS numeric version (`ARCH.FEAT.PROT`)
-- canonical release tag = `vARCH.FEAT.PROT` (for example `mvs.json: 0.2.3-cli` => tag `v0.2.3`)
+- `Cargo.toml` version = SemVer projection `ARCH.FEAT.FIX` (protocol axis stays in `mvs.json` only)
+- canonical release tag = `vARCH.FEAT.FIX` (for example `mvs.json: 1.10.4.4-cli` => tag `v1.10.4`)
 
-For prereleases, `Cargo.toml` may carry a suffix such as `1.0.0-rc1`, but its numeric base must still match `mvs.json.identity.mvs`.
+For prereleases, `Cargo.toml` may carry a suffix such as `1.0.0-rc1`, but its numeric base must still match the SemVer projection `arch.feat.fix` from `mvs.json`.
+
+Identity format is four-axis: `ARCH.FEAT.PROT.FIX-CONT`. See [CONTRACT_2X.md](CONTRACT_2X.md).
 
 Build matrix currently publishes:
 - `x86_64-unknown-linux-gnu`

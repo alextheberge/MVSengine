@@ -195,6 +195,14 @@ pub struct GenerateArgs {
     #[arg(long)]
     pub arch_reason: Option<String>,
 
+    /// Increment the FIX axis for a bugfix / minor release (no FEAT/PROT drift required).
+    #[arg(long, default_value_t = false)]
+    pub fix: bool,
+
+    /// When no other axes change, automatically increment FIX (useful for release remediation).
+    #[arg(long, default_value_t = false)]
+    pub auto_fix: bool,
+
     #[arg(long, default_value_t = false, conflicts_with = "backwards_compatible")]
     pub lock_step: bool,
 
@@ -266,6 +274,14 @@ pub struct LintArgs {
     #[arg(long, default_value_t = false)]
     pub remediate: bool,
 
+    /// Pass `--fix` to remediate `generate` runs.
+    #[arg(long, default_value_t = false)]
+    pub fix: bool,
+
+    /// Pass `--auto-fix` to remediate `generate` runs.
+    #[arg(long, default_value_t = false)]
+    pub auto_fix: bool,
+
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 }
@@ -291,6 +307,14 @@ pub struct WatchArgs {
     /// Automatically run `generate` when drift is detected, then re-lint.
     #[arg(long, default_value_t = false)]
     pub remediate: bool,
+
+    /// Pass `--fix` to remediate `generate` runs.
+    #[arg(long, default_value_t = false)]
+    pub fix: bool,
+
+    /// Pass `--auto-fix` to remediate `generate` runs.
+    #[arg(long, default_value_t = false)]
+    pub auto_fix: bool,
 
     /// Run a single maintenance cycle and exit.
     #[arg(long, default_value_t = false, conflicts_with = "max_runs")]

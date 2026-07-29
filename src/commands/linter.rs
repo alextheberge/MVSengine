@@ -45,6 +45,8 @@ fn run_remediate(args: &LintArgs) -> i32 {
         ai_schema: args.ai_schema.clone(),
         arch_break: false,
         arch_reason: None,
+        fix: args.fix,
+        auto_fix: args.auto_fix,
         lock_step: false,
         backwards_compatible: None,
         dry_run: false,

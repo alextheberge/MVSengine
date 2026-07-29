@@ -63,6 +63,7 @@ pub struct IdentityComparison {
     pub arch_delta: i64,
     pub feat_delta: i64,
     pub prot_delta: i64,
+    pub fix_delta: i64,
     pub context_changed: bool,
 }
 
@@ -475,6 +476,7 @@ pub fn compare_manifests(base: &Manifest, target: &Manifest) -> ManifestComparis
         arch_delta: target.identity.arch as i64 - base.identity.arch as i64,
         feat_delta: target.identity.feat as i64 - base.identity.feat as i64,
         prot_delta: target.identity.prot as i64 - base.identity.prot as i64,
+        fix_delta: target.identity.fix as i64 - base.identity.fix as i64,
         context_changed: base.identity.cont != target.identity.cont,
     };
 
@@ -758,13 +760,18 @@ impl ManifestComparison {
 
 impl IdentityComparison {
     fn is_changed(&self) -> bool {
-        self.arch_delta != 0 || self.feat_delta != 0 || self.prot_delta != 0 || self.context_changed
+        self.arch_delta != 0
+            || self.feat_delta != 0
+            || self.prot_delta != 0
+            || self.fix_delta != 0
+            || self.context_changed
     }
 
     fn change_count(&self) -> usize {
         usize::from(self.arch_delta != 0)
             + usize::from(self.feat_delta != 0)
             + usize::from(self.prot_delta != 0)
+            + usize::from(self.fix_delta != 0)
             + usize::from(self.context_changed)
     }
 }

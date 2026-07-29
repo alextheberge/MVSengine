@@ -1,5 +1,7 @@
 # 1.x Public Contract
 
+> **Superseded for identity shape:** `2.x` uses four-axis `ARCH.FEAT.PROT.FIX-CONT` and schema `https://mvs.dev/schema/v2`. See [CONTRACT_2X.md](CONTRACT_2X.md). This document remains the reference for the frozen `1.x` three-axis surface.
+
 This document defines the public compatibility contract that `mvs-manager` intends to keep stable across `1.x` releases.
 
 The goal is simple:

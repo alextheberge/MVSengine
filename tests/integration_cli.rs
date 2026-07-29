@@ -935,7 +935,7 @@ fn report_json_returns_stable_manifest_diff_shape() {
     assert_eq!(payload["command"], "report");
     assert_eq!(payload["status"], "changed");
     assert_eq!(payload["exit_code"], 0);
-    assert_eq!(payload["change_count"], 21);
+    assert_eq!(payload["change_count"], 22);
     let sections = payload["changed_sections"]
         .as_array()
         .expect("changed sections should be an array");
@@ -3019,7 +3019,8 @@ fn lint_accepts_legacy_rust_signature_format_and_generate_rewrites_it() {
         &fs::read_to_string(&manifest_path).expect("failed to read rewritten manifest"),
     )
     .expect("rewritten manifest should be valid JSON");
-    assert_eq!(rewritten["identity"]["mvs"], "0.1.1-cli");
+    assert_eq!(rewritten["identity"]["mvs"], "0.1.1.1-cli");
+    assert_eq!(rewritten["identity"]["fix"], 1);
     assert_eq!(
         rewritten["evidence"]["public_api_inventory"][0]["signature"],
         "rust:fn handshake(version: u32) -> bool"

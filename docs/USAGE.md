@@ -44,6 +44,14 @@ Use `--arch-break` for explicit data/schema breaks:
 mvs-manager generate --root . --manifest mvs.json --context cli --arch-break --arch-reason "persistent schema migration"
 ```
 
+Use `--fix` for bug-fix / minor releases when evidence did not drift:
+
+```bash
+mvs-manager generate --root . --manifest mvs.json --context cli --fix
+```
+
+`--auto-fix` bumps FIX only when no ARCH/FEAT/PROT change (handy for release remediation). Package SemVer is `ARCH.FEAT.FIX`; see [CONTRACT_2X.md](CONTRACT_2X.md).
+
 Range strategy flags:
 
 ```bash

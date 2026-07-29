@@ -32,30 +32,25 @@ fn try_run(args: &CheckManifestArgs) -> Result<CheckManifestReport, CommandFailu
     let mut issues: Vec<Issue> = Vec::new();
 
     // 1. Schema field
-    if manifest.schema != "https://mvs.dev/schema/v1" {
+    if manifest.schema != crate::mvs::manifest::SCHEMA_V2 {
         issues.push(Issue::warning(
             "$schema",
             format!(
-                "$schema is `{}`, expected `https://mvs.dev/schema/v1`.",
-                manifest.schema
+                "$schema is `{}`, expected `{}`.",
+                manifest.schema,
+                crate::mvs::manifest::SCHEMA_V2
             ),
         ));
     }
 
     // 2. Identity string consistency (manifest.validate() already checks this,
     //    but we surface it as a structured issue rather than a hard error above)
-    let expected_mvs = format!(
-        "{}.{}.{}-{}",
-        manifest.identity.arch,
-        manifest.identity.feat,
-        manifest.identity.prot,
-        manifest.identity.cont
-    );
+    let expected_mvs = manifest.identity.expected_mvs();
     if manifest.identity.mvs != expected_mvs {
         issues.push(Issue::error(
             "identity.mvs",
             format!(
-                "identity.mvs is `{}` but should be `{expected_mvs}` based on arch/feat/prot/cont.",
+                "identity.mvs is `{}` but should be `{expected_mvs}` based on arch/feat/prot/fix/cont.",
                 manifest.identity.mvs
             ),
         ));

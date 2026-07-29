@@ -26,9 +26,34 @@ fi
 numeric_version="${mvs_identity%%-*}"
 context_suffix="${mvs_identity#*-}"
 if [[ "${numeric_version}" == "${mvs_identity}" || -z "${context_suffix}" ]]; then
-  echo "identity.mvs must be formatted as ARCH.FEAT.PROT-CONT, found: ${mvs_identity}" >&2
+  echo "identity.mvs must be formatted as ARCH.FEAT.PROT.FIX-CONT, found: ${mvs_identity}" >&2
   exit 1
 fi
+
+arch="$(sed -n 's/.*"arch"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "${manifest_file}" | head -n1)"
+feat="$(sed -n 's/.*"feat"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "${manifest_file}" | head -n1)"
+fix="$(sed -n 's/.*"fix"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "${manifest_file}" | head -n1)"
+
+if [[ -z "${arch}" || -z "${feat}" ]]; then
+  echo "unable to parse identity.arch/feat from ${manifest_file}" >&2
+  exit 1
+fi
+
+if [[ -z "${fix}" ]]; then
+  IFS='.' read -r _a _f _p _x <<< "${numeric_version}"
+  dot_count="$(awk -F. '{print NF-1}' <<< "${numeric_version}")"
+  if [[ "${dot_count}" -eq 3 && -n "${_x}" ]]; then
+    fix="${_x}"
+  elif [[ "${dot_count}" -eq 2 && -n "${_p}" ]]; then
+    fix="${_p}"
+  else
+    echo "identity.mvs must be ARCH.FEAT.PROT.FIX-CONT (or legacy three-part), found: ${mvs_identity}" >&2
+    exit 1
+  fi
+fi
+
+# Package SemVer projection: ARCH.FEAT.FIX
+semver_version="${arch}.${feat}.${fix}"
 
 cargo_version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${cargo_file}" | head -n1)"
 if [[ -z "${cargo_version}" ]]; then
@@ -37,17 +62,17 @@ if [[ -z "${cargo_version}" ]]; then
 fi
 
 cargo_numeric_version="${cargo_version%%-*}"
-if [[ "${cargo_numeric_version}" != "${numeric_version}" ]]; then
-  echo "dogfood check failed: Cargo.toml version (${cargo_version}) does not share the MVS numeric version (${numeric_version})." >&2
+if [[ "${cargo_numeric_version}" != "${semver_version}" ]]; then
+  echo "dogfood check failed: Cargo.toml version (${cargo_version}) does not match SemVer projection arch.feat.fix (${semver_version}) from MVS ${mvs_identity}." >&2
   echo "Run: make dogfood-sync-version" >&2
   exit 1
 fi
 
-canonical_tag="v${numeric_version}"
+canonical_tag="v${semver_version}"
 release_tag="v${cargo_version}"
 
-if [[ "${require_canonical}" == "true" && "${cargo_version}" != "${numeric_version}" ]]; then
-  echo "dogfood check failed: canonical release flow requires Cargo.toml version ${numeric_version}, found ${cargo_version}." >&2
+if [[ "${require_canonical}" == "true" && "${cargo_version}" != "${semver_version}" ]]; then
+  echo "dogfood check failed: canonical release flow requires Cargo.toml version ${semver_version}, found ${cargo_version}." >&2
   exit 1
 fi
 
@@ -56,4 +81,4 @@ if [[ -n "${expected_tag}" && "${expected_tag}" != "${release_tag}" ]]; then
   exit 1
 fi
 
-echo "Dogfood check passed: Cargo ${cargo_version}, MVS ${mvs_identity}, release tag ${release_tag}, canonical tag ${canonical_tag}."
+echo "Dogfood check passed: Cargo ${cargo_version}, MVS ${mvs_identity}, SemVer ${semver_version}, release tag ${release_tag}, canonical tag ${canonical_tag}."

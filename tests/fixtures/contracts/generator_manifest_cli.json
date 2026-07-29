@@ -1,10 +1,11 @@
 {
-  "$schema": "https://mvs.dev/schema/v1",
+  "$schema": "https://mvs.dev/schema/v2",
   "identity": {
-    "mvs": "0.1.1-cli",
+    "mvs": "0.1.1.1-cli",
     "arch": 0,
     "feat": 1,
     "prot": 1,
+    "fix": 1,
     "cont": "cli"
   },
   "compatibility": {
@@ -75,10 +76,11 @@
   },
   "history": [
     {
-      "mvs": "0.1.1-cli",
+      "mvs": "0.1.1.1-cli",
       "arch": 0,
       "feat": 1,
       "prot": 1,
+      "fix": 1,
       "cont": "cli",
       "reasons": [
         "Feature incremented due to @mvs-feature set drift (example source: src/api.ts).",

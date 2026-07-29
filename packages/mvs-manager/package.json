@@ -1,0 +1,31 @@
+{
+  "name": "mvs-manager",
+  "version": "2.0.0",
+  "description": "Install the mvs-manager CLI binary for multidimensional versioning (ARCH.FEAT.PROT.FIX-CONT)",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alextheberge/MVSengine.git",
+    "directory": "packages/mvs-manager"
+  },
+  "bin": {
+    "mvs-manager": "bin/mvs-manager"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install-binary.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "README.md"
+  ],
+  "keywords": [
+    "mvs",
+    "versioning",
+    "cli",
+    "semver"
+  ]
+}

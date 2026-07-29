@@ -1,6 +1,12 @@
 # MVS Engine (`mvs-manager`)
 
-Cross-platform CLI implementing multidimensional versioning: `[ARCH].[FEAT].[PROT]-[CONT]`.
+Cross-platform CLI implementing multidimensional versioning: `[ARCH].[FEAT].[PROT].[FIX]-[CONT]`.
+
+Package SemVer / release tags project to `ARCH.FEAT.FIX`. Protocol (`PROT`) stays in `mvs.json` for host/extension compatibility.
+
+## Editor: VS Code, Cursor, VSCodium
+
+The companion extension [mvs-vscode](https://github.com/alextheberge/mvs-vscode) runs `mvs-manager` from the editor, surfaces `lint --format json` in the **Problems** view, and exposes MVS commands. Install from a VSIX, the VS Marketplace, or Open VSX as described in that repository. Keep `mvs-manager` on your `PATH` or point the extension at the binary with `mvsManager.executablePath`.
 
 ## Why Post-SemVer for Apps
 - Separate data breaks from integration breaks: `ARCH` and `PROT` move independently.
@@ -76,7 +82,12 @@ mvs-manager lint --root . --manifest mvs.json
 
 # after code/decorator/API changes, reconcile and persist rationale/history
 mvs-manager generate --root . --manifest mvs.json --context cli
+
+# bug fix / minor release with no FEAT or PROT drift
+mvs-manager generate --root . --manifest mvs.json --context cli --fix
 ```
+
+Pin the CLI as a CI/tool dependency (GitHub Action, npm wrapper, or `install.sh`) — see [docs/INSTALL_AND_CI.md](docs/INSTALL_AND_CI.md). The stable `2.x` identity contract is in [docs/CONTRACT_2X.md](docs/CONTRACT_2X.md).
 
 Or keep it running as a maintenance loop while you work:
 
@@ -161,7 +172,7 @@ mvs-manager self-update
 
 `watch` is the maintenance-oriented workflow: it repeatedly runs `lint`, can auto-run `generate` when drift is found via `--remediate`, skips unchanged cycles by default, and supports `--once` for scheduler-friendly single-pass runs.
 
-The stable `1.x` manifest and command-output contract is documented in [docs/CONTRACT_1X.md](docs/CONTRACT_1X.md). Checked-in golden fixtures under `tests/fixtures/contracts/` back that contract so output and canonical evidence changes stay deliberate.
+The stable `2.x` manifest and command-output contract is documented in [docs/CONTRACT_2X.md](docs/CONTRACT_2X.md) (identity) with command JSON continuity from [docs/CONTRACT_1X.md](docs/CONTRACT_1X.md). Checked-in golden fixtures under `tests/fixtures/contracts/` back that contract so output and canonical evidence changes stay deliberate.
 
 ## Semantic Evidence Snapshots
 
@@ -480,7 +491,7 @@ scripts/verify-release.sh dist/vX.Y.Z/mvs-manager-X.Y.Z-<target>.tar.gz dist/vX.
 ```
 
 See [docs/USAGE.md](docs/USAGE.md) and [docs/RELEASE.md](docs/RELEASE.md) for complete workflows.
-For the frozen `1.x` manifest and command-output contract, see [docs/CONTRACT_1X.md](docs/CONTRACT_1X.md).
+For the `2.x` identity contract see [docs/CONTRACT_2X.md](docs/CONTRACT_2X.md); legacy `1.x` surface notes remain in [docs/CONTRACT_1X.md](docs/CONTRACT_1X.md).
 
 ## License
 

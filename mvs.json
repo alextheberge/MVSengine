@@ -1,20 +1,21 @@
 {
-  "$schema": "https://mvs.dev/schema/v1",
+  "$schema": "https://mvs.dev/schema/v2",
   "identity": {
-    "mvs": "1.10.4-cli",
-    "arch": 1,
-    "feat": 10,
-    "prot": 4,
+    "mvs": "2.0.0.0-cli",
+    "arch": 2,
+    "feat": 0,
+    "prot": 0,
+    "fix": 0,
     "cont": "cli"
   },
   "compatibility": {
     "host_range": {
       "min_prot": 0,
-      "max_prot": 4
+      "max_prot": 0
     },
     "extension_range": {
       "min_prot": 0,
-      "max_prot": 4
+      "max_prot": 0
     },
     "legacy_shims": []
   },
@@ -93,10 +94,11 @@
   },
   "history": [
     {
-      "mvs": "0.2.3-cli",
+      "mvs": "0.2.3.3-cli",
       "arch": 0,
       "feat": 2,
       "prot": 3,
+      "fix": 3,
       "cont": "cli",
       "reasons": [
         "Protocol incremented due to public API signature drift (example source: src/cli.rs)."
@@ -104,10 +106,11 @@
       "changed_at_unix": 1772656819
     },
     {
-      "mvs": "0.2.4-cli",
+      "mvs": "0.2.4.4-cli",
       "arch": 0,
       "feat": 2,
       "prot": 4,
+      "fix": 4,
       "cont": "cli",
       "reasons": [
         "Protocol incremented due to public API signature drift (example source: src/cli.rs)."
@@ -115,10 +118,11 @@
       "changed_at_unix": 1774994227
     },
     {
-      "mvs": "0.3.5-cli",
+      "mvs": "0.3.5.5-cli",
       "arch": 0,
       "feat": 3,
       "prot": 5,
+      "fix": 5,
       "cont": "cli",
       "reasons": [
         "Feature incremented due to @mvs-feature set drift (example source: src/commands/reader.rs).",
@@ -127,10 +131,11 @@
       "changed_at_unix": 1774995229
     },
     {
-      "mvs": "0.3.6-cli",
+      "mvs": "0.3.6.6-cli",
       "arch": 0,
       "feat": 3,
       "prot": 6,
+      "fix": 6,
       "cont": "cli",
       "reasons": [
         "Protocol incremented due to public API signature drift (example source: src/cli.rs)."
@@ -138,10 +143,11 @@
       "changed_at_unix": 1774996019
     },
     {
-      "mvs": "0.3.7-cli",
+      "mvs": "0.3.7.7-cli",
       "arch": 0,
       "feat": 3,
       "prot": 7,
+      "fix": 7,
       "cont": "cli",
       "reasons": [
         "Protocol incremented due to public API signature drift (example source: src/cli.rs)."
@@ -149,10 +155,11 @@
       "changed_at_unix": 1774996752
     },
     {
-      "mvs": "1.3.7-cli",
+      "mvs": "1.3.7.7-cli",
       "arch": 1,
       "feat": 3,
       "prot": 7,
+      "fix": 7,
       "cont": "cli",
       "reasons": [
         "Architecture incremented due to declared data/system break: 1.x public contract freeze and first stable release"
@@ -160,10 +167,11 @@
       "changed_at_unix": 1775082921
     },
     {
-      "mvs": "1.4.8-cli",
+      "mvs": "1.4.8.8-cli",
       "arch": 1,
       "feat": 4,
       "prot": 8,
+      "fix": 8,
       "cont": "cli",
       "reasons": [
         "Feature incremented due to @mvs-feature set drift (example source: src/commands/report.rs).",
@@ -172,10 +180,11 @@
       "changed_at_unix": 1775086679
     },
     {
-      "mvs": "1.5.9-cli",
+      "mvs": "1.5.9.9-cli",
       "arch": 1,
       "feat": 5,
       "prot": 9,
+      "fix": 9,
       "cont": "cli",
       "reasons": [
         "Feature incremented due to @mvs-feature set drift (example source: src/commands/self_update.rs).",
@@ -184,10 +193,11 @@
       "changed_at_unix": 1775138015
     },
     {
-      "mvs": "1.6.0-cli",
+      "mvs": "1.6.0.0-cli",
       "arch": 1,
       "feat": 6,
       "prot": 0,
+      "fix": 0,
       "cont": "cli",
       "reasons": [
         "Feature incremented for Dart language support in the codebase crawler and public API inventory."
@@ -195,10 +205,11 @@
       "changed_at_unix": 1775390400
     },
     {
-      "mvs": "1.7.1-cli",
+      "mvs": "1.7.1.1-cli",
       "arch": 1,
       "feat": 7,
       "prot": 1,
+      "fix": 1,
       "cont": "cli",
       "reasons": [
         "Feature incremented due to @mvs-feature set drift (example source: src/commands/self_update.rs).",
@@ -207,10 +218,11 @@
       "changed_at_unix": 1776215922
     },
     {
-      "mvs": "1.8.2-cli",
+      "mvs": "1.8.2.2-cli",
       "arch": 1,
       "feat": 8,
       "prot": 2,
+      "fix": 2,
       "cont": "cli",
       "reasons": [
         "Feature incremented due to @mvs-feature set drift (example source: src/commands/constraint.rs).",
@@ -219,10 +231,11 @@
       "changed_at_unix": 1776216546
     },
     {
-      "mvs": "1.9.3-cli",
+      "mvs": "1.9.3.3-cli",
       "arch": 1,
       "feat": 9,
       "prot": 3,
+      "fix": 3,
       "cont": "cli",
       "reasons": [
         "Feature incremented due to @mvs-feature set drift (example source: src/commands/constraint.rs).",
@@ -231,16 +244,41 @@
       "changed_at_unix": 1776625444
     },
     {
-      "mvs": "1.10.4-cli",
+      "mvs": "1.10.4.4-cli",
       "arch": 1,
       "feat": 10,
       "prot": 4,
+      "fix": 4,
       "cont": "cli",
       "reasons": [
         "Feature incremented due to @mvs-feature set drift (example source: src/commands/constraint.rs).",
         "Protocol incremented due to @mvs-protocol surface drift (example source: src/commands/check_manifest.rs)."
       ],
       "changed_at_unix": 1777583429
+    },
+    {
+      "mvs": "2.0.0.0-cli",
+      "arch": 2,
+      "feat": 0,
+      "prot": 0,
+      "fix": 0,
+      "cont": "cli",
+      "reasons": [
+        "Architecture incremented due to declared data/system break: 2.x four-axis identity contract (ARCH.FEAT.PROT.FIX-CONT) and schema v2"
+      ],
+      "changed_at_unix": 1785340544
+    },
+    {
+      "mvs": "2.0.0.0-cli",
+      "arch": 2,
+      "feat": 0,
+      "prot": 0,
+      "fix": 0,
+      "cont": "cli",
+      "reasons": [
+        "Range strategy `lock-step` applied (host/extension ranges pinned to PROT 0)."
+      ],
+      "changed_at_unix": 1785340561
     }
   ]
 }

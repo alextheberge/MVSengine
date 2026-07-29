@@ -2,6 +2,8 @@
 
 This guide complements [USAGE.md](USAGE.md) and the install scripts under `scripts/`.
 
+Identity is four-axis (`ARCH.FEAT.PROT.FIX-CONT`); package SemVer and release tags use **`ARCH.FEAT.FIX`**. See [CONTRACT_2X.md](CONTRACT_2X.md).
+
 ## Pinning by version (recommended)
 
 Release assets follow this pattern (see GitHub Releases):
@@ -9,7 +11,47 @@ Release assets follow this pattern (see GitHub Releases):
 - `mvs-manager-<semver>-<target>.tar.gz` (or `.zip` on Windows)
 - `checksums.txt` (SHA-256 for each archive)
 
-Set `MVS_VERSION` (for example `v1.6.0`) and `MVS_REPO` when using [`scripts/install.sh`](../scripts/install.sh) so every machine and CI job installs the same build.
+Set `MVS_VERSION` (for example `v2.0.0`) and `MVS_REPO` when using [`scripts/install.sh`](../scripts/install.sh) so every machine and CI job installs the same build.
+
+### GitHub Action (composite)
+
+From a consumer workflow (path adjust if you vendor the action):
+
+```yaml
+jobs:
+  mvs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: alextheberge/MVSengine/.github/actions/setup-mvs@v2.0.0
+        with:
+          version: v2.0.0
+          lint: "true"
+          # optional bug-fix remediation:
+          # remediate: "true"
+          # fix: "true"
+```
+
+The action installs via checksum-verified `install.sh` and can run `mvs-manager lint` (with optional `--remediate` / `--fix` / `--auto-fix`).
+
+### npm `devDependency`
+
+```bash
+npm install --save-dev mvs-manager@2.0.0
+npx mvs-manager lint --root . --manifest mvs.json
+npx mvs-manager generate --root . --manifest mvs.json --context cli --fix
+```
+
+The [`packages/mvs-manager`](../packages/mvs-manager) package downloads the same release binary and verifies `checksums.txt`.
+
+### Bug-fix release recipe
+
+When code changes are internal fixes (no FEAT/PROT drift):
+
+```bash
+mvs-manager generate --root . --manifest mvs.json --context cli --fix
+# then sync package version from arch.feat.fix (Cargo/npm dogfood scripts)
+```
 
 ### mise / asdf-style `.tool-versions`
 
@@ -17,7 +59,7 @@ Example (adjust version and checksum URL to your release):
 
 ```text
 # .tool-versions — use a custom plugin or a small wrapper; see below for curl pattern
-mvs-manager 1.6.0
+mvs-manager 2.0.0
 ```
 
 Because `mvs-manager` is not bundled as a core mise plugin, the portable pattern is a **one-line install step** in `mise.toml` `[tasks]` or in CI that runs `install.sh` with a pinned `MVS_VERSION`.
@@ -29,7 +71,7 @@ Use a dedicated step with environment variables so forks can point at their own 
 ```yaml
 env:
   MVS_NO_UPDATE_CHECK: "1"
-  MVS_VERSION: "v1.6.0"
+  MVS_VERSION: "v2.0.0"
   # Optional: avoid anonymous GitHub API rate limits on busy org runners
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

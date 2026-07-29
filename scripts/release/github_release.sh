@@ -35,7 +35,8 @@ if [[ -z "${mvs_identity}" ]]; then
   exit 1
 fi
 
-canonical_tag="v${mvs_identity%%-*}"
+semver_version="$(scripts/release/semver_from_mvs.sh mvs.json)"
+canonical_tag="v${semver_version}"
 DOGFOOD_REQUIRE_CANONICAL=true EXPECTED_TAG="${canonical_tag}" scripts/release/check_dogfood.sh
 
 version_files=()

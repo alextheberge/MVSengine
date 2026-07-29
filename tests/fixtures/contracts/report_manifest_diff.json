@@ -4,7 +4,7 @@
   "exit_code": 0,
   "base_manifest": "<BASE_MANIFEST>",
   "target_manifest": "<TARGET_MANIFEST>",
-  "change_count": 21,
+  "change_count": 22,
   "changed_sections": [
     "identity",
     "compatibility",
@@ -16,11 +16,12 @@
   ],
   "comparison": {
     "identity": {
-      "base": "0.1.1-cli",
-      "target": "0.2.2-cli",
+      "base": "0.1.1.1-cli",
+      "target": "0.2.2.2-cli",
       "arch_delta": 0,
       "feat_delta": 1,
       "prot_delta": 1,
+      "fix_delta": 1,
       "context_changed": false
     },
     "compatibility": {

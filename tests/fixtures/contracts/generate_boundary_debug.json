@@ -47,11 +47,12 @@
     ]
   },
   "identity": {
-    "previous": "0.0.0-cli",
-    "current": "0.1.1-cli",
+    "previous": "0.0.0.0-cli",
+    "current": "0.1.1.1-cli",
     "arch_increment": 0,
     "feat_increment": 1,
-    "prot_increment": 1
+    "prot_increment": 1,
+    "fix_increment": 0
   },
   "reasons": [
     "Feature incremented due to @mvs-feature set drift (example source: src/api.ts).",

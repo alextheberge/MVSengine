@@ -126,6 +126,8 @@ fn run_lint_cycle(args: &WatchArgs) -> i32 {
         available_model_capabilities: args.available_model_capabilities.clone(),
         explain: args.explain,
         remediate: args.remediate,
+        fix: args.fix,
+        auto_fix: args.auto_fix,
         format: OutputFormat::Text,
     })
 }

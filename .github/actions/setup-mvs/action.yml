@@ -1,0 +1,76 @@
+name: 'Setup mvs-manager'
+description: 'Install a pinned mvs-manager release (checksum-verified) and optionally lint the workspace manifest'
+author: 'MVS Engine'
+inputs:
+  version:
+    description: 'Release tag to install (for example v2.0.0). Defaults to latest stable.'
+    required: false
+    default: ''
+  repo:
+    description: 'GitHub owner/name hosting release assets'
+    required: false
+    default: 'alextheberge/MVSengine'
+  install-dir:
+    description: 'Directory to install the mvs-manager binary into'
+    required: false
+    default: '${{ github.workspace }}/.local/bin'
+  lint:
+    description: 'If true, run `mvs-manager lint` after install'
+    required: false
+    default: 'true'
+  root:
+    description: 'Project root passed to lint/generate'
+    required: false
+    default: '.'
+  manifest:
+    description: 'Manifest path relative to root'
+    required: false
+    default: 'mvs.json'
+  remediate:
+    description: 'If true, pass --remediate to lint'
+    required: false
+    default: 'false'
+  fix:
+    description: 'If true, pass --fix to remediate generate (bug-fix axis bump)'
+    required: false
+    default: 'false'
+  auto-fix:
+    description: 'If true, pass --auto-fix to remediate generate'
+    required: false
+    default: 'false'
+runs:
+  using: 'composite'
+  steps:
+    - name: Install mvs-manager
+      shell: bash
+      env:
+        MVS_VERSION: ${{ inputs.version }}
+        MVS_REPO: ${{ inputs.repo }}
+        MVS_INSTALL_DIR: ${{ inputs.install-dir }}
+        MVS_NO_UPDATE_CHECK: '1'
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        mkdir -p "${MVS_INSTALL_DIR}"
+        curl -fsSL "https://raw.githubusercontent.com/${MVS_REPO}/master/scripts/install.sh" | bash
+        echo "${MVS_INSTALL_DIR}" >> "${GITHUB_PATH}"
+        "${MVS_INSTALL_DIR}/mvs-manager" --version || "${MVS_INSTALL_DIR}/mvs-manager" doctor --format text | head -n 5
+
+    - name: Lint MVS manifest
+      if: inputs.lint == 'true'
+      shell: bash
+      env:
+        MVS_NO_UPDATE_CHECK: '1'
+      run: |
+        set -euo pipefail
+        args=(lint --root "${{ inputs.root }}" --manifest "${{ inputs.manifest }}" --format json)
+        if [[ "${{ inputs.remediate }}" == "true" ]]; then
+          args+=(--remediate)
+        fi
+        if [[ "${{ inputs.fix }}" == "true" ]]; then
+          args+=(--fix)
+        fi
+        if [[ "${{ inputs.auto-fix }}" == "true" ]]; then
+          args+=(--auto-fix)
+        fi
+        mvs-manager "${args[@]}"
