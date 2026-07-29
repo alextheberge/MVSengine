@@ -942,10 +942,9 @@ fn rename_ts_export_signature(signature: &str, export_name: &str) -> Option<Stri
         format!("const {export_name}{}", split_ts_name_tail(rest))
     } else if let Some(rest) = raw.strip_prefix("let ") {
         format!("let {export_name}{}", split_ts_name_tail(rest))
-    } else if let Some(rest) = raw.strip_prefix("var ") {
-        format!("var {export_name}{}", split_ts_name_tail(rest))
     } else {
-        return None;
+        let rest = raw.strip_prefix("var ")?;
+        format!("var {export_name}{}", split_ts_name_tail(rest))
     };
 
     Some(format!("ts/js:{renamed}"))
