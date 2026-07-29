@@ -751,7 +751,7 @@ fn hash_public_api_inventory(inventory: &[PublicApiSnapshot]) -> String {
 
 fn validate_policy_paths(label: &str, paths: &[String]) -> Result<()> {
     for path in paths {
-        if Path::new(path.trim()).is_absolute() {
+        if is_absolute_policy_path(path) {
             bail!("{label} entries must be relative paths, found `{path}`");
         }
         let normalized = normalize_policy_path(path);
@@ -761,6 +761,24 @@ fn validate_policy_paths(label: &str, paths: &[String]) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Cross-platform absolute check for policy paths.
+///
+/// `Path::is_absolute` treats `/tmp/foo` as relative on Windows, so also reject
+/// Unix-style (`/…`) and UNC/root (`\\…`) forms that should never appear in scan policy.
+fn is_absolute_policy_path(path: &str) -> bool {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    Path::new(trimmed).is_absolute()
+        || trimmed.starts_with('/')
+        || trimmed.starts_with('\\')
+        || (trimmed.len() >= 3
+            && trimmed.as_bytes()[0].is_ascii_alphabetic()
+            && trimmed.as_bytes()[1] == b':'
+            && (trimmed.as_bytes()[2] == b'\\' || trimmed.as_bytes()[2] == b'/'))
 }
 
 fn validate_policy_patterns(label: &str, patterns: &[String]) -> Result<()> {
@@ -1111,7 +1129,12 @@ mod tests {
     fn validation_rejects_absolute_scan_policy_paths() {
         let mut manifest = Manifest::default_for_context("cli");
         manifest.scan_policy.exclude_paths = vec!["/tmp/generated".to_string()];
+        assert!(manifest.validate().is_err());
 
+        manifest.scan_policy.exclude_paths = vec![r"C:\Windows\Temp".to_string()];
+        assert!(manifest.validate().is_err());
+
+        manifest.scan_policy.exclude_paths = vec![r"\\?\C:\foo".to_string()];
         assert!(manifest.validate().is_err());
     }
 

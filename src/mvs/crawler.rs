@@ -1342,6 +1342,9 @@ fn resolve_rust_external_module_file(
 }
 
 fn rust_module_directory(rel_path: &Path, descriptor: Option<&RustCrateDescriptor>) -> String {
+    // Re-parse via `/` so Windows backslash inventory paths still split correctly.
+    let normalized = normalize_relative_path(rel_path);
+    let rel_path = Path::new(&normalized);
     let parent = rel_path.parent().unwrap_or_else(|| Path::new(""));
     let file_name = rel_path
         .file_name()
@@ -1362,6 +1365,8 @@ fn rust_module_directory(rel_path: &Path, descriptor: Option<&RustCrateDescripto
 }
 
 fn rust_file_module_path(rel_path: &Path, descriptor: Option<&RustCrateDescriptor>) -> Vec<String> {
+    let normalized = normalize_relative_path(rel_path);
+    let rel_path = Path::new(&normalized);
     let crate_relative = rust_path_after_source_root(rel_path, descriptor);
     let file_name = crate_relative
         .file_name()
@@ -1390,14 +1395,24 @@ fn rust_path_after_source_root(
     rel_path: &Path,
     descriptor: Option<&RustCrateDescriptor>,
 ) -> PathBuf {
+    let normalized = normalize_relative_path(rel_path);
     if let Some(descriptor) = descriptor {
-        let source_root = Path::new(&descriptor.source_root_rel);
-        if let Ok(stripped) = rel_path.strip_prefix(source_root) {
-            return stripped.to_path_buf();
+        let source_root = descriptor.source_root_rel.trim_matches('/');
+        if source_root.is_empty() {
+            return PathBuf::from(&normalized);
+        }
+        if normalized == source_root {
+            return PathBuf::new();
+        }
+        if let Some(suffix) = normalized.strip_prefix(source_root) {
+            let suffix = suffix.trim_start_matches('/');
+            if normalized.as_bytes().get(source_root.len()) == Some(&b'/') {
+                return PathBuf::from(suffix);
+            }
         }
     }
 
-    let components: Vec<String> = rel_path
+    let components: Vec<String> = Path::new(&normalized)
         .iter()
         .filter_map(|component| component.to_str().map(str::to_string))
         .collect();
@@ -3540,10 +3555,39 @@ fn default_ignored_directory_name(name: &str) -> Option<&'static str> {
 }
 
 fn relative_display_path(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .to_string()
+    // Always emit forward-slash relative paths so Windows matches Unix inventories/policies
+    // and export-following lookups (which normalize with `/`) can find known files.
+    if let Ok(rel) = path.strip_prefix(root) {
+        return normalize_relative_path(rel);
+    }
+
+    // Fall back when WalkDir/canonicalize disagree on Windows `\\?\` prefixes.
+    let root_s = strip_windows_verbatim_prefix(&path_to_forward_slash(root));
+    let path_s = strip_windows_verbatim_prefix(&path_to_forward_slash(path));
+    let root_s = root_s.trim_end_matches('/');
+    if path_s == root_s {
+        return String::new();
+    }
+    if let Some(suffix) = path_s.strip_prefix(root_s) {
+        if path_s.as_bytes().get(root_s.len()) == Some(&b'/') {
+            return suffix.trim_start_matches('/').to_string();
+        }
+    }
+
+    normalize_relative_path(path)
+}
+
+fn path_to_forward_slash(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/").to_string()
+}
+
+fn strip_windows_verbatim_prefix(path: &str) -> String {
+    for prefix in ["//?/", "//./"] {
+        if let Some(rest) = path.strip_prefix(prefix) {
+            return rest.to_string();
+        }
+    }
+    path.to_string()
 }
 
 #[allow(dead_code)]
@@ -3562,7 +3606,7 @@ mod tests {
 
     use crate::mvs::manifest::ScanPolicy;
 
-    use super::{crawl_codebase, ExcludedPathKind};
+    use super::{crawl_codebase, relative_display_path, ExcludedPathKind};
 
     struct TempWorkspace {
         path: PathBuf,
@@ -3595,6 +3639,16 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
+    }
+
+    #[test]
+    fn relative_display_path_uses_forward_slashes() {
+        let root = PathBuf::from("workspace");
+        let path = root.join("src").join("generated").join("client.ts");
+        assert_eq!(
+            relative_display_path(&root, &path),
+            "src/generated/client.ts"
+        );
     }
 
     struct ParserAdapterCase<'a> {

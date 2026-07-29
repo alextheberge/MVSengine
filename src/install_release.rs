@@ -108,23 +108,28 @@ fn release_download_base(tag: &str) -> Result<String> {
 
 fn load_minisign_public_key() -> Result<minisign::PublicKey> {
     if let Ok(raw) = env::var(MVS_MINISIGN_PUBLIC_KEY_ENV) {
-        let t = raw.trim();
+        let t = normalize_minisign_text(&raw);
         if !t.is_empty() {
-            return PublicKeyBox::from_string(t)
+            return PublicKeyBox::from_string(&t)
                 .and_then(|b| b.into_public_key())
                 .map_err(|e| anyhow!("{e}"));
         }
     }
-    let t = MINISIGN_PUBLIC_KEY_EMBED.trim();
+    let t = normalize_minisign_text(MINISIGN_PUBLIC_KEY_EMBED);
     if t.is_empty() || t.starts_with('#') {
         bail!(
             "release includes checksums.txt.minisig but no minisign public key is configured; set {} to the public key file contents (see packaging/minisign.pub in this repository)",
             MVS_MINISIGN_PUBLIC_KEY_ENV
         );
     }
-    PublicKeyBox::from_string(t)
+    PublicKeyBox::from_string(&t)
         .and_then(|b| b.into_public_key())
         .map_err(|e| anyhow!("{e}"))
+}
+
+fn normalize_minisign_text(raw: &str) -> String {
+    // Git autocrlf on Windows can inject CR into key/signature text files.
+    raw.replace('\r', "").trim().to_string()
 }
 
 /// When `checksums.txt.minisig` exists on the release, verify it before trusting `checksums.txt`.
@@ -136,7 +141,8 @@ fn verify_checksums_minisig_if_present(base: &str, checksums_bytes: &[u8]) -> Re
     let sig_text =
         std::str::from_utf8(&sig_raw).context("checksums.txt.minisig is not valid UTF-8")?;
     let pk = load_minisign_public_key()?;
-    let sig_box = SignatureBox::from_string(sig_text.trim()).map_err(|e| anyhow!("{e}"))?;
+    let sig_box = SignatureBox::from_string(&normalize_minisign_text(sig_text))
+        .map_err(|e| anyhow!("{e}"))?;
     let mut cursor = Cursor::new(checksums_bytes.to_vec());
     minisign::verify(&pk, &sig_box, &mut cursor, true, false, false).map_err(|e| anyhow!("{e}"))
 }
@@ -564,10 +570,13 @@ mod tests {
     #[test]
     fn fixture_checksums_minisig_verifies_with_embedded_pubkey() -> Result<()> {
         let dir = fixture_dir();
-        let sums = fs::read(dir.join("checksums.txt"))?;
-        let sig_txt = fs::read_to_string(dir.join("checksums.txt.minisig"))?;
+        // Signatures cover LF bytes; strip CR if Git autocrlf rewrote the fixture on Windows.
+        let mut sums = fs::read(dir.join("checksums.txt"))?;
+        sums.retain(|&b| b != b'\r');
+        let sig_txt =
+            normalize_minisign_text(&fs::read_to_string(dir.join("checksums.txt.minisig"))?);
         let pk = load_minisign_public_key()?;
-        let sig_box = SignatureBox::from_string(sig_txt.trim()).map_err(|e| anyhow!("{e}"))?;
+        let sig_box = SignatureBox::from_string(&sig_txt).map_err(|e| anyhow!("{e}"))?;
         let mut cursor = Cursor::new(sums);
         minisign::verify(&pk, &sig_box, &mut cursor, true, false, false).map_err(|e| anyhow!("{e}"))
     }
