@@ -1,5 +1,5 @@
-# Keep signature fixtures byte-stable across platforms (avoid CRLF breaking minisign).
-tests/fixtures/install_release/** text eol=lf
+# Keep text fixtures byte-stable across platforms (avoid CRLF breaking hashes/signatures).
+tests/fixtures/** text eol=lf
 packaging/minisign.pub text eol=lf
 *.tar.gz binary
 *.zip binary

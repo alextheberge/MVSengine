@@ -28,5 +28,45 @@ where
 pub fn hash_file(path: &Path) -> Result<String> {
     let bytes =
         fs::read(path).with_context(|| format!("failed to read file: {}", path.display()))?;
-    Ok(sha256_hex(&bytes))
+    // Normalize CRLF→LF so AI schema hashes stay stable under Git autocrlf on Windows.
+    Ok(sha256_hex(&strip_carriage_returns(&bytes)))
+}
+
+fn strip_carriage_returns(bytes: &[u8]) -> Vec<u8> {
+    bytes.iter().copied().filter(|&b| b != b'\r').collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{hash_file, sha256_hex, strip_carriage_returns};
+    use std::io::Write;
+
+    #[test]
+    fn hash_file_ignores_crlf_vs_lf() {
+        let dir = std::env::temp_dir().join(format!(
+            "mvs-hash-crlf-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let lf = dir.join("lf.json");
+        let crlf = dir.join("crlf.json");
+        std::fs::write(&lf, b"{\"a\":1}\n").expect("write lf");
+        {
+            let mut f = std::fs::File::create(&crlf).expect("create crlf");
+            f.write_all(b"{\"a\":1}\r\n").expect("write crlf");
+        }
+        assert_eq!(
+            hash_file(&lf).expect("hash lf"),
+            hash_file(&crlf).expect("hash crlf")
+        );
+        assert_eq!(
+            sha256_hex(b"{\"a\":1}\n"),
+            sha256_hex(&strip_carriage_returns(b"{\"a\":1}\r\n"))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
