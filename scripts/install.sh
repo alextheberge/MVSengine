@@ -152,6 +152,7 @@ curl -fL "${checksums_url}" -o "${checksums_path}"
 verify_archive "${archive_path}" "${checksums_path}"
 
 mkdir -p "${INSTALL_DIR}"
+mkdir -p "${work_dir}/extract"
 if [[ "${archive_ext}" == "zip" ]]; then
   if ! command -v unzip >/dev/null 2>&1; then
     echo "unzip is required to install windows archive" >&2

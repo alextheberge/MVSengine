@@ -862,7 +862,8 @@ fn collect_rust_symbol_signatures(
                 insert_rust_symbol_signature_variant(
                     symbol_signatures_by_path,
                     &symbol_path,
-                    format!("rust:const {symbol_path}:{ty}"),
+                    // Space after `:` matches fn-arg formatting and load-time canonicalize (`:&` → `: &`).
+                    format!("rust:const {symbol_path}: {ty}"),
                     crate_alias,
                 );
             }
@@ -872,7 +873,7 @@ fn collect_rust_symbol_signatures(
                 insert_rust_symbol_signature_variant(
                     symbol_signatures_by_path,
                     &symbol_path,
-                    format!("rust:static {symbol_path}:{ty}"),
+                    format!("rust:static {symbol_path}: {ty}"),
                     crate_alias,
                 );
             }
@@ -3291,14 +3292,14 @@ fn collect_rust_items(items: &[Item], module_prefix: &str, signatures: &mut Vec<
             Item::Const(item_const) if is_public(&item_const.vis) => {
                 let ty = normalize_signature(&item_const.ty.to_token_stream().to_string());
                 signatures.push(format!(
-                    "rust:const {module_prefix}{}:{ty}",
+                    "rust:const {module_prefix}{}: {ty}",
                     item_const.ident
                 ));
             }
             Item::Static(item_static) if is_public(&item_static.vis) => {
                 let ty = normalize_signature(&item_static.ty.to_token_stream().to_string());
                 signatures.push(format!(
-                    "rust:static {module_prefix}{}:{ty}",
+                    "rust:static {module_prefix}{}: {ty}",
                     item_static.ident
                 ));
             }
@@ -3717,6 +3718,9 @@ mod tests {
             /// @mvs-protocol("rust_host_surface")
             pub fn handshake(version: u32) -> bool { version > 0 }
 
+            pub const DEFAULT_PROFILE_ID: &str = "default";
+            pub static APP_NAME: &str = "mvs";
+
             pub struct HostAdapter;
 
             impl HostAdapter {
@@ -3737,10 +3741,22 @@ mod tests {
         assert!(report.public_api.iter().any(|entry| {
             entry.signature == "rust:impl-fn HostAdapter::connect(&self, target: &str) -> bool"
         }));
+        // Must match load-time canonicalize (`:&` → `: &`) so generate/lint agree.
+        assert!(report.public_api.iter().any(|entry| {
+            entry.signature == "rust:const DEFAULT_PROFILE_ID: &str"
+        }));
+        assert!(report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature == "rust:static APP_NAME: &str"));
         assert!(!report
             .public_api
             .iter()
             .any(|entry| entry.signature.contains("private_method")));
+        assert!(!report
+            .public_api
+            .iter()
+            .any(|entry| entry.signature.contains(":&str")));
     }
 
     #[test]

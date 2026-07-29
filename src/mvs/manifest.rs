@@ -1222,6 +1222,10 @@ mod tests {
                     signature: "rust:impl-fn HostAdapter::fn connect(& self, target:&str) -> bool"
                         .to_string(),
                 },
+                PublicApiSnapshot {
+                    file: "src/lib.rs".to_string(),
+                    signature: "rust:const DEFAULT_PROFILE_ID:&str".to_string(),
+                },
             ],
         };
 
@@ -1232,8 +1236,13 @@ mod tests {
             canonical.public_api_inventory[0].signature,
             "rust:fn run() -> i32"
         );
+        // Sorted by (file, signature): const before impl-fn under src/lib.rs.
         assert_eq!(
             canonical.public_api_inventory[1].signature,
+            "rust:const DEFAULT_PROFILE_ID: &str"
+        );
+        assert_eq!(
+            canonical.public_api_inventory[2].signature,
             "rust:impl-fn HostAdapter::connect(&self, target: &str) -> bool"
         );
         assert_ne!(canonical.public_api_hash, "legacy");

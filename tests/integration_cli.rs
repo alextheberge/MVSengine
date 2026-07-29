@@ -182,6 +182,74 @@ fn generate_then_lint_passes_for_fixture_project() {
 }
 
 #[test]
+fn generate_then_lint_stable_for_rust_const_str_signatures() {
+    let temp = TempWorkspace::new();
+    let project_root = temp.path().join("project");
+    fs::create_dir_all(project_root.join("src")).expect("failed to create src");
+    fs::write(
+        project_root.join("src/lib.rs"),
+        r#"
+        pub const DEFAULT_PROFILE_ID: &str = "default";
+        pub const QUIT_CONFIRM_TITLE: &str = "Quit?";
+        pub const QUIT_CONFIRM_MESSAGE: &str = "Unsaved changes";
+        pub const DEFAULT_APP_DATA_JSON: &str = "{}";
+    "#,
+    )
+    .expect("failed to write rust fixture");
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    for iteration in 1..=3 {
+        binary_cmd()
+            .args([
+                "generate",
+                "--root",
+                project_root.to_str().expect("non-utf8 path"),
+                "--manifest",
+                manifest_path.to_str().expect("non-utf8 path"),
+                "--context",
+                "cli",
+                "--public-api-root",
+                "src/lib.rs",
+            ])
+            .assert()
+            .success();
+
+        let manifest: Value = serde_json::from_str(
+            &fs::read_to_string(&manifest_path).expect("failed to read generated manifest"),
+        )
+        .expect("generated manifest should be valid JSON");
+        let signatures: Vec<String> = manifest["evidence"]["public_api_inventory"]
+            .as_array()
+            .expect("public_api_inventory")
+            .iter()
+            .filter_map(|entry| entry["signature"].as_str().map(str::to_string))
+            .collect();
+        assert!(
+            signatures
+                .iter()
+                .any(|sig| sig == "rust:const DEFAULT_PROFILE_ID: &str"),
+            "iteration {iteration}: expected spaced const signature, got {signatures:?}"
+        );
+        assert!(
+            signatures.iter().all(|sig| !sig.contains(":&str")),
+            "iteration {iteration}: compact :&str must not be persisted: {signatures:?}"
+        );
+
+        binary_cmd()
+            .args([
+                "lint",
+                "--root",
+                project_root.to_str().expect("non-utf8 path"),
+                "--manifest",
+                manifest_path.to_str().expect("non-utf8 path"),
+            ])
+            .assert()
+            .success();
+    }
+}
+
+#[test]
 fn lint_fails_after_public_api_drift_without_regeneration() {
     let temp = TempWorkspace::new();
     let (project_root, manifest_path) = generator_fixture_workspace(&temp);
