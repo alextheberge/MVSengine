@@ -9,7 +9,9 @@ use crate::commands::boundary_debug::{build_boundary_debug, BoundaryDebugReport}
 use crate::commands::output::{emit_error, emit_json, CommandFailure};
 use crate::mvs::crawler::{crawl_codebase, ApiSignature, CrawlReport};
 use crate::mvs::hashing::{hash_file, hash_items};
-use crate::mvs::manifest::{InventoryDiff, LegacyShim, Manifest, ProtocolRange, PublicApiSnapshot};
+use crate::mvs::manifest::{
+    Evidence, InventoryDiff, LegacyShim, Manifest, ProtocolRange, PublicApiSnapshot,
+};
 
 /// @mvs-feature("manifest_generation")
 /// @mvs-protocol("cli_generate_command")
@@ -45,7 +47,8 @@ fn try_run(args: &GenerateArgs) -> std::result::Result<GenerateReport, CommandFa
 
     let feature_inventory: Vec<String> = crawl.feature_tags.iter().cloned().collect();
     let protocol_inventory: Vec<String> = crawl.protocol_tags.iter().cloned().collect();
-    let public_api_inventory = build_public_api_inventory(&crawl.public_api);
+    let (public_api_inventory, public_api_hash) =
+        Evidence::canonicalize_public_api_inventory(build_public_api_inventory(&crawl.public_api));
     let boundary_debug = build_boundary_debug(
         &manifest.scan_policy,
         &crawl.public_api_boundary_decisions,
@@ -59,7 +62,6 @@ fn try_run(args: &GenerateArgs) -> std::result::Result<GenerateReport, CommandFa
 
     let feature_hash = hash_items(crawl.feature_tags.iter().map(String::as_str));
     let protocol_hash = hash_items(crawl.protocol_tags.iter().map(String::as_str));
-    let public_api_hash = hash_public_api(&crawl.public_api);
 
     let ai_schema_hash = if let Some(schema_path) = args.ai_schema.as_ref() {
         hash_file(schema_path)
@@ -322,14 +324,6 @@ fn derive_axis_decision(inputs: AxisInputs<'_>) -> AxisDecision {
     }
 
     decision
-}
-
-fn hash_public_api(signatures: &[ApiSignature]) -> String {
-    hash_items(
-        signatures
-            .iter()
-            .map(|item| format!("{}|{}", item.file, item.signature)),
-    )
 }
 
 fn build_public_api_inventory(signatures: &[ApiSignature]) -> Vec<PublicApiSnapshot> {

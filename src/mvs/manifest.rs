@@ -653,12 +653,25 @@ impl LuaExportFollowing {
 impl Evidence {
     pub fn canonicalized(&self) -> Self {
         let mut evidence = self.clone();
-        evidence.public_api_inventory =
-            canonicalize_public_api_inventory(&evidence.public_api_inventory);
+        let (inventory, hash) =
+            Self::canonicalize_public_api_inventory(evidence.public_api_inventory);
+        evidence.public_api_inventory = inventory;
         if !evidence.public_api_inventory.is_empty() {
-            evidence.public_api_hash = hash_public_api_inventory(&evidence.public_api_inventory);
+            evidence.public_api_hash = hash;
         }
         evidence
+    }
+
+    /// Canonicalize crawl/persist public API so generate, lint, and load share one form.
+    ///
+    /// This is what closes lint/generate drift on Rust `const`/`static` `&str` spacing:
+    /// crawl may emit either `:&str` or `: &str`, but both sides compare/persist the spaced form.
+    pub fn canonicalize_public_api_inventory(
+        inventory: Vec<PublicApiSnapshot>,
+    ) -> (Vec<PublicApiSnapshot>, String) {
+        let inventory = canonicalize_public_api_inventory(&inventory);
+        let hash = hash_public_api_inventory(&inventory);
+        (inventory, hash)
     }
 
     pub fn semantic_diff(
@@ -1271,5 +1284,55 @@ mod tests {
             "rust:impl-fn HostAdapter::connect(&self, target: &str) -> bool"
         );
         assert_ne!(canonical.public_api_hash, "legacy");
+    }
+
+    #[test]
+    fn generate_and_lint_share_canonical_const_str_form() {
+        // Simulate crawl emitting the compact form that used to be persisted by generate.
+        let compact = vec![
+            PublicApiSnapshot {
+                file: "src/lib.rs".to_string(),
+                signature: "rust:const QUIT_CONFIRM_TITLE:&str".to_string(),
+            },
+            PublicApiSnapshot {
+                file: "src/lib.rs".to_string(),
+                signature: "rust:const QUIT_CONFIRM_MESSAGE:&str".to_string(),
+            },
+            PublicApiSnapshot {
+                file: "src/lib.rs".to_string(),
+                signature: "rust:const DEFAULT_PROFILE_ID:&str".to_string(),
+            },
+            PublicApiSnapshot {
+                file: "src/lib.rs".to_string(),
+                signature: "rust:const DEFAULT_APP_DATA_JSON:&str".to_string(),
+            },
+        ];
+        let spaced = vec![
+            PublicApiSnapshot {
+                file: "src/lib.rs".to_string(),
+                signature: "rust:const QUIT_CONFIRM_TITLE: &str".to_string(),
+            },
+            PublicApiSnapshot {
+                file: "src/lib.rs".to_string(),
+                signature: "rust:const QUIT_CONFIRM_MESSAGE: &str".to_string(),
+            },
+            PublicApiSnapshot {
+                file: "src/lib.rs".to_string(),
+                signature: "rust:const DEFAULT_PROFILE_ID: &str".to_string(),
+            },
+            PublicApiSnapshot {
+                file: "src/lib.rs".to_string(),
+                signature: "rust:const DEFAULT_APP_DATA_JSON: &str".to_string(),
+            },
+        ];
+
+        let (from_compact, hash_compact) = Evidence::canonicalize_public_api_inventory(compact);
+        let (from_spaced, hash_spaced) = Evidence::canonicalize_public_api_inventory(spaced);
+
+        assert_eq!(from_compact, from_spaced);
+        assert_eq!(hash_compact, hash_spaced);
+        assert!(from_compact
+            .iter()
+            .all(|item| item.signature.contains(": &str") && !item.signature.contains(":&str")));
     }
 }

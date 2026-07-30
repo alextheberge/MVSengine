@@ -12,7 +12,7 @@ use crate::commands::boundary_debug::{build_boundary_debug, BoundaryDebugReport}
 use crate::commands::output::{emit_error, emit_json, CommandFailure};
 use crate::mvs::crawler::{crawl_codebase, ApiSignature};
 use crate::mvs::hashing::{hash_file, hash_items};
-use crate::mvs::manifest::{InventoryDiff, Manifest, PublicApiSnapshot};
+use crate::mvs::manifest::{Evidence, InventoryDiff, Manifest, PublicApiSnapshot};
 
 /// @mvs-feature("manifest_linting")
 /// @mvs-protocol("cli_lint_command")
@@ -88,7 +88,8 @@ fn try_run(args: &LintArgs) -> std::result::Result<LintReport, CommandFailure> {
 
     let feature_inventory: Vec<String> = crawl.feature_tags.iter().cloned().collect();
     let protocol_inventory: Vec<String> = crawl.protocol_tags.iter().cloned().collect();
-    let public_api_inventory = build_public_api_inventory(&crawl.public_api);
+    let (public_api_inventory, public_api_hash) =
+        Evidence::canonicalize_public_api_inventory(build_public_api_inventory(&crawl.public_api));
     let inventory_diff = manifest.evidence.semantic_diff(
         &feature_inventory,
         &protocol_inventory,
@@ -97,7 +98,6 @@ fn try_run(args: &LintArgs) -> std::result::Result<LintReport, CommandFailure> {
 
     let feature_hash = hash_items(crawl.feature_tags.iter().map(String::as_str));
     let protocol_hash = hash_items(crawl.protocol_tags.iter().map(String::as_str));
-    let public_api_hash = hash_public_api(&crawl.public_api);
 
     let ai_schema_hash = if let Some(schema_path) = args.ai_schema.as_ref() {
         hash_file(schema_path)
@@ -216,14 +216,6 @@ fn try_run(args: &LintArgs) -> std::result::Result<LintReport, CommandFailure> {
             diff: inventory_diff,
         },
     })
-}
-
-fn hash_public_api(signatures: &[ApiSignature]) -> String {
-    hash_items(
-        signatures
-            .iter()
-            .map(|item| format!("{}|{}", item.file, item.signature)),
-    )
 }
 
 fn build_public_api_inventory(signatures: &[ApiSignature]) -> Vec<PublicApiSnapshot> {
