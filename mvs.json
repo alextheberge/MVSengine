@@ -1,11 +1,11 @@
 {
   "$schema": "https://mvs.dev/schema/v2",
   "identity": {
-    "mvs": "2.0.0.0-cli",
+    "mvs": "2.0.0.1-cli",
     "arch": 2,
     "feat": 0,
     "prot": 0,
-    "fix": 0,
+    "fix": 1,
     "cont": "cli"
   },
   "compatibility": {
@@ -279,6 +279,18 @@
         "Range strategy `lock-step` applied (host/extension ranges pinned to PROT 0)."
       ],
       "changed_at_unix": 1785340561
+    },
+    {
+      "mvs": "2.0.0.1-cli",
+      "arch": 2,
+      "feat": 0,
+      "prot": 0,
+      "fix": 1,
+      "cont": "cli",
+      "reasons": [
+        "Fix incremented due to explicit --fix (bug fix / minor release)."
+      ],
+      "changed_at_unix": 1785373868
     }
   ]
 }
