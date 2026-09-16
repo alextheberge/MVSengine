@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Hook definitions for the pre-commit framework (https://pre-commit.com).
+# `language: system` means pre-commit does not install anything itself —
+# `mvs-manager` must already be on PATH (see docs/INSTALL_AND_CI.md).
+- id: mvs-lint
+  name: MVS lint
+  description: >
+    Fail the commit if code drift (features, protocol surface, public API,
+    AI tool schema) isn't reflected in mvs.json. Run `mvs-manager generate`
+    to fix.
+  entry: mvs-manager lint
+  language: system
+  pass_filenames: false
+  always_run: true
+
+- id: mvs-lint-advisory
+  name: MVS lint (advisory / shadow mode)
+  description: >
+    Report what MVS would require without ever blocking the commit. For
+    trying MVS alongside an existing versioning process with nothing at
+    stake.
+  entry: mvs-manager lint --advisory
+  language: system
+  pass_filenames: false
+  always_run: true

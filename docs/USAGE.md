@@ -88,6 +88,32 @@ AI liveness checks (runtime capability validation):
 mvs-manager lint --root . --manifest mvs.json --available-model-capabilities tool_calling,json_schema,reasoning-v1
 ```
 
+### Shadow mode (`--advisory`)
+
+```bash
+mvs-manager lint --root . --manifest mvs.json --advisory
+mvs-manager lint --root . --manifest mvs.json --advisory --format json
+```
+
+Runs the identical checks, but **always exits `0`** — status is `advisory_clean` or `advisory_drift` instead of `passed`/`failed`, and `failures`/`exit_code` never fail the build. When there's drift, the JSON output includes a `shadow` object:
+
+```json
+{
+  "status": "advisory_drift",
+  "exit_code": 0,
+  "shadow": {
+    "current_identity": "2.4.4.1-cli",
+    "current_semver": "2.4.1",
+    "would_require_feat": false,
+    "would_require_prot": true,
+    "projected_identity": "2.5.5.1-cli",
+    "projected_semver": "2.4.1"
+  }
+}
+```
+
+Note `projected_semver` can equal `current_semver` even when `would_require_prot` is true — PROT isn't part of the `arch.feat.fix` projection package managers see, which is exactly the gap shadow mode exists to surface. `--explain` and GitHub Actions annotations (`::notice`/`::warning`, never `::error`) both understand advisory status. `--advisory` conflicts with `--remediate` (advisory mode never has anything to remediate, since it never fails).
+
 ## 2b) Run periodic maintenance
 
 Interactive maintenance loop:
@@ -295,6 +321,34 @@ Any other extension is reported as a suggestion but not written (`written: false
 
 **Not yet built**: non-code protocol surfaces. Many teams' real protocol is a schema (OpenAPI, GraphQL SDL, `.proto`, JSON Schema, Avro), not a function signature, and none of those are crawled as public API inventory today.
 
+## 9) Convert a PROT range into a dependency constraint
+
+```bash
+mvs-manager range --manifest mvs.json --host --for npm,cargo,pip,maven
+mvs-manager range --manifest mvs.json --extension --for pip
+mvs-manager range --manifest mvs.json --min-prot 3 --max-prot 5 --for cargo --format json
+```
+
+Bounds come from exactly one of:
+- `--min-prot N --max-prot N` (both required together), or
+- `--host` (reads `compatibility.host_range`), or
+- `--extension` (reads `compatibility.extension_range`)
+
+Resolution walks `history` entries with the manifest's current ARCH (a different ARCH is a different, incompatible major line and is never mixed in), finds every recorded `arch.feat.fix` whose PROT falls in `[min_prot, max_prot]`, and returns:
+- `lower_bound`: the earliest matching version (inclusive)
+- `upper_bound`: the next recorded version once PROT left the range (exclusive) — `null`/absent when the match reaches the current version, since nothing is known about compatibility going forward
+
+Native syntax per `--for` value:
+
+| Ecosystem | Bounded | Open-ended |
+|---|---|---|
+| `npm` | `>=2.0.0 <2.1.0` | `>=2.0.0` |
+| `cargo` | `>=2.0.0, <2.1.0` | `>=2.0.0` |
+| `pip` | `>=2.0.0,<2.1.0` | `>=2.0.0` |
+| `maven` | `[2.0.0,2.1.0)` | `[2.0.0,)` |
+
+Fails with exit `85` if no recorded version has PROT in range, if the manifest has no history to search, or if an unknown `--for` ecosystem is given.
+
 ## Makefile shortcuts
 
 ```bash
@@ -447,7 +501,7 @@ See [docs/INSTALL_AND_CI.md](INSTALL_AND_CI.md) for GitHub Actions examples, pin
 
 - `0`: success
 - `10`: `generate` execution failure
-- `20`: `lint` detected drift
+- `20`: `lint` detected drift (never returned by `lint --advisory`, which always exits `0`)
 - `21`: `lint` execution failure
 - `30`: `validate` incompatibility
 - `40`: manifest read/parse/write/validation failure
@@ -457,6 +511,7 @@ See [docs/INSTALL_AND_CI.md](INSTALL_AND_CI.md) for GitHub Actions examples, pin
 - `82`: `convert-version` could not parse the input, resolve `--scheme-regex`, or apply `--map`
 - `83`: a `migrate` subcommand failed (detect/plan/backfill/apply/rollback)
 - `84`: `suggest-decorators` failed to crawl the source tree or write a decorator
+- `85`: `range` was given an invalid range/ecosystem, or no recorded version has PROT in range
 
 ## Troubleshooting
 

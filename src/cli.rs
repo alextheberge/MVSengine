@@ -24,6 +24,7 @@ pub const EXIT_SYNC_ERROR: i32 = 81;
 pub const EXIT_SCHEME_ERROR: i32 = 82;
 pub const EXIT_MIGRATE_ERROR: i32 = 83;
 pub const EXIT_SUGGEST_ERROR: i32 = 84;
+pub const EXIT_RANGE_ERROR: i32 = 85;
 
 #[derive(Debug, Parser)]
 #[command(name = "mvs-manager", version, about = "MVS Engine manager CLI")]
@@ -47,6 +48,7 @@ enum Command {
     ConvertVersion(ConvertVersionArgs),
     Migrate(MigrateArgs),
     SuggestDecorators(SuggestDecoratorsArgs),
+    Range(RangeArgs),
     Schema(SchemaArgs),
     SelfUpdate(SelfUpdateArgs),
     Doctor(DoctorArgs),
@@ -290,6 +292,12 @@ pub struct LintArgs {
     /// Pass `--auto-fix` to remediate `generate` runs.
     #[arg(long, default_value_t = false)]
     pub auto_fix: bool,
+
+    /// Shadow mode: run the same drift checks, but always exit 0 and report
+    /// what MVS would require instead of failing the build. For trying MVS
+    /// alongside an existing release process with nothing at stake.
+    #[arg(long, default_value_t = false, conflicts_with = "remediate")]
+    pub advisory: bool,
 
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
@@ -632,6 +640,37 @@ pub struct SuggestDecoratorsArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct RangeArgs {
+    #[arg(long, default_value = "mvs.json")]
+    pub manifest: PathBuf,
+
+    /// Explicit lower PROT bound. Requires --max-prot; mutually exclusive
+    /// with --host/--extension.
+    #[arg(long)]
+    pub min_prot: Option<u64>,
+
+    /// Explicit upper PROT bound. Requires --min-prot; mutually exclusive
+    /// with --host/--extension.
+    #[arg(long)]
+    pub max_prot: Option<u64>,
+
+    /// Use the manifest's compatibility.host_range instead of explicit bounds.
+    #[arg(long, default_value_t = false)]
+    pub host: bool,
+
+    /// Use the manifest's compatibility.extension_range instead of explicit bounds.
+    #[arg(long, default_value_t = false)]
+    pub extension: bool,
+
+    /// Ecosystem(s) to emit a constraint for: npm, cargo, pip, maven.
+    #[arg(long = "for", value_delimiter = ',', required = true)]
+    pub for_ecosystems: Vec<String>,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct CheckManifestArgs {
     /// Path to the manifest file to validate.
     #[arg(long, default_value = "mvs.json")]
@@ -718,6 +757,7 @@ pub fn run() -> i32 {
         Command::SuggestDecorators(args) => {
             run_with_update_notification(commands::suggest_decorators::run(args))
         }
+        Command::Range(args) => run_with_update_notification(commands::range::run(args)),
         Command::Schema(args) => commands::schema::run(args),
         Command::SelfUpdate(args) => commands::self_update::run(args),
         Command::Doctor(args) => commands::doctor::run(args),

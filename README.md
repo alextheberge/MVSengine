@@ -178,6 +178,31 @@ mvs-manager suggest-decorators --root . --write  # insert them
 - `--write` inserts each decorator using that file's own comment syntax (`///` for Rust, `//` for TS/JS/Go/Java/Kotlin/C#/Swift/Dart, `#` for Python/Ruby, `--` for Lua/Luau, right after PHP's `<?php` tag) right after any leading header comment/shebang — the exact same comment tokenization the crawler reads back, so a written suggestion is guaranteed to be picked up by the very next `lint`.
 - Non-code protocol surfaces (OpenAPI, GraphQL SDL, `.proto`, JSON Schema, Avro) aren't covered yet — see the [Roadmap](#roadmap).
 
+## Trying MVS With Nothing at Stake
+
+A team can run MVS **alongside** its existing release process before deciding to gate on it:
+
+```bash
+mvs-manager lint --advisory --root . --manifest mvs.json
+```
+
+Shadow mode runs the exact same drift checks as `lint`, but **always exits 0** and reports what MVS would require instead of failing the build: `status` is `advisory_clean` or `advisory_drift`, and a `shadow` object gives the projected identity (`MVS would require 2.5.0.1-cli, currently 2.4.4.1-cli`) alongside the current one. Because PROT never appears in the SemVer projection, this is often the clearest way to show a team a protocol break their existing process would publish invisibly.
+
+- **GitHub**: `.github/actions/mvs-action` with `mode: shadow` posts (and keeps updated) a single PR comment with the shadow summary and, when the base branch's manifest is reachable, the axis diff between base and head. See [docs/INSTALL_AND_CI.md](docs/INSTALL_AND_CI.md).
+- **GitLab CI / CircleCI / Azure Pipelines / Buildkite**: ready-made snippets in [docs/INSTALL_AND_CI.md](docs/INSTALL_AND_CI.md).
+- **pre-commit**: [`.pre-commit-hooks.yaml`](.pre-commit-hooks.yaml) exposes `mvs-lint-advisory` (shadow) and `mvs-lint` (blocking) hook IDs for the [pre-commit](https://pre-commit.com) framework.
+
+## Dependency Ranges for Non-MVS Consumers
+
+A downstream package that depends on yours doesn't need to adopt MVS to benefit from it. `range` converts a PROT compatibility range into the native constraint syntax for a package manager, using the manifest's `history` to find which published `arch.feat.fix` versions actually had a PROT value in that range:
+
+```bash
+mvs-manager range --manifest mvs.json --host --for npm,cargo,pip,maven
+mvs-manager range --manifest mvs.json --min-prot 3 --max-prot 5 --for npm
+```
+
+`--host`/`--extension` read `compatibility.host_range`/`compatibility.extension_range` from the manifest instead of explicit `--min-prot`/`--max-prot`. The lower bound is inclusive; the upper bound is exclusive and only present when a later published version with a different PROT is known — otherwise the range is left open, since future compatibility isn't assumed.
+
 ## Enforce MVS on Commit
 ```bash
 make install-hooks
@@ -254,6 +279,8 @@ mvs-manager migrate apply --root . --context cli
 mvs-manager migrate rollback --root .
 mvs-manager suggest-decorators --root .
 mvs-manager suggest-decorators --root . --write
+mvs-manager lint --root . --manifest mvs.json --advisory
+mvs-manager range --manifest mvs.json --host --for npm,cargo,pip,maven
 mvs-manager self-update --check
 mvs-manager self-update
 ```
@@ -561,7 +588,7 @@ Example `report --format json` shape:
 
 - `0`: success
 - `10`: `generate` execution failure
-- `20`: `lint` detected manifest/code drift or policy failure
+- `20`: `lint` detected manifest/code drift or policy failure (never returned by `lint --advisory`, which always exits `0`)
 - `21`: `lint` execution failure
 - `30`: `validate` found incompatibility
 - `40`: manifest read/parse/write/validation failure
@@ -571,6 +598,7 @@ Example `report --format json` shape:
 - `82`: `convert-version` could not parse the input, resolve `--scheme-regex`, or apply `--map`
 - `83`: a `migrate` subcommand failed (detect/plan/backfill/apply/rollback)
 - `84`: `suggest-decorators` failed to crawl the source tree or write a decorator
+- `85`: `range` was given an invalid range/ecosystem, or no recorded version has PROT in range
 
 This means CI can treat `20` as “manifest must be regenerated” and `30` as “host/extension contract is incompatible” without scraping human text.
 

@@ -1,21 +1,21 @@
 {
   "$schema": "https://mvs.dev/schema/v2",
   "identity": {
-    "mvs": "2.4.4.1-cli",
+    "mvs": "2.5.5.1-cli",
     "arch": 2,
-    "feat": 4,
-    "prot": 4,
+    "feat": 5,
+    "prot": 5,
     "fix": 1,
     "cont": "cli"
   },
   "compatibility": {
     "host_range": {
       "min_prot": 0,
-      "max_prot": 4
+      "max_prot": 5
     },
     "extension_range": {
       "min_prot": 0,
-      "max_prot": 4
+      "max_prot": 5
     },
     "legacy_shims": []
   },
@@ -62,12 +62,13 @@
     ]
   },
   "evidence": {
-    "feature_hash": "54f7d8c1acacede0a1f74af065900f75a872204bd05ee2c8e4557076989a65aa",
-    "protocol_hash": "2928108297b409920c809d06d85719b27e8a3201179e6ef044b53d8ccc491821",
+    "feature_hash": "2d83a07702761375e26b09a617e607ab7d9cb7de7eea051169c2fbf61144bf22",
+    "protocol_hash": "6acf22cb79f358822ae144030f194360da6f54a0c8a326cac46e642e366a3ccb",
     "public_api_hash": "ac2aaccb5a3b945133b970e6cb9f49cdfde2e37207374900eb940b7e1b2f9f4b",
     "feature_inventory": [
       "constraint_suggestion",
       "decorator_suggestions",
+      "dependency_range_translation",
       "legacy_version_conversion",
       "manager_doctor",
       "manager_self_update",
@@ -92,6 +93,7 @@
       "cli_init_command",
       "cli_lint_command",
       "cli_migrate_command",
+      "cli_range_command",
       "cli_report_command",
       "cli_schema_command",
       "cli_self_update_command",
@@ -364,6 +366,19 @@
         "Protocol incremented due to @mvs-protocol surface drift (example source: src/commands/check_manifest.rs)."
       ],
       "changed_at_unix": 1789587255
+    },
+    {
+      "mvs": "2.5.5.1-cli",
+      "arch": 2,
+      "feat": 5,
+      "prot": 5,
+      "fix": 1,
+      "cont": "cli",
+      "reasons": [
+        "Feature incremented due to @mvs-feature set drift (example source: src/commands/constraint.rs).",
+        "Protocol incremented due to @mvs-protocol surface drift (example source: src/commands/check_manifest.rs)."
+      ],
+      "changed_at_unix": 1789588101
     }
   ]
 }

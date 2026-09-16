@@ -9,6 +9,7 @@ pub mod init;
 pub mod linter;
 pub mod migrate;
 mod output;
+pub mod range;
 pub mod reader;
 pub mod report;
 pub mod schema;

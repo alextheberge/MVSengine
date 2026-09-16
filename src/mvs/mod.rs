@@ -4,6 +4,7 @@ pub mod hashing;
 pub mod manifest;
 pub mod migrate;
 pub mod project_detect;
+pub mod range;
 pub mod reader;
 pub mod schemes;
 pub mod suggest;

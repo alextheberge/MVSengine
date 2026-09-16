@@ -173,39 +173,60 @@ fn try_run(args: &LintArgs) -> std::result::Result<LintReport, CommandFailure> {
         }
     }
 
-    if failures.is_empty() {
-        return Ok(LintReport {
-            command: "lint",
-            status: "passed",
-            exit_code: EXIT_SUCCESS,
-            manifest_path: args.manifest.display().to_string(),
-            root: args.root.display().to_string(),
-            scan_policy: manifest.scan_policy.clone(),
-            failure_count: 0,
-            failures,
-            boundary_debug,
-            evidence: LintEvidenceReport {
-                feature_hash,
-                protocol_hash,
-                public_api_hash,
-                feature_inventory_count: feature_inventory.len(),
-                protocol_inventory_count: protocol_inventory.len(),
-                public_api_inventory_count: public_api_inventory.len(),
-                diff: inventory_diff,
-            },
-        });
-    }
+    // What `generate` would decide for FEAT/PROT right now, independent of
+    // `failures` (which also covers the unrelated AI-capability-liveness
+    // check) — used for `--advisory`'s "MVS would require..." summary.
+    let feat_increment = u64::from(
+        manifest.evidence.feature_hash != feature_hash || !inventory_diff.features.is_empty(),
+    );
+    let prot_increment = u64::from(
+        manifest.evidence.protocol_hash != protocol_hash
+            || !inventory_diff.protocols.is_empty()
+            || manifest.evidence.public_api_hash != public_api_hash
+            || !inventory_diff.public_api.is_empty()
+            || manifest.ai_contract.tool_schema_hash != ai_schema_hash,
+    );
+
+    let shadow = if args.advisory {
+        let mut projected = manifest.clone();
+        projected.apply_axis_increments(0, feat_increment, prot_increment, 0);
+        projected.sync_identity_string();
+        Some(ShadowSummary {
+            current_identity: manifest.identity.mvs.clone(),
+            current_semver: manifest.identity.package_semver(),
+            would_require_feat: feat_increment > 0,
+            would_require_prot: prot_increment > 0,
+            projected_identity: projected.identity.mvs.clone(),
+            projected_semver: projected.identity.package_semver(),
+        })
+    } else {
+        None
+    };
+
+    let (status, exit_code) = if args.advisory {
+        if failures.is_empty() {
+            ("advisory_clean", EXIT_SUCCESS)
+        } else {
+            ("advisory_drift", EXIT_SUCCESS)
+        }
+    } else if failures.is_empty() {
+        ("passed", EXIT_SUCCESS)
+    } else {
+        ("failed", EXIT_LINT_FAILED)
+    };
+    let failure_count = failures.len();
 
     Ok(LintReport {
         command: "lint",
-        status: "failed",
-        exit_code: EXIT_LINT_FAILED,
+        status,
+        exit_code,
         manifest_path: args.manifest.display().to_string(),
         root: args.root.display().to_string(),
         scan_policy: manifest.scan_policy.clone(),
-        failure_count: failures.len(),
+        failure_count,
         failures,
         boundary_debug,
+        shadow,
         evidence: LintEvidenceReport {
             feature_hash,
             protocol_hash,
@@ -282,14 +303,37 @@ fn render_lint_report(
 ) -> std::result::Result<(), CommandFailure> {
     match format {
         OutputFormat::Text => {
-            if report.exit_code == EXIT_SUCCESS {
-                println!(
+            let has_drift = report.status == "advisory_drift" || report.status == "failed";
+            match report.status {
+                "advisory_clean" => println!(
+                    "Lint (advisory): manifest evidence matches current code and contract surfaces."
+                ),
+                "advisory_drift" => {
+                    println!(
+                        "Lint (advisory): {} issue(s) found — not blocking the build:",
+                        report.failure_count
+                    );
+                    for failure in &report.failures {
+                        println!("- {failure}");
+                    }
+                    if let Some(shadow) = &report.shadow {
+                        println!(
+                            "MVS would require: {} (currently {}); SemVer projection {} (currently {}).",
+                            shadow.projected_identity,
+                            shadow.current_identity,
+                            shadow.projected_semver,
+                            shadow.current_semver
+                        );
+                    }
+                }
+                "passed" => println!(
                     "Lint passed: manifest evidence matches current code and contract surfaces."
-                );
-            } else {
-                println!("Lint failed with {} issue(s):", report.failure_count);
-                for failure in &report.failures {
-                    println!("- {failure}");
+                ),
+                _ => {
+                    println!("Lint failed with {} issue(s):", report.failure_count);
+                    for failure in &report.failures {
+                        println!("- {failure}");
+                    }
                 }
             }
             if let Some(boundary_debug) = report.boundary_debug.as_ref() {
@@ -301,7 +345,7 @@ fn render_lint_report(
                 );
             }
             render_scan_policy(&report.scan_policy);
-            if explain && report.exit_code != EXIT_SUCCESS {
+            if explain && has_drift {
                 render_explain(&report.evidence);
             }
             emit_github_annotations(report);
@@ -368,6 +412,29 @@ fn emit_github_annotations(report: &LintReport) {
     if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true") {
         return;
     }
+
+    // Shadow mode (`--advisory`) always exits 0, so it needs its own
+    // notice/warning split instead of keying off `exit_code`.
+    if report.status == "advisory_clean" {
+        println!(
+            "::notice title=MVS Shadow::Manifest evidence is up to date for {}",
+            report.manifest_path
+        );
+        return;
+    }
+    if report.status == "advisory_drift" {
+        for failure in &report.failures {
+            println!("::warning title=MVS Shadow (non-blocking)::{failure}");
+        }
+        if let Some(shadow) = &report.shadow {
+            println!(
+                "::warning title=MVS Shadow (non-blocking)::MVS would require {} (currently {}).",
+                shadow.projected_identity, shadow.current_identity
+            );
+        }
+        return;
+    }
+
     if report.exit_code == EXIT_SUCCESS {
         println!(
             "::notice title=MVS Lint::Manifest evidence is up to date for {}",
@@ -472,7 +539,21 @@ struct LintReport {
     failures: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     boundary_debug: Option<BoundaryDebugReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shadow: Option<ShadowSummary>,
     evidence: LintEvidenceReport,
+}
+
+/// Present only in `--advisory` (shadow mode) output: what MVS would
+/// require right now, without blocking the build.
+#[derive(Debug, Serialize)]
+struct ShadowSummary {
+    current_identity: String,
+    current_semver: String,
+    would_require_feat: bool,
+    would_require_prot: bool,
+    projected_identity: String,
+    projected_semver: String,
 }
 
 #[derive(Debug, Serialize)]

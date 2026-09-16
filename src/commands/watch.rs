@@ -128,6 +128,7 @@ fn run_lint_cycle(args: &WatchArgs) -> i32 {
         remediate: args.remediate,
         fix: args.fix,
         auto_fix: args.auto_fix,
+        advisory: false,
         format: OutputFormat::Text,
     })
 }

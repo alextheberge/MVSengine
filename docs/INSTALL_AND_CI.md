@@ -34,6 +34,25 @@ jobs:
 
 The action installs via checksum-verified `install.sh` and can run `mvs-manager lint` (with optional `--remediate` / `--fix` / `--auto-fix`).
 
+### Shadow mode: try MVS with nothing at stake
+
+`.github/actions/mvs-action` wraps `setup-mvs` and adds a `mode` input. In `shadow` mode it runs `lint --advisory` (always exits 0) and, on a `pull_request` event, posts or updates a single PR comment showing what MVS would require and — when the base branch's `mvs.json` is reachable — the axis diff from `report --format json` between the PR's base and head manifests:
+
+```yaml
+jobs:
+  mvs-shadow:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: alextheberge/MVSengine/.github/actions/mvs-action@v2.0.0
+        with:
+          mode: shadow
+```
+
+Switch `mode: lint` (or `release`, identical today, intended as the final gate in a release job) once you're ready to make it blocking — same install, no PR comment, exits non-zero on drift like plain `lint`.
+
 ### npm `devDependency`
 
 ```bash
@@ -115,6 +134,72 @@ Pull requests run the same Rust gate on **ubuntu-latest**, **macos-latest**, and
 ## Optional fuzz workflow
 
 The **Fuzz** GitHub Actions workflow (manual `workflow_dispatch`) performs a short `cargo fuzz` run against the checksum parser harness under `fuzz/`.
+
+## CI snippets for other platforms
+
+Each of these installs via `scripts/install.sh` (pin `MVS_VERSION`/`MVS_REPO` as above) and runs shadow mode — swap `--advisory` for a blocking gate once you're ready.
+
+### GitLab CI
+
+```yaml
+mvs-shadow:
+  stage: test
+  script:
+    - MVS_VERSION=v2.0.0 MVS_NO_UPDATE_CHECK=1 bash -c "curl -fsSL https://raw.githubusercontent.com/alextheberge/MVSengine/master/scripts/install.sh | bash"
+    - export PATH="$HOME/.local/bin:$PATH"
+    - mvs-manager lint --advisory --format json
+```
+
+### CircleCI
+
+```yaml
+jobs:
+  mvs-shadow:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - run:
+          name: Install mvs-manager
+          command: MVS_VERSION=v2.0.0 MVS_NO_UPDATE_CHECK=1 curl -fsSL https://raw.githubusercontent.com/alextheberge/MVSengine/master/scripts/install.sh | bash
+      - run:
+          name: MVS shadow report
+          command: $HOME/.local/bin/mvs-manager lint --advisory --format json
+```
+
+### Azure Pipelines
+
+```yaml
+steps:
+  - script: |
+      MVS_VERSION=v2.0.0 MVS_NO_UPDATE_CHECK=1 curl -fsSL https://raw.githubusercontent.com/alextheberge/MVSengine/master/scripts/install.sh | bash
+      "$HOME/.local/bin/mvs-manager" lint --advisory --format json
+    displayName: 'MVS shadow report'
+```
+
+### Buildkite
+
+```yaml
+steps:
+  - label: ":mvs: shadow report"
+    command: |
+      MVS_VERSION=v2.0.0 MVS_NO_UPDATE_CHECK=1 curl -fsSL https://raw.githubusercontent.com/alextheberge/MVSengine/master/scripts/install.sh | bash
+      "$HOME/.local/bin/mvs-manager" lint --advisory --format json
+```
+
+## pre-commit framework hook
+
+[`.pre-commit-hooks.yaml`](../.pre-commit-hooks.yaml) at this repository's root defines two hooks for the [pre-commit](https://pre-commit.com) framework. Both use `language: system`, so `mvs-manager` must already be on `PATH` (install it as a separate step, e.g. via `make install` or `scripts/install.sh`, in whatever sets up the rest of your pre-commit environment):
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/alextheberge/MVSengine
+    rev: v2.0.0
+    hooks:
+      - id: mvs-lint-advisory   # shadow mode: reports drift, never blocks the commit
+      # - id: mvs-lint          # blocking: fails the commit on drift
+```
 
 ## Diagnostics
 

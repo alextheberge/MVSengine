@@ -1,0 +1,158 @@
+name: 'MVS'
+description: 'Install mvs-manager and run it in shadow, lint, or release mode; shadow mode posts a non-blocking PR comment instead of failing the build.'
+author: 'MVS Engine'
+inputs:
+  mode:
+    description: >
+      shadow: run `lint --advisory` (never fails) and post/update a PR
+      comment with the axis diff. lint: run the normal blocking `lint`.
+      release: same as lint, intended as the final gate in a release job.
+    required: false
+    default: 'shadow'
+  root:
+    description: 'Project root passed to mvs-manager'
+    required: false
+    default: '.'
+  manifest:
+    description: 'Manifest path relative to root'
+    required: false
+    default: 'mvs.json'
+  base-manifest:
+    description: >
+      Path to the base branch's manifest, for the `report` axis diff in
+      shadow mode. If empty on a pull_request event, it is fetched via
+      `git show <base-ref>:<manifest>`; the diff is skipped if that fails
+      (e.g. the manifest is new in this PR) or the event isn't a pull_request.
+    required: false
+    default: ''
+  available-model-capabilities:
+    description: 'Comma-separated model capabilities available at runtime, for lint/release mode'
+    required: false
+    default: ''
+  version:
+    description: 'mvs-manager release tag to install. Defaults to latest stable.'
+    required: false
+    default: ''
+  repo:
+    description: 'GitHub owner/name hosting mvs-manager release assets'
+    required: false
+    default: 'alextheberge/MVSengine'
+  install-dir:
+    description: 'Directory to install the mvs-manager binary into'
+    required: false
+    default: '${{ github.workspace }}/.local/bin'
+  github-token:
+    description: 'Token used to post/update the shadow-mode PR comment'
+    required: false
+    default: '${{ github.token }}'
+outputs:
+  status:
+    description: 'The underlying mvs-manager status field (advisory_clean, advisory_drift, passed, or failed)'
+    value: ${{ steps.run.outputs.status }}
+  exit-code:
+    description: 'The mvs-manager exit code (shadow mode is always 0)'
+    value: ${{ steps.run.outputs.exit-code }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Install mvs-manager
+      uses: ./.github/actions/setup-mvs
+      with:
+        version: ${{ inputs.version }}
+        repo: ${{ inputs.repo }}
+        install-dir: ${{ inputs.install-dir }}
+        lint: 'false'
+
+    - name: Run mvs-manager
+      id: run
+      shell: bash
+      env:
+        MVS_NO_UPDATE_CHECK: '1'
+        MVS_MODE: ${{ inputs.mode }}
+        MVS_ROOT: ${{ inputs.root }}
+        MVS_MANIFEST: ${{ inputs.manifest }}
+        MVS_BASE_MANIFEST: ${{ inputs.base-manifest }}
+        MVS_CAPABILITIES: ${{ inputs.available-model-capabilities }}
+      run: |
+        set -euo pipefail
+
+        report_status() {
+          python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('status', 'unknown'))" "$1" 2>/dev/null || echo unknown
+        }
+
+        case "${MVS_MODE}" in
+          shadow)
+            args=(lint --root "${MVS_ROOT}" --manifest "${MVS_MANIFEST}" --advisory --format json)
+            set +e
+            mvs-manager "${args[@]}" > /tmp/mvs-shadow.json
+            code=$?
+            set -e
+            cat /tmp/mvs-shadow.json
+            echo "status=$(report_status /tmp/mvs-shadow.json)" >> "${GITHUB_OUTPUT}"
+            echo "exit-code=${code}" >> "${GITHUB_OUTPUT}"
+            ;;
+          lint|release)
+            args=(lint --root "${MVS_ROOT}" --manifest "${MVS_MANIFEST}" --format json)
+            if [[ -n "${MVS_CAPABILITIES}" ]]; then
+              args+=(--available-model-capabilities "${MVS_CAPABILITIES}")
+            fi
+            set +e
+            mvs-manager "${args[@]}" | tee /tmp/mvs-shadow.json
+            code=${PIPESTATUS[0]}
+            set -e
+            echo "status=$(report_status /tmp/mvs-shadow.json)" >> "${GITHUB_OUTPUT}"
+            echo "exit-code=${code}" >> "${GITHUB_OUTPUT}"
+            exit "${code}"
+            ;;
+          *)
+            echo "unknown mode '${MVS_MODE}'; expected shadow, lint, or release" >&2
+            exit 1
+            ;;
+        esac
+
+    - name: Diff manifest against base branch
+      if: inputs.mode == 'shadow' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        MVS_MANIFEST: ${{ inputs.manifest }}
+        MVS_ROOT: ${{ inputs.root }}
+        MVS_BASE_MANIFEST: ${{ inputs.base-manifest }}
+        BASE_REF: ${{ github.event.pull_request.base.ref }}
+      run: |
+        set -euo pipefail
+        base_manifest="${MVS_BASE_MANIFEST}"
+        if [[ -z "${base_manifest}" ]]; then
+          base_manifest="/tmp/mvs-base.json"
+          # actions/checkout defaults to a shallow, single-branch clone, so
+          # the base ref usually isn't present yet — fetch just that ref
+          # (cheap: no full history needed) before trying to read it.
+          git fetch --depth=1 origin "${BASE_REF}" >/dev/null 2>&1 || true
+          if ! git show "origin/${BASE_REF}:${MVS_ROOT}/${MVS_MANIFEST}" > "${base_manifest}" 2>/dev/null; then
+            echo "base manifest not found at origin/${BASE_REF}:${MVS_ROOT}/${MVS_MANIFEST}; skipping axis diff" >&2
+            rm -f "${base_manifest}"
+          fi
+        fi
+        if [[ -f "${base_manifest}" ]]; then
+          mvs-manager report \
+            --base-manifest "${base_manifest}" \
+            --target-manifest "${MVS_ROOT}/${MVS_MANIFEST}" \
+            --format json > /tmp/mvs-report.json || true
+        fi
+
+    - name: Post or update shadow-mode PR comment
+      if: inputs.mode == 'shadow' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        python3 "${GITHUB_ACTION_PATH}/render_comment.py" /tmp/mvs-shadow.json /tmp/mvs-report.json > /tmp/mvs-comment.md
+        marker='<!-- mvs-shadow-report -->'
+        pr_number="${{ github.event.pull_request.number }}"
+        existing_id=$(gh api "repos/${{ github.repository }}/issues/${pr_number}/comments" --paginate \
+          --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" | tail -n1 || true)
+        if [[ -n "${existing_id}" ]]; then
+          gh api "repos/${{ github.repository }}/issues/comments/${existing_id}" -X PATCH -f body=@/tmp/mvs-comment.md
+        else
+          gh api "repos/${{ github.repository }}/issues/${pr_number}/comments" -X POST -f body=@/tmp/mvs-comment.md
+        fi

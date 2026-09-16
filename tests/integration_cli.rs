@@ -843,6 +843,102 @@ fn lint_json_failure_matches_golden_contract_fixture() {
 }
 
 #[test]
+fn lint_advisory_never_fails_and_reports_projected_identity() {
+    let temp = TempWorkspace::new();
+    let fixture_project = fixtures_root().join("generator_project");
+    let project_root = temp.path().join("project");
+    copy_dir_recursive(&fixture_project, &project_root);
+
+    let manifest_path = temp.path().join("mvs.json");
+
+    binary_cmd()
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--context",
+            "cli",
+        ])
+        .assert()
+        .success();
+
+    // Clean tree: advisory mode is quiet and still exits 0.
+    let clean = binary_cmd()
+        .args([
+            "lint",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--advisory",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("lint --advisory should run");
+    assert!(clean.status.success());
+    let clean_payload: Value = serde_json::from_slice(&clean.stdout).unwrap();
+    assert_eq!(clean_payload["status"], "advisory_clean");
+    assert_eq!(clean_payload["exit_code"], 0);
+    assert!(clean_payload.get("shadow").is_some());
+
+    // Introduce public API drift that would normally fail lint with exit 20.
+    let api_file = project_root.join("src/api.ts");
+    let updated = format!(
+        "{}\nexport function rotateToken(token: string): string {{ return token; }}\n",
+        fs::read_to_string(&api_file).expect("failed to read API file")
+    );
+    fs::write(&api_file, updated).expect("failed to write API file drift");
+
+    let drifted = binary_cmd()
+        .args([
+            "lint",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+            "--advisory",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("lint --advisory should run after drift");
+    assert!(
+        drifted.status.success(),
+        "advisory mode must exit 0 even with drift; stderr: {}",
+        String::from_utf8_lossy(&drifted.stderr)
+    );
+    let drifted_payload: Value = serde_json::from_slice(&drifted.stdout).unwrap();
+    assert_eq!(drifted_payload["status"], "advisory_drift");
+    assert_eq!(drifted_payload["exit_code"], 0);
+    assert!(
+        drifted_payload["failure_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= 1
+    );
+    assert_eq!(drifted_payload["shadow"]["would_require_prot"], true);
+    assert_ne!(
+        drifted_payload["shadow"]["projected_identity"],
+        drifted_payload["shadow"]["current_identity"]
+    );
+
+    // The same drift without --advisory still fails the build as before.
+    binary_cmd()
+        .args([
+            "lint",
+            "--root",
+            project_root.to_str().expect("non-utf8 path"),
+            "--manifest",
+            manifest_path.to_str().expect("non-utf8 path"),
+        ])
+        .assert()
+        .code(20);
+}
+
+#[test]
 fn validate_json_failure_uses_stable_exit_code() {
     let host = fixtures_root().join("manifests/host_no_shim.json");
     let extension = fixtures_root().join("manifests/extension_out_of_range.json");
@@ -3553,4 +3649,158 @@ fn suggest_decorators_previews_then_writes_then_is_idempotent() {
     assert!(second.status.success());
     let second_payload: Value = serde_json::from_slice(&second.stdout).unwrap();
     assert_eq!(second_payload["status"], "no_suggestions");
+}
+
+// ── range ────────────────────────────────────────────────────────────────
+
+fn manifest_with_history(path: &Path) {
+    use mvs_manager::mvs::manifest::{HistoryEntry, Identity, Manifest};
+
+    let mut manifest = Manifest::default_for_context("cli");
+    manifest.identity = Identity {
+        mvs: Identity::format_mvs(2, 3, 1, 4, "cli"),
+        arch: 2,
+        feat: 3,
+        prot: 1,
+        fix: 4,
+        cont: "cli".to_string(),
+    };
+    manifest.compatibility.host_range.min_prot = 0;
+    manifest.compatibility.host_range.max_prot = 1;
+    manifest.history = vec![
+        HistoryEntry {
+            mvs: Identity::format_mvs(2, 0, 0, 0, "cli"),
+            arch: 2,
+            feat: 0,
+            prot: 0,
+            fix: 0,
+            cont: "cli".to_string(),
+            reasons: vec!["initial".to_string()],
+            changed_at_unix: 1,
+        },
+        HistoryEntry {
+            mvs: Identity::format_mvs(2, 1, 1, 0, "cli"),
+            arch: 2,
+            feat: 1,
+            prot: 1,
+            fix: 0,
+            cont: "cli".to_string(),
+            reasons: vec!["protocol change".to_string()],
+            changed_at_unix: 2,
+        },
+        HistoryEntry {
+            mvs: Identity::format_mvs(2, 3, 1, 4, "cli"),
+            arch: 2,
+            feat: 3,
+            prot: 1,
+            fix: 4,
+            cont: "cli".to_string(),
+            reasons: vec!["feature additions".to_string()],
+            changed_at_unix: 3,
+        },
+    ];
+    manifest
+        .write(path)
+        .expect("failed to write fixture manifest");
+}
+
+#[test]
+fn range_resolves_bounded_and_open_ended_constraints_from_history() {
+    let temp = TempWorkspace::new();
+    let manifest_path = temp.path().join("mvs.json");
+    manifest_with_history(&manifest_path);
+
+    // PROT 0 only matches the very first entry, bounded above by the next
+    // entry where PROT left that range.
+    let bounded = binary_cmd()
+        .args([
+            "range",
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--min-prot",
+            "0",
+            "--max-prot",
+            "0",
+            "--for",
+            "npm,cargo,pip,maven",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("range should run");
+    assert!(
+        bounded.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&bounded.stderr)
+    );
+    let bounded_payload: Value = serde_json::from_slice(&bounded.stdout).unwrap();
+    assert_eq!(bounded_payload["lower_bound"], "2.0.0");
+    assert_eq!(bounded_payload["upper_bound"], "2.1.0");
+    assert_eq!(bounded_payload["matched_versions"], 1);
+    let constraints = bounded_payload["constraints"].as_array().unwrap();
+    assert_eq!(constraints[0]["ecosystem"], "npm");
+    assert_eq!(constraints[0]["constraint"], ">=2.0.0 <2.1.0");
+    assert_eq!(constraints[1]["constraint"], ">=2.0.0, <2.1.0");
+    assert_eq!(constraints[2]["constraint"], ">=2.0.0,<2.1.0");
+    assert_eq!(constraints[3]["constraint"], "[2.0.0,2.1.0)");
+
+    // --host uses compatibility.host_range (0..=1) and reaches the current
+    // (still-PROT-1) version, so the range is open-ended.
+    let open = binary_cmd()
+        .args([
+            "range",
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--host",
+            "--for",
+            "npm",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("range --host should run");
+    assert!(open.status.success());
+    let open_payload: Value = serde_json::from_slice(&open.stdout).unwrap();
+    assert_eq!(open_payload["source"], "compatibility.host_range");
+    assert_eq!(open_payload["lower_bound"], "2.0.0");
+    assert!(open_payload["upper_bound"].is_null());
+    assert_eq!(open_payload["constraints"][0]["constraint"], ">=2.0.0");
+}
+
+#[test]
+fn range_rejects_conflicting_and_missing_bound_flags() {
+    let temp = TempWorkspace::new();
+    let manifest_path = temp.path().join("mvs.json");
+    manifest_with_history(&manifest_path);
+
+    let missing = binary_cmd()
+        .args([
+            "range",
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--for",
+            "npm",
+        ])
+        .output()
+        .expect("range should run");
+    assert!(!missing.status.success());
+    assert_eq!(missing.status.code(), Some(85));
+
+    let conflicting = binary_cmd()
+        .args([
+            "range",
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--min-prot",
+            "0",
+            "--max-prot",
+            "0",
+            "--host",
+            "--for",
+            "npm",
+        ])
+        .output()
+        .expect("range should run");
+    assert!(!conflicting.status.success());
+    assert_eq!(conflicting.status.code(), Some(85));
 }
