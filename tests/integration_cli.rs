@@ -3465,3 +3465,92 @@ fn migrate_backfill_reports_transitions_between_tags() {
     assert_eq!(transition["protocols_removed"], 1);
     assert!(transition["violation"].is_string());
 }
+
+// ── suggest-decorators ───────────────────────────────────────────────────
+
+#[test]
+fn suggest_decorators_previews_then_writes_then_is_idempotent() {
+    let temp = TempWorkspace::new();
+    fs::create_dir_all(temp.path().join("src/auth")).unwrap();
+    fs::write(temp.path().join("src/auth/login.rs"), "pub fn login() {}\n").unwrap();
+    fs::write(
+        temp.path().join("src/auth/logout.rs"),
+        "pub fn logout() {}\n",
+    )
+    .unwrap();
+
+    let preview = binary_cmd()
+        .args(["suggest-decorators", "--root", ".", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("suggest-decorators preview should run");
+    assert!(
+        preview.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    let preview_payload: Value =
+        serde_json::from_slice(&preview.stdout).expect("suggest-decorators json should parse");
+    assert_eq!(preview_payload["status"], "suggested");
+    assert_eq!(preview_payload["write"], false);
+    assert_eq!(
+        preview_payload["protocol_suggestions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        preview_payload["feature_suggestions"][0]["directory"],
+        "src/auth"
+    );
+    assert_eq!(preview_payload["feature_suggestions"][0]["name"], "auth");
+    // Preview must not touch the files.
+    assert_eq!(
+        fs::read_to_string(temp.path().join("src/auth/login.rs")).unwrap(),
+        "pub fn login() {}\n"
+    );
+
+    let write_output = binary_cmd()
+        .args([
+            "suggest-decorators",
+            "--root",
+            ".",
+            "--write",
+            "--format",
+            "json",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("suggest-decorators --write should run");
+    assert!(
+        write_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&write_output.stderr)
+    );
+    let write_payload: Value =
+        serde_json::from_slice(&write_output.stdout).expect("suggest-decorators json should parse");
+    assert_eq!(write_payload["status"], "written");
+    assert!(write_payload["protocol_suggestions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|s| s["written"] == true));
+
+    let login_contents = fs::read_to_string(temp.path().join("src/auth/login.rs")).unwrap();
+    assert!(login_contents.contains("/// @mvs-protocol(\"auth_login\")"));
+    assert!(login_contents.contains("/// @mvs-feature(\"auth\")"));
+    assert!(login_contents.contains("pub fn login() {}"));
+    let logout_contents = fs::read_to_string(temp.path().join("src/auth/logout.rs")).unwrap();
+    assert!(logout_contents.contains("/// @mvs-protocol(\"auth_logout\")"));
+
+    // Second run: nothing left to suggest.
+    let second = binary_cmd()
+        .args(["suggest-decorators", "--root", ".", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("second suggest-decorators run should succeed");
+    assert!(second.status.success());
+    let second_payload: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(second_payload["status"], "no_suggestions");
+}

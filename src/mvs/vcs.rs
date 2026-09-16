@@ -10,6 +10,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
+use regex::Regex;
 
 /// True when a `git` binary is on `PATH` and runs successfully.
 pub fn is_available() -> bool {
@@ -62,6 +63,43 @@ pub fn list_tags_chronological(root: &Path) -> Result<Vec<String>> {
         .filter(|line| !line.is_empty())
         .map(str::to_string)
         .collect())
+}
+
+/// Mines recent commit subject lines for Conventional Commits scopes
+/// (`type(scope): subject`), tallying how often each scope appears. Only
+/// commits whose subject actually has a parenthesized scope count; a
+/// scope-less `feat: subject` is ignored. Returned most-frequent first,
+/// each scope kept in whatever casing/separator style the commits used.
+pub fn list_commit_scopes(root: &Path, limit: usize) -> Result<Vec<(String, usize)>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["log", &format!("-n{limit}"), "--format=%s"])
+        .output()
+        .context("failed to run `git log`")?;
+
+    if !output.status.success() {
+        bail!(
+            "git log failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    let scope_re = Regex::new(r"^[A-Za-z]+\(([^)]+)\)!?:").expect("valid regex");
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Some(caps) = scope_re.captures(line.trim()) {
+            let scope = caps[1].trim().to_string();
+            if !scope.is_empty() {
+                *counts.entry(scope).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut scopes: Vec<(String, usize)> = counts.into_iter().collect();
+    scopes.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Ok(scopes)
 }
 
 /// A disposable, detached `git worktree` checked out at a tag. Removed via
@@ -235,5 +273,33 @@ mod tests {
         };
         // Dropped: the worktree directory should be gone.
         assert!(!worktree_path.exists());
+    }
+
+    #[test]
+    fn commit_scopes_are_tallied_most_frequent_first_and_scopeless_commits_ignored() {
+        if !is_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        let dir = TempDir::new("scopes-repo");
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        for message in [
+            "chore: initial commit",
+            "feat(auth): add login flow",
+            "fix(auth): handle expired tokens",
+            "feat(offline-storage): cache responses",
+            "docs: update README",
+            "feat(auth): add logout",
+        ] {
+            fs::write(dir.path().join("marker.txt"), message).unwrap();
+            run_git(dir.path(), &["add", "-A"]);
+            run_git(dir.path(), &["commit", "-q", "-m", message]);
+        }
+
+        let scopes = list_commit_scopes(dir.path(), 100).unwrap();
+        assert_eq!(
+            scopes,
+            vec![("auth".to_string(), 3), ("offline-storage".to_string(), 1),]
+        );
     }
 }

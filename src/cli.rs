@@ -23,6 +23,7 @@ pub const EXIT_SYNC_DRIFT: i32 = 80;
 pub const EXIT_SYNC_ERROR: i32 = 81;
 pub const EXIT_SCHEME_ERROR: i32 = 82;
 pub const EXIT_MIGRATE_ERROR: i32 = 83;
+pub const EXIT_SUGGEST_ERROR: i32 = 84;
 
 #[derive(Debug, Parser)]
 #[command(name = "mvs-manager", version, about = "MVS Engine manager CLI")]
@@ -45,6 +46,7 @@ enum Command {
     Sync(SyncArgs),
     ConvertVersion(ConvertVersionArgs),
     Migrate(MigrateArgs),
+    SuggestDecorators(SuggestDecoratorsArgs),
     Schema(SchemaArgs),
     SelfUpdate(SelfUpdateArgs),
     Doctor(DoctorArgs),
@@ -612,6 +614,24 @@ pub struct MigrateRollbackArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct SuggestDecoratorsArgs {
+    #[arg(long, default_value = ".")]
+    pub root: PathBuf,
+
+    /// Manifest to read an existing scan_policy from, if present.
+    #[arg(long, default_value = "mvs.json")]
+    pub manifest: PathBuf,
+
+    /// Insert the suggested decorators into source files (idempotent: a
+    /// second run finds nothing left to suggest for files it already wrote).
+    #[arg(long, default_value_t = false)]
+    pub write: bool,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct CheckManifestArgs {
     /// Path to the manifest file to validate.
     #[arg(long, default_value = "mvs.json")]
@@ -695,6 +715,9 @@ pub fn run() -> i32 {
             run_with_update_notification(commands::convert_version::run(args))
         }
         Command::Migrate(args) => run_with_update_notification(commands::migrate::run(args)),
+        Command::SuggestDecorators(args) => {
+            run_with_update_notification(commands::suggest_decorators::run(args))
+        }
         Command::Schema(args) => commands::schema::run(args),
         Command::SelfUpdate(args) => commands::self_update::run(args),
         Command::Doctor(args) => commands::doctor::run(args),

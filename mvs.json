@@ -1,21 +1,21 @@
 {
   "$schema": "https://mvs.dev/schema/v2",
   "identity": {
-    "mvs": "2.3.3.1-cli",
+    "mvs": "2.4.4.1-cli",
     "arch": 2,
-    "feat": 3,
-    "prot": 3,
+    "feat": 4,
+    "prot": 4,
     "fix": 1,
     "cont": "cli"
   },
   "compatibility": {
     "host_range": {
       "min_prot": 0,
-      "max_prot": 3
+      "max_prot": 4
     },
     "extension_range": {
       "min_prot": 0,
-      "max_prot": 3
+      "max_prot": 4
     },
     "legacy_shims": []
   },
@@ -62,11 +62,12 @@
     ]
   },
   "evidence": {
-    "feature_hash": "0898ff7aa6bfd863584609dbcd29d741e088d3b4665aced3e15ace46da74f4c8",
-    "protocol_hash": "515b33b0ed2e18cd9f83f258746028b2cd0f3186d0cbac79d0ffca2e26978400",
+    "feature_hash": "54f7d8c1acacede0a1f74af065900f75a872204bd05ee2c8e4557076989a65aa",
+    "protocol_hash": "2928108297b409920c809d06d85719b27e8a3201179e6ef044b53d8ccc491821",
     "public_api_hash": "ac2aaccb5a3b945133b970e6cb9f49cdfde2e37207374900eb940b7e1b2f9f4b",
     "feature_inventory": [
       "constraint_suggestion",
+      "decorator_suggestions",
       "legacy_version_conversion",
       "manager_doctor",
       "manager_self_update",
@@ -94,6 +95,7 @@
       "cli_report_command",
       "cli_schema_command",
       "cli_self_update_command",
+      "cli_suggest_decorators_command",
       "cli_sync_command",
       "cli_validate_all_command",
       "cli_validate_command",
@@ -349,6 +351,19 @@
         "Protocol incremented due to public API signature drift (example source: src/cli.rs)."
       ],
       "changed_at_unix": 1789581360
+    },
+    {
+      "mvs": "2.4.4.1-cli",
+      "arch": 2,
+      "feat": 4,
+      "prot": 4,
+      "fix": 1,
+      "cont": "cli",
+      "reasons": [
+        "Feature incremented due to @mvs-feature set drift (example source: src/commands/constraint.rs).",
+        "Protocol incremented due to @mvs-protocol surface drift (example source: src/commands/check_manifest.rs)."
+      ],
+      "changed_at_unix": 1789587255
     }
   ]
 }

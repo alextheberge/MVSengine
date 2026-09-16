@@ -266,6 +266,35 @@ If step 4 fails partway through, the manifest and snapshot are already on disk; 
 
 Reads `.mvs/migration-snapshot.json`, restores `mvs.json` (or deletes it, if it didn't exist before `apply`) and every backed-up version file to their exact prior contents, then deletes the snapshot. A second `rollback` with nothing left to restore fails clearly rather than silently doing nothing.
 
+## 8) Bootstrap decorators
+
+```bash
+mvs-manager suggest-decorators --root .
+mvs-manager suggest-decorators --root . --write
+mvs-manager suggest-decorators --root . --write --format json
+```
+
+`suggest-decorators` crawls the source tree (using an existing manifest's `scan_policy` if `--manifest` resolves to one, otherwise building one the same way `init` does) and proposes:
+
+- **Protocol suggestions**: one per file that has public API surface (from `public_api_inventory`) but no `@mvs-protocol` tag anywhere in that file yet.
+- **Feature suggestions**: one per directory of such files with no `@mvs-feature` tag anywhere in it yet — a "capability cluster" — placed on the alphabetically-first file in that directory.
+
+Both `@mvs-feature`/`@mvs-protocol` tags are scoped to the whole file they appear in (the crawler collects every comment in a file, not just ones attached to a specific declaration), so a suggestion only needs to land somewhere sensible in the file, not exactly above one symbol. Names are derived from the file/directory path, normalized to `snake_case`; a name is replaced with a matching Conventional Commits scope's own spelling (`feat(scope): ...` in `git log`) when one is found, so a team's existing naming convention wins over a guessed one. Name collisions get a numeric suffix (`auth`, `auth_2`, ...).
+
+`--write` inserts each suggestion using the target file's own comment syntax, right after any leading header comment or shebang (so a license header stays first):
+
+| Language(s) | Extensions | Comment used |
+|---|---|---|
+| Rust | `.rs` | `///` |
+| TS/JS, Go, Java, Kotlin, C#, Swift, Dart | `.ts`, `.tsx`, `.js`, `.jsx`, `.go`, `.java`, `.kt`, `.cs`, `.swift`, `.dart` | `//` |
+| Python, Ruby | `.py`, `.rb` | `#` |
+| Lua, Luau | `.lua`, `.luau` | `--` |
+| PHP | `.php` | `//`, inserted right after the `<?php` opening tag (a `.php` file is HTML/text outside it) |
+
+Any other extension is reported as a suggestion but not written (`written: false` in JSON), since there's no comment syntax to insert safely. Because already-decorated files/directories are never suggested again, `--write` is idempotent — run it twice and the second run reports `no_suggestions`.
+
+**Not yet built**: non-code protocol surfaces. Many teams' real protocol is a schema (OpenAPI, GraphQL SDL, `.proto`, JSON Schema, Avro), not a function signature, and none of those are crawled as public API inventory today.
+
 ## Makefile shortcuts
 
 ```bash
@@ -427,6 +456,7 @@ See [docs/INSTALL_AND_CI.md](INSTALL_AND_CI.md) for GitHub Actions examples, pin
 - `81`: `sync` failed to read or write a version file
 - `82`: `convert-version` could not parse the input, resolve `--scheme-regex`, or apply `--map`
 - `83`: a `migrate` subcommand failed (detect/plan/backfill/apply/rollback)
+- `84`: `suggest-decorators` failed to crawl the source tree or write a decorator
 
 ## Troubleshooting
 

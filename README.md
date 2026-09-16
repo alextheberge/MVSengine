@@ -163,6 +163,21 @@ mvs-manager migrate rollback --root .                # undo the last apply from 
 - **`apply`** runs the same conversion as `plan` and writes it: `mvs.json`, plus `sync`-ing every declared version file, after saving everything it's about to touch to `.mvs/migration-snapshot.json`. Refuses to overwrite an existing manifest without `--force`.
 - **`rollback`** restores exactly what `apply` overwrote (deleting `mvs.json` if it didn't exist before) and removes the snapshot, so a rollback runs cleanly exactly once per apply.
 
+## Bootstrapping Decorators
+
+Hand-placing `@mvs-feature`/`@mvs-protocol` comments is the biggest manual cost in adopting MVS. `suggest-decorators` proposes them from the code you already have:
+
+```bash
+mvs-manager suggest-decorators --root .          # preview; writes nothing
+mvs-manager suggest-decorators --root . --write  # insert them
+```
+
+- One **protocol** suggestion per undecorated file that has public API surface (a boundary); one **feature** suggestion per undecorated directory of such files (a capability cluster), placed on that directory's alphabetically-first file.
+- Names come from the file/directory path (`src/auth/login.rs` -> protocol `auth_login`), but a name is replaced with a matching [Conventional Commits](https://www.conventionalcommits.org/) scope's own spelling when one exists in recent history — `feat(offline-storage): ...` in your log means the suggested feature is `offline-storage`, not a re-derived `offline_storage`.
+- Already-decorated files/directories are never suggested again, so `--write` is idempotent: run it, then run it again, and the second run finds nothing left to propose.
+- `--write` inserts each decorator using that file's own comment syntax (`///` for Rust, `//` for TS/JS/Go/Java/Kotlin/C#/Swift/Dart, `#` for Python/Ruby, `--` for Lua/Luau, right after PHP's `<?php` tag) right after any leading header comment/shebang — the exact same comment tokenization the crawler reads back, so a written suggestion is guaranteed to be picked up by the very next `lint`.
+- Non-code protocol surfaces (OpenAPI, GraphQL SDL, `.proto`, JSON Schema, Avro) aren't covered yet — see the [Roadmap](#roadmap).
+
 ## Enforce MVS on Commit
 ```bash
 make install-hooks
@@ -237,6 +252,8 @@ mvs-manager migrate plan --root . --context cli
 mvs-manager migrate backfill --root . --limit 30
 mvs-manager migrate apply --root . --context cli
 mvs-manager migrate rollback --root .
+mvs-manager suggest-decorators --root .
+mvs-manager suggest-decorators --root . --write
 mvs-manager self-update --check
 mvs-manager self-update
 ```
@@ -433,6 +450,7 @@ Pattern rules:
 - Usage details: [docs/USAGE.md](docs/USAGE.md)
 - Release workflow: [docs/RELEASE.md](docs/RELEASE.md)
 - `1.x` readiness roadmap: [docs/TODO_1.0.md](docs/TODO_1.0.md)
+- Not yet built: crawler adapters that treat OpenAPI, GraphQL SDL, `.proto`, JSON Schema, and Avro files as public API/protocol surface, for teams whose real protocol is a schema rather than a function signature.
 
 ## Machine-Readable Output
 
@@ -552,6 +570,7 @@ Example `report --format json` shape:
 - `81`: `sync` failed to read or write a version file
 - `82`: `convert-version` could not parse the input, resolve `--scheme-regex`, or apply `--map`
 - `83`: a `migrate` subcommand failed (detect/plan/backfill/apply/rollback)
+- `84`: `suggest-decorators` failed to crawl the source tree or write a decorator
 
 This means CI can treat `20` as “manifest must be regenerated” and `30` as “host/extension contract is incompatible” without scraping human text.
 
