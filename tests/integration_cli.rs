@@ -50,6 +50,18 @@ fn normalize_contract_output(payload: &mut Value) {
     replace_string_field(payload, "extension_manifest", "<EXTENSION_MANIFEST>");
     replace_string_field(payload, "base_manifest", "<BASE_MANIFEST>");
     replace_string_field(payload, "target_manifest", "<TARGET_MANIFEST>");
+    replace_string_field(payload, "snapshot_path", "<SNAPSHOT_PATH>");
+    // `manifest` is a plain path string on most reports (sync, range) but a
+    // fully embedded Manifest object on `migrate plan`; handle both.
+    match payload.get_mut("manifest") {
+        Some(value) if value.is_string() => {
+            *value = Value::String("<MANIFEST_PATH>".to_string());
+        }
+        Some(value) if value.is_object() => {
+            normalize_contract_manifest(value);
+        }
+        _ => {}
+    }
 }
 
 fn normalize_contract_manifest(manifest: &mut Value) {
@@ -3803,4 +3815,301 @@ fn range_rejects_conflicting_and_missing_bound_flags() {
         .expect("range should run");
     assert!(!conflicting.status.success());
     assert_eq!(conflicting.status.code(), Some(85));
+}
+
+// ── golden contract fixtures for phase 1-5 commands ─────────────────────────
+
+#[test]
+fn convert_version_json_matches_golden_contract_fixture() {
+    let output = binary_cmd()
+        .args([
+            "convert-version",
+            "--version",
+            "1.4.2",
+            "--context",
+            "cli",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("convert-version should run");
+    assert!(output.status.success());
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload, load_contract_json("convert_version_semver.json"));
+}
+
+#[test]
+fn range_json_matches_golden_contract_fixture() {
+    let temp = TempWorkspace::new();
+    let manifest_path = temp.path().join("mvs.json");
+    manifest_with_history(&manifest_path);
+
+    let output = binary_cmd()
+        .args([
+            "range",
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--min-prot",
+            "0",
+            "--max-prot",
+            "0",
+            "--for",
+            "npm,cargo,pip,maven",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("range should run");
+    assert!(output.status.success());
+    let mut payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    normalize_contract_output(&mut payload);
+    assert_eq!(payload, load_contract_json("range_bounded.json"));
+}
+
+fn sync_fixture_workspace(temp: &TempWorkspace) -> PathBuf {
+    use mvs_manager::mvs::manifest::{
+        Identity, Manifest, VersionFileEntry, VersionFileKind, VersionProjection,
+    };
+
+    fs::write(
+        temp.path().join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"2.1.1\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+
+    let mut manifest = Manifest::default_for_context("cli");
+    manifest.identity = Identity {
+        mvs: Identity::format_mvs(2, 1, 0, 1, "cli"),
+        arch: 2,
+        feat: 1,
+        prot: 0,
+        fix: 1,
+        cont: "cli".to_string(),
+    };
+    manifest.release.version_files = vec![VersionFileEntry {
+        path: "Cargo.toml".to_string(),
+        kind: VersionFileKind::CargoToml,
+        projection: VersionProjection::Semver,
+    }];
+
+    let manifest_path = temp.path().join("mvs.json");
+    manifest.write(&manifest_path).unwrap();
+    manifest_path
+}
+
+#[test]
+fn sync_json_matches_golden_contract_fixture() {
+    let temp = TempWorkspace::new();
+    let manifest_path = sync_fixture_workspace(&temp);
+
+    let output = binary_cmd()
+        .args([
+            "sync",
+            "--root",
+            temp.path().to_str().unwrap(),
+            "--manifest",
+            manifest_path.file_name().unwrap().to_str().unwrap(),
+            "--check",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("sync should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    normalize_contract_output(&mut payload);
+    assert_eq!(payload, load_contract_json("sync_in_sync.json"));
+}
+
+#[test]
+fn lint_advisory_json_matches_golden_contract_fixture() {
+    let temp = TempWorkspace::new();
+    let (project_root, manifest_path) = generator_fixture_workspace(&temp);
+
+    binary_cmd()
+        .args([
+            "generate",
+            "--root",
+            project_root.to_str().unwrap(),
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--context",
+            "cli",
+        ])
+        .assert()
+        .success();
+
+    let api_file = project_root.join("src/api.ts");
+    let updated = format!(
+        "{}\nexport function rotateToken(token: string): string {{ return token; }}\n",
+        fs::read_to_string(&api_file).unwrap()
+    );
+    fs::write(&api_file, updated).unwrap();
+
+    let output = binary_cmd()
+        .args([
+            "lint",
+            "--root",
+            project_root.to_str().unwrap(),
+            "--manifest",
+            manifest_path.to_str().unwrap(),
+            "--advisory",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("lint --advisory should run");
+    assert!(output.status.success());
+    let mut payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    normalize_contract_output(&mut payload);
+    assert_eq!(payload, load_contract_json("lint_advisory_drift.json"));
+}
+
+#[test]
+fn suggest_decorators_json_matches_golden_contract_fixture() {
+    let temp = TempWorkspace::new();
+    fs::create_dir_all(temp.path().join("src/auth")).unwrap();
+    fs::write(temp.path().join("src/auth/login.rs"), "pub fn login() {}\n").unwrap();
+    fs::write(
+        temp.path().join("src/auth/logout.rs"),
+        "pub fn logout() {}\n",
+    )
+    .unwrap();
+
+    let output = binary_cmd()
+        .args(["suggest-decorators", "--root", ".", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("suggest-decorators should run");
+    assert!(output.status.success());
+    let mut payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    normalize_contract_output(&mut payload);
+    assert_eq!(
+        payload,
+        load_contract_json("suggest_decorators_preview.json")
+    );
+}
+
+/// A small, fully deterministic git repo for the `migrate` golden fixtures:
+/// explicit, day-spaced commit dates so `--sort=creatordate` tag ordering
+/// can never depend on how fast the test happens to run.
+fn init_deterministic_migrate_repo(root: &Path) {
+    fn commit_at(root: &Path, message: &str, date: &str) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["commit", "-q", "-m", message])
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .env("GIT_AUTHOR_DATE", date)
+            .env("GIT_COMMITTER_DATE", date)
+            .status()
+            .expect("failed to run git commit");
+        assert!(status.success());
+    }
+    fn run(root: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .status()
+            .expect("failed to run git");
+        assert!(status.success());
+    }
+
+    run(root, &["init", "-q", "-b", "main"]);
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"1.0.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    fs::write(root.join("lib.rs"), "pub fn core_fn() {}\n").unwrap();
+    run(root, &["add", "-A"]);
+    commit_at(root, "v1.0.0", "2024-01-01T00:00:00");
+    run(root, &["tag", "v1.0.0"]);
+
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"1.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("lib.rs"),
+        "pub fn core_fn() {}\n\npub fn extra_fn() {}\n",
+    )
+    .unwrap();
+    run(root, &["add", "-A"]);
+    commit_at(root, "v1.1.0", "2024-02-01T00:00:00");
+    run(root, &["tag", "v1.1.0"]);
+}
+
+#[test]
+fn migrate_detect_json_matches_golden_contract_fixture() {
+    let temp = TempWorkspace::new();
+    init_deterministic_migrate_repo(temp.path());
+
+    let output = binary_cmd()
+        .args(["migrate", "detect", "--root", ".", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("migrate detect should run");
+    assert!(output.status.success());
+    let mut payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    normalize_contract_output(&mut payload);
+    assert_eq!(payload, load_contract_json("migrate_detect.json"));
+}
+
+#[test]
+fn migrate_plan_json_matches_golden_contract_fixture() {
+    let temp = TempWorkspace::new();
+    init_deterministic_migrate_repo(temp.path());
+
+    let output = binary_cmd()
+        .args([
+            "migrate",
+            "plan",
+            "--root",
+            ".",
+            "--context",
+            "lib",
+            "--format",
+            "json",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("migrate plan should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    normalize_contract_output(&mut payload);
+    assert_eq!(payload, load_contract_json("migrate_plan.json"));
+}
+
+#[test]
+fn migrate_backfill_json_matches_golden_contract_fixture() {
+    let temp = TempWorkspace::new();
+    init_deterministic_migrate_repo(temp.path());
+
+    let output = binary_cmd()
+        .args(["migrate", "backfill", "--root", ".", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("migrate backfill should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    normalize_contract_output(&mut payload);
+    assert_eq!(payload, load_contract_json("migrate_backfill.json"));
 }

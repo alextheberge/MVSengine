@@ -1,0 +1,27 @@
+{
+  "command": "suggest-decorators",
+  "status": "suggested",
+  "root": "<ROOT>",
+  "write": false,
+  "protocol_suggestions": [
+    {
+      "name": "auth_login",
+      "file": "src/auth/login.rs",
+      "item_count": 1
+    },
+    {
+      "name": "auth_logout",
+      "file": "src/auth/logout.rs",
+      "item_count": 1
+    }
+  ],
+  "feature_suggestions": [
+    {
+      "name": "auth",
+      "directory": "src/auth",
+      "target_file": "src/auth/login.rs",
+      "file_count": 2
+    }
+  ],
+  "commit_scopes_considered": []
+}

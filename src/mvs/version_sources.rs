@@ -233,7 +233,17 @@ fn locate_scoped_toml_version(content: &str, section: &str) -> Option<Range<usiz
             continue;
         }
         if in_section {
-            if let Some(caps) = version_re.captures(line) {
+            // Rust's `regex` crate, unlike e.g. Python's `re`, does not treat
+            // `$` as matching just before a trailing `\n` — it only matches
+            // the true end of the haystack. `line` (from `split_inclusive`)
+            // always ends with `\n`, so a `$`-anchored pattern would fail to
+            // match any line with a trailing `# comment` (the `.` in `#.*`
+            // can't consume the `\n`, and `$` then has nothing left to match
+            // against). Stripping the line terminator before matching keeps
+            // the anchor meaning what it looks like it means; byte offsets
+            // are unaffected since we only trim off the end.
+            let line_without_terminator = line.trim_end_matches(['\n', '\r']);
+            if let Some(caps) = version_re.captures(line_without_terminator) {
                 let m = caps.get(1).expect("capture group 1 present");
                 return Some((offset + m.start())..(offset + m.end()));
             }
@@ -552,6 +562,31 @@ mod tests {
         let rewritten = fs::read_to_string(&path).unwrap();
         assert!(rewritten.contains("serde = \"1.0\""));
         assert!(!rewritten.contains("1.2.3"));
+    }
+
+    #[test]
+    fn cargo_toml_version_with_trailing_comment_is_detected() {
+        // Regression guard: found via a real-world dry run against
+        // rust-lang/log, whose Cargo.toml has
+        // `version = "0.4.34" # remember to update html_root_url`. Rust's
+        // `regex` crate doesn't special-case `$` before a trailing `\n` the
+        // way e.g. Python's `re` does, so a naive per-line `$`-anchored
+        // match silently failed on any version line followed by a comment.
+        let content = "[package]\nname = \"log\"\nversion = \"0.4.34\" # remember to update html_root_url\nauthors = []\n";
+        let span = locate_scoped_toml_version(content, "package").expect("found");
+        assert_eq!(&content[span], "0.4.34");
+
+        let dir = TempDir::new("cargo-trailing-comment");
+        let path = dir.path().join("Cargo.toml");
+        fs::write(&path, content).unwrap();
+        let entry = make_entry("Cargo.toml", VersionFileKind::CargoToml);
+        assert_eq!(read_version(dir.path(), &entry).unwrap(), "0.4.34");
+        assert!(write_version(dir.path(), &entry, "0.5.0").unwrap());
+        let rewritten = fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            rewritten,
+            "[package]\nname = \"log\"\nversion = \"0.5.0\" # remember to update html_root_url\nauthors = []\n"
+        );
     }
 
     #[test]

@@ -1,0 +1,25 @@
+{
+  "command": "migrate",
+  "subcommand": "backfill",
+  "root": "<ROOT>",
+  "resolved_scheme": "semver",
+  "tags_considered": [
+    "v1.0.0",
+    "v1.1.0"
+  ],
+  "skipped_tags": [],
+  "transitions": [
+    {
+      "from_tag": "v1.0.0",
+      "to_tag": "v1.1.0",
+      "bump_level": "minor",
+      "features_added": 0,
+      "features_removed": 0,
+      "protocols_added": 0,
+      "protocols_removed": 0,
+      "public_api_added": 1,
+      "public_api_removed": 0
+    }
+  ],
+  "violation_count": 0
+}

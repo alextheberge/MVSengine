@@ -277,6 +277,8 @@ Requires `git`. Checks out each of the most recent `--limit` tags (or an explici
 
 The scan policy comes from the existing `mvs.json`'s `scan_policy` if one is present at `--manifest`, otherwise one is built the same way `init`/`plan` build one. That policy (in particular `public_api_roots`) is evaluated against every historical tag, which is a known simplification if the project's structure changed significantly over time.
 
+**Signal quality depends on scan policy.** Run against a real, large Python project (via a default, undirected scan policy) and `backfill` reported dozens of added/removed public API items between adjacent patch releases — almost certainly heuristic export-following noise, not real API churn. Before trusting `backfill`'s violations on a codebase you don't already have `mvs.json` tuned for, run `migrate plan` (or `init`) first and set `scan_policy.public_api_roots` deliberately; an undirected default policy over-counts surface on large or loosely-structured projects and the violation list will be noisier than the true signal.
+
 ### `apply`
 
 Runs the same conversion as `plan` and persists it:

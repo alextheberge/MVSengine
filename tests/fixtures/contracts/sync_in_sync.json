@@ -1,0 +1,20 @@
+{
+  "command": "sync",
+  "status": "in_sync",
+  "exit_code": 0,
+  "manifest": "<MANIFEST_PATH>",
+  "root": "<ROOT>",
+  "mode": "check",
+  "detected": false,
+  "saved_detected": false,
+  "files": [
+    {
+      "path": "Cargo.toml",
+      "kind": "cargo_toml",
+      "projection": "semver",
+      "projected_version": "2.1.1",
+      "current_version": "2.1.1",
+      "status": "in_sync"
+    }
+  ]
+}

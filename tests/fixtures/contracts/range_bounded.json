@@ -1,0 +1,29 @@
+{
+  "command": "range",
+  "manifest": "<MANIFEST_PATH>",
+  "source": "--min-prot/--max-prot",
+  "min_prot": 0,
+  "max_prot": 0,
+  "arch": 2,
+  "lower_bound": "2.0.0",
+  "upper_bound": "2.1.0",
+  "matched_versions": 1,
+  "constraints": [
+    {
+      "ecosystem": "npm",
+      "constraint": ">=2.0.0 <2.1.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "constraint": ">=2.0.0, <2.1.0"
+    },
+    {
+      "ecosystem": "pip",
+      "constraint": ">=2.0.0,<2.1.0"
+    },
+    {
+      "ecosystem": "maven",
+      "constraint": "[2.0.0,2.1.0)"
+    }
+  ]
+}

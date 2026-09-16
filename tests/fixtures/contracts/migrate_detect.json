@@ -1,0 +1,22 @@
+{
+  "command": "migrate",
+  "subcommand": "detect",
+  "root": "<ROOT>",
+  "git_available": true,
+  "is_git_repo": true,
+  "tag_count": 2,
+  "latest_tag": "v1.1.0",
+  "detected_scheme": "semver",
+  "version_sources": [
+    {
+      "path": "Cargo.toml",
+      "kind": "cargo_toml",
+      "current_version": "1.1.0"
+    }
+  ],
+  "version_sources_agree": true,
+  "release_tooling": [],
+  "detected_languages": [
+    "rust"
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "command": "convert-version",
+  "status": "converted",
+  "exit_code": 0,
+  "input": "1.4.2",
+  "scheme": "semver",
+  "scheme_forced": false,
+  "components": [
+    {
+      "name": "major",
+      "value": 1
+    },
+    {
+      "name": "minor",
+      "value": 4
+    },
+    {
+      "name": "patch",
+      "value": 2
+    }
+  ],
+  "mapping_source": "default",
+  "axes": {
+    "arch": 1,
+    "feat": 4,
+    "prot": 0,
+    "fix": 2
+  },
+  "identity": "1.4.0.2-cli",
+  "semver_projection": "1.4.2",
+  "advisories": []
+}

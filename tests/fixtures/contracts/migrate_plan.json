@@ -1,0 +1,110 @@
+{
+  "command": "migrate",
+  "subcommand": "plan",
+  "root": "<ROOT>",
+  "source_version": "v1.1.0",
+  "source_label": "latest_git_tag",
+  "scheme": "semver",
+  "mapping_source": "default",
+  "axes": {
+    "arch": 1,
+    "feat": 1,
+    "prot": 0,
+    "fix": 0
+  },
+  "identity": "1.1.0.0-lib",
+  "semver_projection": "1.1.0",
+  "invariant_ok": true,
+  "version_files": [
+    {
+      "path": "Cargo.toml",
+      "kind": "cargo_toml"
+    }
+  ],
+  "unrecognized_imported_version_files": [],
+  "advisories": [],
+  "tag_preview": [
+    {
+      "tag": "v1.0.0",
+      "parsed": true,
+      "mvs_identity": "1.0.0.0-lib"
+    },
+    {
+      "tag": "v1.1.0",
+      "parsed": true,
+      "mvs_identity": "1.1.0.0-lib"
+    }
+  ],
+  "manifest": {
+    "$schema": "https://mvs.dev/schema/v2",
+    "identity": {
+      "mvs": "1.1.0.0-lib",
+      "arch": 1,
+      "feat": 1,
+      "prot": 0,
+      "fix": 0,
+      "cont": "lib"
+    },
+    "compatibility": {
+      "host_range": {
+        "min_prot": 0,
+        "max_prot": 0
+      },
+      "extension_range": {
+        "min_prot": 0,
+        "max_prot": 0
+      },
+      "legacy_shims": []
+    },
+    "capabilities": {},
+    "ai_contract": {
+      "tool_schema_version": 1,
+      "tool_schema_hash": "",
+      "required_model_capabilities": [],
+      "provided_model_capabilities": [],
+      "prompt_contract_id": "default"
+    },
+    "environment": {
+      "profiles": [
+        "lib"
+      ],
+      "runtime_constraints": {}
+    },
+    "scan_policy": {
+      "exclude_paths": [
+        ".git"
+      ],
+      "rust_export_following": "public_modules"
+    },
+    "release": {
+      "version_files": [
+        {
+          "path": "Cargo.toml",
+          "kind": "cargo_toml"
+        }
+      ]
+    },
+    "evidence": {
+      "feature_hash": "",
+      "protocol_hash": "",
+      "public_api_hash": "",
+      "feature_inventory": [],
+      "protocol_inventory": [],
+      "public_api_inventory": []
+    },
+    "history": [
+      {
+        "mvs": "1.1.0.0-lib",
+        "arch": 1,
+        "feat": 1,
+        "prot": 0,
+        "fix": 0,
+        "cont": "lib",
+        "reasons": [
+          "Migrated from latest git tag `v1.1.0` (scheme: semver, mapping: default)."
+        ],
+        "changed_at_unix": 0
+      }
+    ]
+  }
+}
