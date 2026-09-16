@@ -11,5 +11,6 @@ pub mod reader;
 pub mod report;
 pub mod schema;
 pub mod self_update;
+pub mod sync;
 pub mod validate_all;
 pub mod watch;

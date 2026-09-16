@@ -36,6 +36,9 @@ pub struct Manifest {
     #[serde(default, skip_serializing_if = "ScanPolicy::is_empty")]
     pub scan_policy: ScanPolicy,
 
+    #[serde(default, skip_serializing_if = "Release::is_empty")]
+    pub release: Release,
+
     #[serde(default)]
     pub evidence: Evidence,
 
@@ -198,6 +201,129 @@ pub enum LuaExportFollowing {
     Heuristic,
 }
 
+/// Declares which on-disk files (`Cargo.toml`, `package.json`, ...) should be
+/// kept in lock-step with the MVS identity's SemVer projection via `mvs-manager
+/// sync`. Empty by default: `sync` auto-detects well-known files when this
+/// list is empty instead of requiring every project to declare it up front.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Release {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub version_files: Vec<VersionFileEntry>,
+}
+
+impl Release {
+    pub fn is_empty(&self) -> bool {
+        self.version_files.is_empty()
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        for entry in &self.version_files {
+            if entry.path.trim().is_empty() {
+                bail!("release.version_files entries must have a non-empty `path`");
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct VersionFileEntry {
+    /// Path to the version file, relative to the project root.
+    pub path: String,
+    pub kind: VersionFileKind,
+    #[serde(default, skip_serializing_if = "VersionProjection::is_default")]
+    pub projection: VersionProjection,
+}
+
+/// The ecosystem-specific shape of a version declaration that `mvs-manager
+/// sync` knows how to read and rewrite in place, preserving every other byte
+/// of the file's formatting.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum VersionFileKind {
+    /// `[package] version = "…"` (or `[workspace.package]`) in `Cargo.toml`.
+    CargoToml,
+    /// Top-level `"version": "…"` in `package.json`.
+    NpmPackageJson,
+    /// `[project] version = "…"` (PEP 621) in `pyproject.toml`.
+    PyprojectPep621,
+    /// `[tool.poetry] version = "…"` in `pyproject.toml`.
+    PyprojectPoetry,
+    /// Top-level `"version": "…"` in `composer.json`.
+    ComposerJson,
+    /// Top-level `version: …` in `pubspec.yaml` (a `+build` suffix is preserved).
+    PubspecYaml,
+    /// Top-level `version=…` in `gradle.properties`.
+    GradleProperties,
+    /// `version = "…"` (Groovy or Kotlin DSL) in `build.gradle`/`build.gradle.kts`.
+    BuildGradle,
+    /// The project's own `<version>…</version>` in `pom.xml`, ignoring
+    /// `<parent>`, `<dependencies>`, and other nested scopes.
+    PomXml,
+    /// `<Version>…</Version>` (or `<VersionPrefix>`) in a `.csproj` file.
+    Csproj,
+    /// `spec.version = "…"` / `s.version = "…"` in a `.gemspec` file.
+    GemspecLiteral,
+    /// A `VERSION = "…"` constant, typically in a Ruby `version.rb` file.
+    RubyVersionConstant,
+    /// Top-level `version = "…"` in a LuaRocks `.rockspec` (a trailing
+    /// `-N` rockspec revision is preserved).
+    LuaRockspec,
+    /// A file whose entire trimmed contents are the version string.
+    PlainVersionFile,
+}
+
+impl VersionFileKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            VersionFileKind::CargoToml => "cargo_toml",
+            VersionFileKind::NpmPackageJson => "npm_package_json",
+            VersionFileKind::PyprojectPep621 => "pyproject_pep621",
+            VersionFileKind::PyprojectPoetry => "pyproject_poetry",
+            VersionFileKind::ComposerJson => "composer_json",
+            VersionFileKind::PubspecYaml => "pubspec_yaml",
+            VersionFileKind::GradleProperties => "gradle_properties",
+            VersionFileKind::BuildGradle => "build_gradle",
+            VersionFileKind::PomXml => "pom_xml",
+            VersionFileKind::Csproj => "csproj",
+            VersionFileKind::GemspecLiteral => "gemspec_literal",
+            VersionFileKind::RubyVersionConstant => "ruby_version_constant",
+            VersionFileKind::LuaRockspec => "lua_rockspec",
+            VersionFileKind::PlainVersionFile => "plain_version_file",
+        }
+    }
+}
+
+/// Which MVS-derived string gets written into a version file: the SemVer
+/// package projection (`arch.feat.fix`), or the full MVS identity string.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum VersionProjection {
+    #[default]
+    Semver,
+    Full,
+}
+
+impl VersionProjection {
+    pub fn is_default(&self) -> bool {
+        matches!(self, VersionProjection::Semver)
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            VersionProjection::Semver => "semver",
+            VersionProjection::Full => "full",
+        }
+    }
+
+    pub fn project(&self, identity: &Identity) -> String {
+        match self {
+            VersionProjection::Semver => identity.package_semver(),
+            VersionProjection::Full => identity.mvs.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Evidence {
     pub feature_hash: String,
@@ -292,6 +418,7 @@ impl Manifest {
             ai_contract: AiContract::default(),
             environment: Environment::default(),
             scan_policy: ScanPolicy::default(),
+            release: Release::default(),
             evidence: Evidence::default(),
             history: Vec::new(),
         };
@@ -392,6 +519,7 @@ impl Manifest {
             &self.compatibility.extension_range,
         )?;
         self.scan_policy.validate()?;
+        self.release.validate()?;
 
         Ok(())
     }

@@ -19,6 +19,8 @@ pub const EXIT_MANIFEST_ERROR: i32 = 40;
 pub const EXIT_REPORT_ERROR: i32 = 50;
 pub const EXIT_UPDATE_ERROR: i32 = 60;
 pub const EXIT_OUTPUT_ERROR: i32 = 70;
+pub const EXIT_SYNC_DRIFT: i32 = 80;
+pub const EXIT_SYNC_ERROR: i32 = 81;
 
 #[derive(Debug, Parser)]
 #[command(name = "mvs-manager", version, about = "MVS Engine manager CLI")]
@@ -38,6 +40,7 @@ enum Command {
     CheckManifest(CheckManifestArgs),
     Constraint(ConstraintArgs),
     Report(ReportArgs),
+    Sync(SyncArgs),
     Schema(SchemaArgs),
     SelfUpdate(SelfUpdateArgs),
     Doctor(DoctorArgs),
@@ -403,6 +406,37 @@ pub struct ReportArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct SyncArgs {
+    #[arg(long, default_value = ".")]
+    pub root: PathBuf,
+
+    #[arg(long, default_value = "mvs.json")]
+    pub manifest: PathBuf,
+
+    /// Verify version files match the manifest projection without writing;
+    /// exits non-zero on drift instead of fixing it.
+    #[arg(long, default_value_t = false)]
+    pub check: bool,
+
+    /// Print what would change without writing any files.
+    #[arg(long, default_value_t = false)]
+    pub dry_run: bool,
+
+    /// When `release.version_files` is empty and auto-detected files are
+    /// used instead, persist the detected entries back into the manifest.
+    #[arg(long, default_value_t = false)]
+    pub save_detected: bool,
+
+    /// Optional prerelease suffix appended to the SemVer projection, e.g.
+    /// `--suffix rc1` writes `2.1.0-rc1` instead of `2.1.0`.
+    #[arg(long)]
+    pub suffix: Option<String>,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct CheckManifestArgs {
     /// Path to the manifest file to validate.
     #[arg(long, default_value = "mvs.json")]
@@ -481,6 +515,7 @@ pub fn run() -> i32 {
         }
         Command::Constraint(args) => run_with_update_notification(commands::constraint::run(args)),
         Command::Report(args) => run_with_update_notification(commands::report::run(args)),
+        Command::Sync(args) => run_with_update_notification(commands::sync::run(args)),
         Command::Schema(args) => commands::schema::run(args),
         Command::SelfUpdate(args) => commands::self_update::run(args),
         Command::Doctor(args) => commands::doctor::run(args),

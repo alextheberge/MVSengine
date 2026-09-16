@@ -1,21 +1,21 @@
 {
   "$schema": "https://mvs.dev/schema/v2",
   "identity": {
-    "mvs": "2.0.0.1-cli",
+    "mvs": "2.1.1.1-cli",
     "arch": 2,
-    "feat": 0,
-    "prot": 0,
+    "feat": 1,
+    "prot": 1,
     "fix": 1,
     "cont": "cli"
   },
   "compatibility": {
     "host_range": {
       "min_prot": 0,
-      "max_prot": 0
+      "max_prot": 1
     },
     "extension_range": {
       "min_prot": 0,
-      "max_prot": 0
+      "max_prot": 1
     },
     "legacy_shims": []
   },
@@ -53,9 +53,17 @@
       "rust:struct *Args"
     ]
   },
+  "release": {
+    "version_files": [
+      {
+        "path": "Cargo.toml",
+        "kind": "cargo_toml"
+      }
+    ]
+  },
   "evidence": {
-    "feature_hash": "c53a6b10c77874b381e48b5aed96e3ffe21ee8b26017650221ef9e2dc30326bc",
-    "protocol_hash": "98428dc06b246a69efa1f0acf5dc6fb40fd9eb7455bb93acf71ab96e8f419c60",
+    "feature_hash": "89016f67b6721e081c82194bc7743af4054e98cb7abc6d082667417077dd1f37",
+    "protocol_hash": "d2ba7e651749dc7d5c162600c6b04efe2dcd0862fb0cab7f5f3289ca6474b377",
     "public_api_hash": "6a86f0b108e171c5e4bf8275bed49230b4cec90d0f16270e6eedabeaa6fa11f3",
     "feature_inventory": [
       "constraint_suggestion",
@@ -69,7 +77,8 @@
       "manifest_linting",
       "manifest_schema_output",
       "manifest_self_validation",
-      "manifest_watch"
+      "manifest_watch",
+      "version_file_sync"
     ],
     "protocol_inventory": [
       "cli_check_manifest_command",
@@ -81,6 +90,7 @@
       "cli_report_command",
       "cli_schema_command",
       "cli_self_update_command",
+      "cli_sync_command",
       "cli_validate_all_command",
       "cli_validate_command",
       "cli_watch_command"
@@ -291,6 +301,19 @@
         "Fix incremented due to explicit --fix (bug fix / minor release)."
       ],
       "changed_at_unix": 1785373868
+    },
+    {
+      "mvs": "2.1.1.1-cli",
+      "arch": 2,
+      "feat": 1,
+      "prot": 1,
+      "fix": 1,
+      "cont": "cli",
+      "reasons": [
+        "Feature incremented due to @mvs-feature set drift (example source: src/commands/constraint.rs).",
+        "Protocol incremented due to @mvs-protocol surface drift (example source: src/commands/check_manifest.rs)."
+      ],
+      "changed_at_unix": 1789576202
     }
   ]
 }

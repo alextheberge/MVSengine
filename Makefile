@@ -51,7 +51,7 @@ DOGFOOD_REQUIRE_CANONICAL ?= false
 HOST_TARGET := $(shell rustc -vV 2>/dev/null | awk '/host:/ {print $$2}')
 CARGO_TARGET_FLAG := $(if $(strip $(TARGET)),--target $(TARGET),)
 
-.PHONY: help print-config bootstrap fmt fmt-check check clippy test test-unit test-integration build build-release docs clean ci ci-bash generate generate-dry lint-manifest validate fixture-smoke release-local release-host release-target release-matrix-local release-merge-checksums release-sign-checksums release-verify release-github release-rc install install-hooks run-precommit dogfood-check dogfood-sync-version watch doctor doctor-tools
+.PHONY: help print-config bootstrap fmt fmt-check check clippy test test-unit test-integration build build-release docs clean ci ci-bash generate generate-dry lint-manifest validate fixture-smoke release-local release-host release-target release-matrix-local release-merge-checksums release-sign-checksums release-verify release-github release-rc install install-hooks run-precommit dogfood-check dogfood-sync-version sync sync-check watch doctor doctor-tools
 
 help: ## Show all available targets.
 	@awk 'BEGIN {FS = ":.*##"; printf "\nMVS Engine Make Targets\n\n"} /^[a-zA-Z0-9_.-]+:.*##/ { printf "  %-26s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -232,9 +232,19 @@ dogfood-check: ## Ensure Cargo version matches mvs.json numeric version (and opt
 	DOGFOOD_REQUIRE_CANONICAL="$(DOGFOOD_REQUIRE_CANONICAL)" \
 	scripts/release/check_dogfood.sh
 
-dogfood-sync-version: ## Sync Cargo.toml version from mvs.json identity (ARCH.FEAT.PROT-CONT -> ARCH.FEAT.PROT).
-	@CARGO_VERSION_SUFFIX="$(CARGO_VERSION_SUFFIX)" scripts/release/sync_cargo_version.sh
+dogfood-sync-version: ## Sync declared release.version_files (Cargo.toml by default) from mvs.json's SemVer projection.
+	@args=(sync --root "$(ROOT)" --manifest "$(MANIFEST)" --save-detected); \
+	if [[ -n "$(CARGO_VERSION_SUFFIX)" ]]; then args+=(--suffix "$(CARGO_VERSION_SUFFIX)"); fi; \
+	$(CARGO) run -- "$${args[@]}"
 	@$(CARGO) check -q
+
+sync: ## Write declared/auto-detected version files from mvs.json's SemVer projection.
+	@args=(sync --root "$(ROOT)" --manifest "$(MANIFEST)"); \
+	if [[ -n "$(CARGO_VERSION_SUFFIX)" ]]; then args+=(--suffix "$(CARGO_VERSION_SUFFIX)"); fi; \
+	$(CARGO) run -- "$${args[@]}"
+
+sync-check: ## Verify declared/auto-detected version files match mvs.json without writing.
+	@$(CARGO) run -- sync --root "$(ROOT)" --manifest "$(MANIFEST)" --check
 
 ci: fmt-check check clippy test fixture-smoke lint-manifest dogfood-check ## Full local/CI quality gate.
 	@echo "CI checks passed."

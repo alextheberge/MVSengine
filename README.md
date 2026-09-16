@@ -101,6 +101,33 @@ For schedulers such as `cron`, `launchd`, or `systemd`, use one-shot mode:
 mvs-manager watch --root . --manifest mvs.json --once --remediate
 ```
 
+## Keep Package Versions in Sync
+
+`mvs-manager` derives the registry-facing SemVer projection (`ARCH.FEAT.FIX`) from `mvs.json`, but package managers each read that version from their own file. `sync` keeps those files in lock-step without hand-editing them:
+
+```bash
+# Auto-detects Cargo.toml, package.json, pyproject.toml, pom.xml, and other
+# well-known version files when release.version_files is empty.
+mvs-manager sync --root . --manifest mvs.json --check   # CI gate: fails on drift
+mvs-manager sync --root . --manifest mvs.json            # writes the projection in place
+mvs-manager sync --root . --manifest mvs.json --save-detected  # persist what was auto-detected
+```
+
+Only the version span inside each file is touched; every other byte of formatting is preserved. Declare files explicitly instead of relying on auto-detection by adding a `release.version_files` array to `mvs.json`:
+
+```json
+{
+  "release": {
+    "version_files": [
+      { "path": "Cargo.toml", "kind": "cargo_toml" },
+      { "path": "packages/mvs-manager/package.json", "kind": "npm_package_json" }
+    ]
+  }
+}
+```
+
+Supported `kind` values: `cargo_toml`, `npm_package_json`, `pyproject_pep621`, `pyproject_poetry`, `composer_json`, `pubspec_yaml`, `gradle_properties`, `build_gradle`, `pom_xml`, `csproj`, `gemspec_literal`, `ruby_version_constant`, `lua_rockspec`, `plain_version_file`. An optional `projection` of `full` writes the complete `identity.mvs` string instead of the default `semver` projection.
+
 ## Enforce MVS on Commit
 ```bash
 make install-hooks
@@ -164,6 +191,9 @@ mvs-manager validate --host-manifest host.json --extension-manifest extension.js
 mvs-manager validate --host-manifest host.json --extension-manifest extension.json --host-model-capabilities tool_calling,reasoning-v1
 mvs-manager report --base-manifest old-mvs.json --target-manifest new-mvs.json
 mvs-manager report --base-manifest old-mvs.json --target-manifest new-mvs.json --format json
+mvs-manager sync --root . --manifest mvs.json --check
+mvs-manager sync --root . --manifest mvs.json --save-detected
+mvs-manager sync --root . --manifest mvs.json --dry-run --format json
 mvs-manager self-update --check
 mvs-manager self-update
 ```
@@ -475,6 +505,8 @@ Example `report --format json` shape:
 - `30`: `validate` found incompatibility
 - `40`: manifest read/parse/write/validation failure
 - `70`: output rendering failure
+- `80`: `sync --check` found version files out of sync with the manifest projection
+- `81`: `sync` failed to read or write a version file
 
 This means CI can treat `20` as “manifest must be regenerated” and `30` as “host/extension contract is incompatible” without scraping human text.
 

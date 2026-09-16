@@ -163,6 +163,20 @@ mvs-manager report --base-manifest old-mvs.json --target-manifest new-mvs.json -
 
 This is different from `lint`: `lint` compares code against the current manifest, while `report` compares one manifest against another manifest without crawling source. `report` intentionally stays manifest-only in `1.x`, so scan-path and boundary-debug reasoning lives on the crawl-based commands instead.
 
+## 5) Sync package version files
+
+`sync` writes the SemVer projection (`identity.arch.identity.feat.identity.fix`, or the full MVS identity string with `"projection": "full"`) into every file declared in `mvs.json`'s `release.version_files`. When that list is empty, it auto-detects well-known files at the project root (`Cargo.toml`, `package.json`, `pyproject.toml`, `composer.json`, `pubspec.yaml`, `gradle.properties`, `build.gradle(.kts)`, `pom.xml`, `*.csproj`, `*.gemspec`, `*.rockspec`, `VERSION`) instead of requiring every project to declare it up front:
+
+```bash
+mvs-manager sync --root . --manifest mvs.json --check        # CI gate: nonzero on drift, writes nothing
+mvs-manager sync --root . --manifest mvs.json --dry-run       # preview what would change
+mvs-manager sync --root . --manifest mvs.json                 # write the projection into declared/detected files
+mvs-manager sync --root . --manifest mvs.json --save-detected # persist auto-detected files into release.version_files
+mvs-manager sync --root . --manifest mvs.json --suffix rc1    # append a prerelease suffix, e.g. 2.1.0-rc1
+```
+
+Only the version's byte span is rewritten; surrounding formatting, key order, and comments are left untouched. `mvs-manager sync --format json` reports a per-file `status` of `in_sync`, `updated`, `would_update`, `drift`, or `error`.
+
 ## Makefile shortcuts
 
 ```bash
@@ -170,6 +184,8 @@ make install-hooks
 make generate
 make lint-manifest
 make validate
+make sync
+make sync-check
 make ci
 make build-release
 ```
@@ -318,6 +334,8 @@ See [docs/INSTALL_AND_CI.md](INSTALL_AND_CI.md) for GitHub Actions examples, pin
 - `30`: `validate` incompatibility
 - `40`: manifest read/parse/write/validation failure
 - `70`: output rendering failure
+- `80`: `sync --check` found version files out of sync with the manifest projection
+- `81`: `sync` failed to read or write a version file
 
 ## Troubleshooting
 
