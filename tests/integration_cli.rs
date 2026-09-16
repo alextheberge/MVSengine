@@ -3225,3 +3225,243 @@ fn convert_version_unparseable_input_fails_with_scheme_exit_code() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("could not auto-detect"));
 }
+
+// ── migrate ───────────────────────────────────────────────────────────────
+
+fn run_git_in(root: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .output()
+        .unwrap_or_else(|error| panic!("failed to run git {args:?}: {error}"));
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A minimal legacy Rust project: `Cargo.toml` at `1.2.3`, tagged `v1.2.3`.
+fn init_migrate_fixture(root: &Path) {
+    run_git_in(root, &["init", "-q", "-b", "main"]);
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"1.2.3\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src").join("lib.rs"), "pub fn hello() {}\n").unwrap();
+    run_git_in(root, &["add", "-A"]);
+    run_git_in(root, &["commit", "-q", "-m", "v1.2.3"]);
+    run_git_in(root, &["tag", "v1.2.3"]);
+}
+
+fn skip_without_git() -> bool {
+    Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| !o.status.success())
+        .unwrap_or(true)
+}
+
+#[test]
+fn migrate_detect_reports_git_tags_and_version_sources() {
+    if skip_without_git() {
+        eprintln!("skipping: git not available");
+        return;
+    }
+    let temp = TempWorkspace::new();
+    init_migrate_fixture(temp.path());
+
+    let output = binary_cmd()
+        .args(["migrate", "detect", "--root", ".", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("migrate detect should run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value =
+        serde_json::from_slice(&output.stdout).expect("migrate detect json should parse");
+    assert_eq!(payload["is_git_repo"], true);
+    assert_eq!(payload["tag_count"], 1);
+    assert_eq!(payload["latest_tag"], "v1.2.3");
+    assert_eq!(payload["detected_scheme"], "semver");
+    assert_eq!(payload["version_sources"][0]["path"], "Cargo.toml");
+    assert_eq!(payload["version_sources"][0]["current_version"], "1.2.3");
+    assert_eq!(payload["version_sources_agree"], true);
+}
+
+#[test]
+fn migrate_plan_previews_without_writing_any_file() {
+    if skip_without_git() {
+        eprintln!("skipping: git not available");
+        return;
+    }
+    let temp = TempWorkspace::new();
+    init_migrate_fixture(temp.path());
+
+    let output = binary_cmd()
+        .args(["migrate", "plan", "--root", ".", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("migrate plan should run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value =
+        serde_json::from_slice(&output.stdout).expect("migrate plan json should parse");
+    assert_eq!(payload["source_version"], "v1.2.3");
+    assert_eq!(payload["source_label"], "latest_git_tag");
+    assert_eq!(payload["scheme"], "semver");
+    assert_eq!(payload["axes"]["arch"], 1);
+    assert_eq!(payload["axes"]["feat"], 2);
+    assert_eq!(payload["axes"]["fix"], 3);
+    assert_eq!(payload["identity"], "1.2.0.3-cli");
+    assert_eq!(payload["invariant_ok"], true);
+
+    assert!(!temp.path().join("mvs.json").exists());
+}
+
+#[test]
+fn migrate_apply_then_rollback_round_trips_cleanly() {
+    if skip_without_git() {
+        eprintln!("skipping: git not available");
+        return;
+    }
+    let temp = TempWorkspace::new();
+    init_migrate_fixture(temp.path());
+    let original_cargo_toml = fs::read_to_string(temp.path().join("Cargo.toml")).unwrap();
+
+    let apply_output = binary_cmd()
+        .args(["migrate", "apply", "--root", ".", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("migrate apply should run");
+    assert!(
+        apply_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&apply_output.stderr)
+    );
+    let apply_payload: Value =
+        serde_json::from_slice(&apply_output.stdout).expect("migrate apply json should parse");
+    assert_eq!(apply_payload["identity"], "1.2.0.3-cli");
+
+    let manifest_path = temp.path().join("mvs.json");
+    assert!(manifest_path.exists());
+    let manifest: Value =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    assert_eq!(manifest["identity"]["mvs"], "1.2.0.3-cli");
+    assert_eq!(
+        manifest["release"]["version_files"][0]["path"],
+        "Cargo.toml"
+    );
+    assert!(temp
+        .path()
+        .join(".mvs")
+        .join("migration-snapshot.json")
+        .exists());
+    // Cargo.toml was already at the projected SemVer, so apply shouldn't rewrite it.
+    assert_eq!(
+        fs::read_to_string(temp.path().join("Cargo.toml")).unwrap(),
+        original_cargo_toml
+    );
+
+    // Re-running apply without --force must fail rather than clobber the manifest.
+    let second_apply = binary_cmd()
+        .args(["migrate", "apply", "--root", ".", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("second migrate apply should run");
+    assert!(!second_apply.status.success());
+    assert_eq!(second_apply.status.code(), Some(83));
+
+    let rollback_output = binary_cmd()
+        .args(["migrate", "rollback", "--root", ".", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("migrate rollback should run");
+    assert!(
+        rollback_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&rollback_output.stderr)
+    );
+
+    assert!(!manifest_path.exists());
+    assert!(!temp
+        .path()
+        .join(".mvs")
+        .join("migration-snapshot.json")
+        .exists());
+    assert_eq!(
+        fs::read_to_string(temp.path().join("Cargo.toml")).unwrap(),
+        original_cargo_toml
+    );
+
+    // A second rollback has nothing left to restore.
+    let second_rollback = binary_cmd()
+        .args(["migrate", "rollback", "--root", ".", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("second migrate rollback should run");
+    assert!(!second_rollback.status.success());
+    assert_eq!(second_rollback.status.code(), Some(83));
+}
+
+#[test]
+fn migrate_backfill_reports_transitions_between_tags() {
+    if skip_without_git() {
+        eprintln!("skipping: git not available");
+        return;
+    }
+    let temp = TempWorkspace::new();
+    let root = temp.path();
+    run_git_in(root, &["init", "-q", "-b", "main"]);
+
+    fs::write(
+        root.join("lib.rs"),
+        "/// @mvs-protocol(\"core\")\npub fn core_fn() {}\n",
+    )
+    .unwrap();
+    run_git_in(root, &["add", "-A"]);
+    run_git_in(root, &["commit", "-q", "-m", "v1.0.0"]);
+    run_git_in(root, &["tag", "v1.0.0"]);
+
+    fs::write(root.join("lib.rs"), "pub fn core_fn() {}\n").unwrap();
+    run_git_in(root, &["add", "-A"]);
+    run_git_in(root, &["commit", "-q", "-m", "v1.0.1"]);
+    run_git_in(root, &["tag", "v1.0.1"]);
+
+    let output = binary_cmd()
+        .args(["migrate", "backfill", "--root", ".", "--format", "json"])
+        .current_dir(root)
+        .output()
+        .expect("migrate backfill should run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value =
+        serde_json::from_slice(&output.stdout).expect("migrate backfill json should parse");
+    assert_eq!(payload["resolved_scheme"], "semver");
+    assert_eq!(payload["violation_count"], 1);
+    let transition = &payload["transitions"][0];
+    assert_eq!(transition["from_tag"], "v1.0.0");
+    assert_eq!(transition["to_tag"], "v1.0.1");
+    assert_eq!(transition["bump_level"], "patch");
+    assert_eq!(transition["protocols_removed"], 1);
+    assert!(transition["violation"].is_string());
+}

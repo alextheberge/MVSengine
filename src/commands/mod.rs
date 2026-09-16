@@ -7,6 +7,7 @@ pub mod doctor;
 pub mod generator;
 pub mod init;
 pub mod linter;
+pub mod migrate;
 mod output;
 pub mod reader;
 pub mod report;

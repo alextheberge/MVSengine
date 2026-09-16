@@ -104,24 +104,35 @@ pub fn parse(
         return parse_custom(raw, pattern);
     }
 
+    // A leading `v`/`V` (`v1.2.3`) is stripped for matching under every
+    // scheme, not just Go modules — it's the common git tag convention
+    // everywhere — but the original string is restored into `.raw` below.
+    let normalized = strip_leading_v(raw.trim());
+
     let parsed = match scheme {
-        VersionScheme::Semver | VersionScheme::ZeroVer => semver_shaped(raw, scheme),
-        VersionScheme::Pep440 => parse_pep440(raw),
-        VersionScheme::MavenGradle => parse_maven_gradle(raw),
-        VersionScheme::DotNet4 => parse_dotnet4(raw),
-        VersionScheme::GoModules => parse_go_modules(raw),
-        VersionScheme::CalVer => parse_calver(raw),
-        VersionScheme::IntegerBuild => parse_integer_build(raw),
-        VersionScheme::DebianRpm => parse_debian_rpm(raw),
+        VersionScheme::Semver | VersionScheme::ZeroVer | VersionScheme::GoModules => {
+            semver_shaped(normalized, scheme)
+        }
+        VersionScheme::Pep440 => parse_pep440(normalized),
+        VersionScheme::MavenGradle => parse_maven_gradle(normalized),
+        VersionScheme::DotNet4 => parse_dotnet4(normalized),
+        VersionScheme::CalVer => parse_calver(normalized),
+        VersionScheme::IntegerBuild => parse_integer_build(normalized),
+        VersionScheme::DebianRpm => parse_debian_rpm(normalized),
         VersionScheme::Custom => unreachable!("handled above"),
     };
 
-    parsed.ok_or_else(|| {
-        anyhow!(
-            "`{raw}` does not match the `{}` scheme shape",
-            scheme.as_str()
-        )
-    })
+    parsed
+        .map(|v| LegacyVersion {
+            raw: raw.to_string(),
+            ..v
+        })
+        .ok_or_else(|| {
+            anyhow!(
+                "`{raw}` does not match the `{}` scheme shape",
+                scheme.as_str()
+            )
+        })
 }
 
 /// Auto-detects a scheme and parses `raw` under it. Detection tries the most
@@ -138,43 +149,61 @@ pub fn parse_auto(raw: &str) -> Result<LegacyVersion> {
     })
 }
 
+/// Strips a leading `v`/`V` when it's immediately followed by a digit
+/// (`v1.2.3`, not `version-1.2.3`). Git tags overwhelmingly use this
+/// convention across ecosystems, not just Go modules, so auto-detection
+/// treats it as noise around every scheme, not just SemVer.
+fn strip_leading_v(s: &str) -> &str {
+    s.strip_prefix(['v', 'V'])
+        .filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+        .unwrap_or(s)
+}
+
 fn detect(raw: &str) -> Option<LegacyVersion> {
     let trimmed = raw.trim();
+    let normalized = strip_leading_v(trimmed);
+    // Every branch below matches against `normalized` (with any leading `v`
+    // removed) but the returned `LegacyVersion.raw` is restored to the
+    // caller's original string.
+    let restore_raw = |v: LegacyVersion| LegacyVersion {
+        raw: raw.to_string(),
+        ..v
+    };
 
-    if trimmed.contains(':') {
-        if let Some(v) = parse_debian_rpm(trimmed) {
-            return Some(v);
+    if normalized.contains(':') {
+        if let Some(v) = parse_debian_rpm(normalized) {
+            return Some(restore_raw(v));
         }
     }
-    if let Some(v) = parse_dotnet4(trimmed) {
-        return Some(v);
+    if let Some(v) = parse_dotnet4(normalized) {
+        return Some(restore_raw(v));
     }
-    if is_pep440_distinctive(trimmed) {
-        if let Some(v) = parse_pep440(trimmed) {
-            return Some(v);
+    if is_pep440_distinctive(normalized) {
+        if let Some(v) = parse_pep440(normalized) {
+            return Some(restore_raw(v));
         }
     }
-    if let Some(v) = parse_calver(trimmed) {
+    if let Some(v) = parse_calver(normalized) {
         let year = v.components[0].1;
         let month = v.components[1].1;
-        let has_patch = trimmed.matches('.').count() >= 2;
+        let has_patch = normalized.matches('.').count() >= 2;
         if is_plausible_calver_autodetect(year, month, has_patch) {
-            return Some(v);
+            return Some(restore_raw(v));
         }
     }
-    if let Some(v) = detect_maven_gradle_distinctive(trimmed) {
-        return Some(v);
+    if let Some(v) = detect_maven_gradle_distinctive(normalized) {
+        return Some(restore_raw(v));
     }
-    if let Some(v) = parse_integer_build(trimmed) {
-        return Some(v);
+    if let Some(v) = parse_integer_build(normalized) {
+        return Some(restore_raw(v));
     }
-    if let Some(v) = semver_shaped(trimmed, VersionScheme::Semver) {
+    if let Some(v) = semver_shaped(normalized, VersionScheme::Semver) {
         let scheme = if v.components.first().map(|(_, value)| *value) == Some(0) {
             VersionScheme::ZeroVer
         } else {
             VersionScheme::Semver
         };
-        return Some(LegacyVersion { scheme, ..v });
+        return Some(restore_raw(LegacyVersion { scheme, ..v }));
     }
     None
 }
@@ -197,15 +226,6 @@ fn semver_shaped(raw: &str, scheme: VersionScheme) -> Option<LegacyVersion> {
         prerelease: caps.get(4).map(|m| m.as_str().to_string()),
         build_metadata: caps.get(5).map(|m| m.as_str().to_string()),
         revision: None,
-    })
-}
-
-fn parse_go_modules(raw: &str) -> Option<LegacyVersion> {
-    let stripped = raw.trim().trim_start_matches(['v', 'V']);
-    let inner = semver_shaped(stripped, VersionScheme::GoModules)?;
-    Some(LegacyVersion {
-        raw: raw.to_string(),
-        ..inner
     })
 }
 
@@ -827,6 +847,22 @@ mod tests {
         let axes = resolve_axes(&v, &default_mapping_for(v.scheme));
         assert_eq!((axes.arch, axes.feat, axes.fix), (3, 1, 0));
         assert!(advisories(&v, &default_mapping_for(v.scheme))[0].contains("/vN"));
+    }
+
+    #[test]
+    fn auto_detect_strips_a_leading_v_across_schemes() {
+        // `v`-prefixed tags are the common case for git tags in general, not
+        // just Go modules, so auto-detection should see through it for every
+        // scheme while preserving the original string in `.raw`.
+        let semver = parse_auto("v1.4.2").unwrap();
+        assert_eq!(semver.scheme, VersionScheme::Semver);
+        assert_eq!(semver.raw, "v1.4.2");
+        let axes = resolve_axes(&semver, &default_mapping_for(semver.scheme));
+        assert_eq!((axes.arch, axes.feat, axes.fix), (1, 4, 2));
+
+        let zerover = parse_auto("V0.3.1").unwrap();
+        assert_eq!(zerover.scheme, VersionScheme::ZeroVer);
+        assert_eq!(zerover.raw, "V0.3.1");
     }
 
     #[test]

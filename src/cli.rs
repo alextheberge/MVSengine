@@ -22,6 +22,7 @@ pub const EXIT_OUTPUT_ERROR: i32 = 70;
 pub const EXIT_SYNC_DRIFT: i32 = 80;
 pub const EXIT_SYNC_ERROR: i32 = 81;
 pub const EXIT_SCHEME_ERROR: i32 = 82;
+pub const EXIT_MIGRATE_ERROR: i32 = 83;
 
 #[derive(Debug, Parser)]
 #[command(name = "mvs-manager", version, about = "MVS Engine manager CLI")]
@@ -43,6 +44,7 @@ enum Command {
     Report(ReportArgs),
     Sync(SyncArgs),
     ConvertVersion(ConvertVersionArgs),
+    Migrate(MigrateArgs),
     Schema(SchemaArgs),
     SelfUpdate(SelfUpdateArgs),
     Doctor(DoctorArgs),
@@ -474,6 +476,142 @@ pub struct ConvertVersionArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct MigrateArgs {
+    #[command(subcommand)]
+    pub action: MigrateAction,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum MigrateAction {
+    /// Inspect version sources, git tag history, and release tooling.
+    Detect(MigrateDetectArgs),
+    /// Preview the mvs.json a migration would produce, without writing it.
+    Plan(MigratePlanArgs),
+    /// Replay git tag history through the crawler to find SemVer-honesty violations.
+    Backfill(MigrateBackfillArgs),
+    /// Write the migrated mvs.json and sync version files; reversible via `rollback`.
+    Apply(MigrateApplyArgs),
+    /// Undo the last `migrate apply` using its saved snapshot.
+    Rollback(MigrateRollbackArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct MigrateDetectArgs {
+    #[arg(long, default_value = ".")]
+    pub root: PathBuf,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+/// Shared conversion inputs for `migrate plan` and `migrate apply`.
+#[derive(Debug, Clone, Args)]
+pub struct MigrationConversionArgs {
+    #[arg(long, default_value = ".")]
+    pub root: PathBuf,
+
+    #[arg(long, default_value = "mvs.json")]
+    pub manifest: PathBuf,
+
+    /// Deployment context label for the proposed identity.
+    #[arg(long, default_value = "cli")]
+    pub context: String,
+
+    /// Force a specific scheme instead of auto-detecting one from the
+    /// latest git tag / current version file.
+    #[arg(long, value_name = "SCHEME")]
+    pub scheme: Option<String>,
+
+    #[arg(long, value_name = "PATTERN")]
+    pub scheme_regex: Option<String>,
+
+    /// Replace the scheme's default component->axis mapping.
+    #[arg(long, value_name = "SPEC")]
+    pub map: Option<String>,
+
+    /// Convert from this version instead of the latest git tag or a
+    /// detected version file.
+    #[arg(long, value_name = "VERSION")]
+    pub from_version: Option<String>,
+
+    /// Scan-policy preset: library, cli, plugin, plugin-host, sdk.
+    #[arg(long, value_name = "PRESET")]
+    pub preset: Option<String>,
+
+    #[arg(long, value_name = "N")]
+    pub prot: Option<u64>,
+
+    /// Allow a proposed SemVer projection lower than the latest published
+    /// tag (normally rejected to protect registry continuity).
+    #[arg(long, default_value_t = false)]
+    pub allow_non_monotonic: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct MigratePlanArgs {
+    #[command(flatten)]
+    pub common: MigrationConversionArgs,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct MigrateApplyArgs {
+    #[command(flatten)]
+    pub common: MigrationConversionArgs,
+
+    /// Overwrite an existing manifest at --manifest.
+    #[arg(long, default_value_t = false)]
+    pub force: bool,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct MigrateBackfillArgs {
+    #[arg(long, default_value = ".")]
+    pub root: PathBuf,
+
+    /// Manifest to read an existing scan_policy from, if present.
+    #[arg(long, default_value = "mvs.json")]
+    pub manifest: PathBuf,
+
+    /// Explicit tags to replay, in order. Defaults to the most recent
+    /// --limit tags.
+    #[arg(long = "tags", value_delimiter = ',')]
+    pub tags: Vec<String>,
+
+    #[arg(long, default_value_t = 20)]
+    pub limit: usize,
+
+    #[arg(long, value_name = "SCHEME")]
+    pub scheme: Option<String>,
+
+    #[arg(long, value_name = "PATTERN")]
+    pub scheme_regex: Option<String>,
+
+    #[arg(long, value_name = "SPEC")]
+    pub map: Option<String>,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct MigrateRollbackArgs {
+    #[arg(long, default_value = ".")]
+    pub root: PathBuf,
+
+    #[arg(long, default_value = "mvs.json")]
+    pub manifest: PathBuf,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct CheckManifestArgs {
     /// Path to the manifest file to validate.
     #[arg(long, default_value = "mvs.json")]
@@ -556,6 +694,7 @@ pub fn run() -> i32 {
         Command::ConvertVersion(args) => {
             run_with_update_notification(commands::convert_version::run(args))
         }
+        Command::Migrate(args) => run_with_update_notification(commands::migrate::run(args)),
         Command::Schema(args) => commands::schema::run(args),
         Command::SelfUpdate(args) => commands::self_update::run(args),
         Command::Doctor(args) => commands::doctor::run(args),

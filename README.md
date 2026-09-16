@@ -143,7 +143,25 @@ mvs-manager convert-version --version "R7-F12-P3" --scheme custom \
   --scheme-regex '(?P<arch>\d+)-F(?P<feat>\d+)-P(?P<prot>\d+)'                    # fully custom mapping
 ```
 
-The default `component -> axis` mapping for each scheme, and every axis not covered by it, is documented in [docs/USAGE.md](docs/USAGE.md). `--map` replaces the mapping entirely; advisories in the output call out anything a scheme's numbering can't fully represent (a dropped `.NET` revision, a folded PEP 440/Debian epoch, CalVer's rebase choice) so nothing is silently discarded. This command only prints a conversion — it doesn't write `mvs.json`; wiring it into an end-to-end migration workflow is tracked as future work.
+The default `component -> axis` mapping for each scheme, and every axis not covered by it, is documented in [docs/USAGE.md](docs/USAGE.md). `--map` replaces the mapping entirely; advisories in the output call out anything a scheme's numbering can't fully represent (a dropped `.NET` revision, a folded PEP 440/Debian epoch, CalVer's rebase choice) so nothing is silently discarded. `convert-version` only prints a conversion for one version string; `migrate` (below) turns that into a full, reversible migration of a project.
+
+## Migrating a Whole Project
+
+`migrate` takes a project from any versioning scheme to MVS in one flow, using `convert-version`'s scheme translators under the hood:
+
+```bash
+mvs-manager migrate detect --root .                 # what version sources, git tags, and release tooling exist
+mvs-manager migrate plan --root . --context cli      # preview the proposed mvs.json; writes nothing
+mvs-manager migrate backfill --root . --limit 30     # replay git tag history for a SemVer-honesty report
+mvs-manager migrate apply --root . --context cli     # write mvs.json, sync version files, save a snapshot
+mvs-manager migrate rollback --root .                # undo the last apply from its snapshot
+```
+
+- **`detect`** lists every recognized version file (flagging disagreement between them), the git tag history, the auto-detected scheme, and any release tooling it recognizes (`.bumpversion.cfg` and `tbump.toml` have their declared file lists imported directly into the proposed `release.version_files`; semantic-release, release-please, changesets, GitVersion, Nerdbank.GitVersioning, cargo-release, goreleaser, and lerna are detected by config presence).
+- **`plan`** converts the latest git tag (or `--from-version`, or a detected version file, in that order) into a proposed identity, scan policy, and `release.version_files`, plus a full legacy-tag -> MVS-identity preview table. It refuses to propose a SemVer projection lower than the latest published tag unless you pass `--allow-non-monotonic`.
+- **`backfill`** checks out each of the last `--limit` git tags into a disposable worktree, crawls it, and diffs consecutive snapshots to find **SemVer-honesty violations**: a patch release that changed the public API/protocol surface (patches should carry zero surface change), or a minor release that removed surface (additions are fine in a minor under conventional SemVer; removals aren't). This is the strongest case for switching — it shows a team its own history of quietly-breaking releases.
+- **`apply`** runs the same conversion as `plan` and writes it: `mvs.json`, plus `sync`-ing every declared version file, after saving everything it's about to touch to `.mvs/migration-snapshot.json`. Refuses to overwrite an existing manifest without `--force`.
+- **`rollback`** restores exactly what `apply` overwrote (deleting `mvs.json` if it didn't exist before) and removes the snapshot, so a rollback runs cleanly exactly once per apply.
 
 ## Enforce MVS on Commit
 ```bash
@@ -214,6 +232,11 @@ mvs-manager sync --root . --manifest mvs.json --dry-run --format json
 mvs-manager convert-version --version 1.4.2
 mvs-manager convert-version --version 24.04 --map year=arch,month=feat,patch=fix
 mvs-manager convert-version --version "2:1.4.2-3ubuntu1" --scheme debian-rpm
+mvs-manager migrate detect --root .
+mvs-manager migrate plan --root . --context cli
+mvs-manager migrate backfill --root . --limit 30
+mvs-manager migrate apply --root . --context cli
+mvs-manager migrate rollback --root .
 mvs-manager self-update --check
 mvs-manager self-update
 ```
@@ -528,6 +551,7 @@ Example `report --format json` shape:
 - `80`: `sync --check` found version files out of sync with the manifest projection
 - `81`: `sync` failed to read or write a version file
 - `82`: `convert-version` could not parse the input, resolve `--scheme-regex`, or apply `--map`
+- `83`: a `migrate` subcommand failed (detect/plan/backfill/apply/rollback)
 
 This means CI can treat `20` as “manifest must be regenerated” and `30` as “host/extension contract is incompatible” without scraping human text.
 

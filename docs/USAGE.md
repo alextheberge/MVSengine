@@ -207,6 +207,65 @@ Supported `--scheme` values, auto-detected when omitted, with their default `com
 
 `--map <spec>` (e.g. `--map major=arch,minor=feat,patch=fix`) replaces the default mapping entirely. `--prot <N>` overrides the resolved PROT axis afterward, since no legacy scheme encodes API/protocol compatibility on its own. This command only prints the result; it does not write `mvs.json`.
 
+## 7) Migrate a project end to end
+
+`migrate` has five subcommands, all under `mvs-manager migrate <subcommand>`:
+
+```bash
+mvs-manager migrate detect --root .
+mvs-manager migrate plan --root . --context cli --format json
+mvs-manager migrate backfill --root . --limit 30 --format json
+mvs-manager migrate apply --root . --context cli
+mvs-manager migrate rollback --root .
+```
+
+### `detect`
+
+Read-only. Reports:
+- every recognized version file (`release.version_files` auto-detection from `sync`) and whether they agree with each other
+- git availability, whether `--root` is a repo, tag count, and the latest tag
+- the scheme auto-detected from the latest tag (or the first version file if there are no tags)
+- release tooling it recognizes by config-file presence: semantic-release, release-please, changesets, GitVersion, Nerdbank.GitVersioning, cargo-release, goreleaser, lerna — plus real file-list imports from `.bumpversion.cfg` and `tbump.toml`
+- detected project languages (reusing the same detector `init` uses to build a scan policy)
+
+### `plan`
+
+Read-only; never writes `mvs.json`. Converts a source version into a proposed manifest:
+
+- **Source selection**, in order: `--from-version`, else the latest git tag, else the first detected version file. Fails clearly if none is available.
+- **Scheme/mapping**: same `--scheme`/`--scheme-regex`/`--map` as `convert-version` (see section 6). `--prot <N>` sets PROT explicitly.
+- **Monotonic invariant**: the proposed SemVer projection (`arch.feat.fix`) must be `>=` the latest published tag's projection under the same scheme/mapping, so a migration can never make a registry regress. Violating this is a hard error unless `--allow-non-monotonic` is passed.
+- **Scan policy**: built the same way `init` builds one (`--preset library|cli|plugin|plugin-host|sdk` supported).
+- **`release.version_files`**: every auto-detected version file, plus any file `.bumpversion.cfg`/`tbump.toml` named that maps to a known `VersionFileKind` (see section 5). Files it can't confidently classify are listed separately as `unrecognized_imported_version_files` rather than guessed at.
+- **Tag preview**: every git tag converted under the same scheme/mapping, so you can see the whole history projected into MVS before committing to it.
+
+### `backfill`
+
+Requires `git`. Checks out each of the most recent `--limit` tags (or an explicit `--tags a,b,c`) into a disposable `git worktree`, crawls it with the same crawler `generate`/`lint` use, and diffs consecutive snapshots via `Evidence::semantic_diff`. For each tag-to-tag transition it reports:
+
+- `bump_level`: `major`/`minor`/`patch`/`none`/`unknown`, classified from the two tags' resolved MVS axes
+- `features_added`/`features_removed`, `protocols_added`/`protocols_removed`, `public_api_added`/`public_api_removed`
+- a `violation` when either:
+  - the transition was **patch**-level and the protocol/public-API surface changed at all (patch releases should carry zero surface change), or
+  - the transition was **minor**-level and the surface had **removals** (additions are fine in a minor under conventional SemVer; removals are a breaking change regardless of what the version number says)
+
+The scan policy comes from the existing `mvs.json`'s `scan_policy` if one is present at `--manifest`, otherwise one is built the same way `init`/`plan` build one. That policy (in particular `public_api_roots`) is evaluated against every historical tag, which is a known simplification if the project's structure changed significantly over time.
+
+### `apply`
+
+Runs the same conversion as `plan` and persists it:
+
+1. Refuses to run if `--manifest` already exists, unless `--force`.
+2. Saves everything it's about to touch — the current `mvs.json` bytes (if any) and every `release.version_files` entry's current contents — to `.mvs/migration-snapshot.json`.
+3. Writes the proposed `mvs.json`.
+4. Calls the same `sync` write path for every declared version file.
+
+If step 4 fails partway through, the manifest and snapshot are already on disk; run `migrate rollback` to undo everything cleanly.
+
+### `rollback`
+
+Reads `.mvs/migration-snapshot.json`, restores `mvs.json` (or deletes it, if it didn't exist before `apply`) and every backed-up version file to their exact prior contents, then deletes the snapshot. A second `rollback` with nothing left to restore fails clearly rather than silently doing nothing.
+
 ## Makefile shortcuts
 
 ```bash
@@ -367,6 +426,7 @@ See [docs/INSTALL_AND_CI.md](INSTALL_AND_CI.md) for GitHub Actions examples, pin
 - `80`: `sync --check` found version files out of sync with the manifest projection
 - `81`: `sync` failed to read or write a version file
 - `82`: `convert-version` could not parse the input, resolve `--scheme-regex`, or apply `--map`
+- `83`: a `migrate` subcommand failed (detect/plan/backfill/apply/rollback)
 
 ## Troubleshooting
 
