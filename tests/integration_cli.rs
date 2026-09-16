@@ -3117,3 +3117,111 @@ fn doctor_json_includes_version_and_compatibility_fields() {
     assert!(payload["self_update_install"].is_string());
     assert!(payload["tools"].is_object());
 }
+
+#[test]
+fn convert_version_auto_detects_semver_and_maps_default_axes() {
+    let output = binary_cmd()
+        .args([
+            "convert-version",
+            "--version",
+            "1.4.2",
+            "--context",
+            "cli",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("convert-version should run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value =
+        serde_json::from_slice(&output.stdout).expect("convert-version json should parse");
+    assert_eq!(payload["command"], "convert-version");
+    assert_eq!(payload["scheme"], "semver");
+    assert_eq!(payload["scheme_forced"], false);
+    assert_eq!(payload["mapping_source"], "default");
+    assert_eq!(payload["axes"]["arch"], 1);
+    assert_eq!(payload["axes"]["feat"], 4);
+    assert_eq!(payload["axes"]["prot"], 0);
+    assert_eq!(payload["axes"]["fix"], 2);
+    assert_eq!(payload["identity"], "1.4.0.2-cli");
+    assert_eq!(payload["semver_projection"], "1.4.2");
+}
+
+#[test]
+fn convert_version_pep440_epoch_folds_into_arch_and_prot_override_applies() {
+    let output = binary_cmd()
+        .args([
+            "convert-version",
+            "--version",
+            "1!2.3.4rc1",
+            "--prot",
+            "9",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("convert-version should run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value =
+        serde_json::from_slice(&output.stdout).expect("convert-version json should parse");
+    assert_eq!(payload["scheme"], "pep440");
+    assert_eq!(payload["epoch"], 1);
+    assert_eq!(payload["prerelease"], "rc1");
+    // major(2) + epoch(1) folded into arch, prot overridden to 9.
+    assert_eq!(payload["axes"]["arch"], 3);
+    assert_eq!(payload["axes"]["prot"], 9);
+}
+
+#[test]
+fn convert_version_custom_scheme_requires_named_regex_groups() {
+    let output = binary_cmd()
+        .args([
+            "convert-version",
+            "--version",
+            "R7-F12-P3",
+            "--scheme",
+            "custom",
+            "--scheme-regex",
+            r"R(?P<arch>\d+)-F(?P<feat>\d+)-P(?P<prot>\d+)",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("convert-version should run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value =
+        serde_json::from_slice(&output.stdout).expect("convert-version json should parse");
+    assert_eq!(payload["scheme"], "custom");
+    assert_eq!(payload["scheme_forced"], true);
+    assert_eq!(payload["axes"]["arch"], 7);
+    assert_eq!(payload["axes"]["feat"], 12);
+    assert_eq!(payload["axes"]["prot"], 3);
+}
+
+#[test]
+fn convert_version_unparseable_input_fails_with_scheme_exit_code() {
+    let output = binary_cmd()
+        .args(["convert-version", "--version", "not-a-version"])
+        .output()
+        .expect("convert-version should run");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(82));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("could not auto-detect"));
+}

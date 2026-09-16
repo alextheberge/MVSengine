@@ -21,6 +21,7 @@ pub const EXIT_UPDATE_ERROR: i32 = 60;
 pub const EXIT_OUTPUT_ERROR: i32 = 70;
 pub const EXIT_SYNC_DRIFT: i32 = 80;
 pub const EXIT_SYNC_ERROR: i32 = 81;
+pub const EXIT_SCHEME_ERROR: i32 = 82;
 
 #[derive(Debug, Parser)]
 #[command(name = "mvs-manager", version, about = "MVS Engine manager CLI")]
@@ -41,6 +42,7 @@ enum Command {
     Constraint(ConstraintArgs),
     Report(ReportArgs),
     Sync(SyncArgs),
+    ConvertVersion(ConvertVersionArgs),
     Schema(SchemaArgs),
     SelfUpdate(SelfUpdateArgs),
     Doctor(DoctorArgs),
@@ -437,6 +439,41 @@ pub struct SyncArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct ConvertVersionArgs {
+    /// The legacy version string to convert, e.g. "1.4.2", "0.3.1", "24.04".
+    #[arg(long)]
+    pub version: String,
+
+    /// Force a specific scheme instead of auto-detecting one: semver,
+    /// zerover, pep440, maven-gradle, dotnet4, go-modules, calver, integer,
+    /// debian-rpm, or custom.
+    #[arg(long, value_name = "SCHEME")]
+    pub scheme: Option<String>,
+
+    /// Regex with named capture groups (e.g. `(?P<arch>\d+)\.(?P<feat>\d+)`),
+    /// required when --scheme is "custom".
+    #[arg(long, value_name = "PATTERN")]
+    pub scheme_regex: Option<String>,
+
+    /// Replace the scheme's default component->axis mapping, e.g.
+    /// "major=arch,minor=feat,patch=fix" or "year=arch,month=feat,patch=fix".
+    #[arg(long, value_name = "SPEC")]
+    pub map: Option<String>,
+
+    /// Deployment context label used to build the full MVS identity string.
+    #[arg(long, default_value = "cli")]
+    pub context: String,
+
+    /// Override the resolved PROT axis; no legacy scheme encodes API/protocol
+    /// compatibility information on its own.
+    #[arg(long, value_name = "N")]
+    pub prot: Option<u64>,
+
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct CheckManifestArgs {
     /// Path to the manifest file to validate.
     #[arg(long, default_value = "mvs.json")]
@@ -516,6 +553,9 @@ pub fn run() -> i32 {
         Command::Constraint(args) => run_with_update_notification(commands::constraint::run(args)),
         Command::Report(args) => run_with_update_notification(commands::report::run(args)),
         Command::Sync(args) => run_with_update_notification(commands::sync::run(args)),
+        Command::ConvertVersion(args) => {
+            run_with_update_notification(commands::convert_version::run(args))
+        }
         Command::Schema(args) => commands::schema::run(args),
         Command::SelfUpdate(args) => commands::self_update::run(args),
         Command::Doctor(args) => commands::doctor::run(args),

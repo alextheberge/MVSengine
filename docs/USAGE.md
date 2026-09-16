@@ -177,6 +177,36 @@ mvs-manager sync --root . --manifest mvs.json --suffix rc1    # append a prerele
 
 Only the version's byte span is rewritten; surrounding formatting, key order, and comments are left untouched. `mvs-manager sync --format json` reports a per-file `status` of `in_sync`, `updated`, `would_update`, `drift`, or `error`.
 
+## 6) Convert a legacy version string
+
+`convert-version` parses one version string under a known scheme and maps its components onto MVS axes, without touching any file. It's the tool for previewing a migration before committing to it:
+
+```bash
+mvs-manager convert-version --version 1.4.2
+mvs-manager convert-version --version 1.4.2 --scheme semver --format json
+mvs-manager convert-version --version 0.3.1                                   # auto-detected as zerover
+mvs-manager convert-version --version 24.04                                   # auto-detected as calver
+mvs-manager convert-version --version "R7-F12-P3" --scheme custom \
+  --scheme-regex '(?P<arch>\d+)-F(?P<feat>\d+)-P(?P<prot>\d+)'
+```
+
+Supported `--scheme` values, auto-detected when omitted, with their default `component -> axis` mapping:
+
+| Scheme | Shape | Components | Default mapping |
+|---|---|---|---|
+| `semver` | `MAJOR.MINOR.PATCH[-pre][+build]`, `MAJOR >= 1` | major, minor, patch | major→arch, minor→feat, patch→fix |
+| `zerover` | Same shape, `MAJOR == 0` | major, minor, patch | same as SemVer; advisory notes minor bumps are often breaking |
+| `pep440` | `[N!]N[.N[.N]][{a\|b\|c\|rc}N][.postN][.devN]` | major, minor, patch (+ epoch) | major→arch, minor→feat, patch→fix; epoch folds additively into arch |
+| `maven-gradle` | `MAJOR.MINOR[.PATCH][-QUALIFIER]` | major, minor, patch | major→arch, minor→feat, patch→fix |
+| `dotnet4` | `A.B.C.D` | major, minor, patch, revision | major→arch, minor→feat, patch→fix; `revision` unmapped by default (advisory) |
+| `go-modules` | SemVer with an optional leading `v` | major, minor, patch | same as SemVer; advisory notes the `/vN` import-path requirement when arch >= 2 |
+| `calver` | `YYYY.MM[.patch]` or `YY.MM[.patch]` | year, month, patch | **rebase** (default): arch=1, feat=0, patch→fix; pass `--map year=arch,month=feat,patch=fix` for date-passthrough |
+| `integer` | A bare non-negative integer | build | arch=1, feat=0, build→fix |
+| `debian-rpm` | `[EPOCH:]UPSTREAM[-REVISION]` | major, minor, patch (+ epoch, revision) | major→arch, minor→feat, patch→fix; epoch folds additively into arch; revision is dropped (metadata only) |
+| `custom` | A `--scheme-regex` with named capture groups | whatever the regex names | group names equal to `arch`/`feat`/`prot`/`fix` map directly; others need `--map` |
+
+`--map <spec>` (e.g. `--map major=arch,minor=feat,patch=fix`) replaces the default mapping entirely. `--prot <N>` overrides the resolved PROT axis afterward, since no legacy scheme encodes API/protocol compatibility on its own. This command only prints the result; it does not write `mvs.json`.
+
 ## Makefile shortcuts
 
 ```bash
@@ -336,6 +366,7 @@ See [docs/INSTALL_AND_CI.md](INSTALL_AND_CI.md) for GitHub Actions examples, pin
 - `70`: output rendering failure
 - `80`: `sync --check` found version files out of sync with the manifest projection
 - `81`: `sync` failed to read or write a version file
+- `82`: `convert-version` could not parse the input, resolve `--scheme-regex`, or apply `--map`
 
 ## Troubleshooting
 

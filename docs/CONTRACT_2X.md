@@ -69,5 +69,6 @@ On load, `mvs-manager` migrates `https://mvs.dev/schema/v1` manifests:
 
 - `release.version_files[]`: `{ path, kind, projection? }`, declaring which on-disk files `mvs-manager sync` keeps in lock-step with the SemVer projection (or the full MVS identity string, with `projection: "full"`). Omitted entirely when empty, so it never appears in manifests that predate it.
 - The `sync` command and its `--format json` output are new in `2.x` and not yet covered by golden contract fixtures; treat its JSON shape as stabilizing rather than frozen until fixtures land.
+- `convert-version` is a new, stateless command (no manifest is read or written) that parses a legacy version string and maps it onto MVS axes for preview purposes; see `docs/USAGE.md`. Its `--format json` output is likewise not yet pinned by golden fixtures.
 
 Golden fixtures under `tests/fixtures/contracts/` are the review gate for this contract.

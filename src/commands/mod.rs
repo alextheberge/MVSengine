@@ -2,6 +2,7 @@
 mod boundary_debug;
 pub mod check_manifest;
 pub mod constraint;
+pub mod convert_version;
 pub mod doctor;
 pub mod generator;
 pub mod init;

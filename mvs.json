@@ -1,21 +1,21 @@
 {
   "$schema": "https://mvs.dev/schema/v2",
   "identity": {
-    "mvs": "2.1.1.1-cli",
+    "mvs": "2.2.2.1-cli",
     "arch": 2,
-    "feat": 1,
-    "prot": 1,
+    "feat": 2,
+    "prot": 2,
     "fix": 1,
     "cont": "cli"
   },
   "compatibility": {
     "host_range": {
       "min_prot": 0,
-      "max_prot": 1
+      "max_prot": 2
     },
     "extension_range": {
       "min_prot": 0,
-      "max_prot": 1
+      "max_prot": 2
     },
     "legacy_shims": []
   },
@@ -62,11 +62,12 @@
     ]
   },
   "evidence": {
-    "feature_hash": "89016f67b6721e081c82194bc7743af4054e98cb7abc6d082667417077dd1f37",
-    "protocol_hash": "d2ba7e651749dc7d5c162600c6b04efe2dcd0862fb0cab7f5f3289ca6474b377",
+    "feature_hash": "2a7d077ec7d3a446fd2abdff08143e87f016c3d00092c508718637a05f4cddd3",
+    "protocol_hash": "09744854c644e49e2891aea528e5f8c3dc4ecb37e2a30e14dea7463d49fa490e",
     "public_api_hash": "6a86f0b108e171c5e4bf8275bed49230b4cec90d0f16270e6eedabeaa6fa11f3",
     "feature_inventory": [
       "constraint_suggestion",
+      "legacy_version_conversion",
       "manager_doctor",
       "manager_self_update",
       "manifest_batch_validation",
@@ -83,6 +84,7 @@
     "protocol_inventory": [
       "cli_check_manifest_command",
       "cli_constraint_command",
+      "cli_convert_version_command",
       "cli_doctor_command",
       "cli_generate_command",
       "cli_init_command",
@@ -314,6 +316,19 @@
         "Protocol incremented due to @mvs-protocol surface drift (example source: src/commands/check_manifest.rs)."
       ],
       "changed_at_unix": 1789576202
+    },
+    {
+      "mvs": "2.2.2.1-cli",
+      "arch": 2,
+      "feat": 2,
+      "prot": 2,
+      "fix": 1,
+      "cont": "cli",
+      "reasons": [
+        "Feature incremented due to @mvs-feature set drift (example source: src/commands/constraint.rs).",
+        "Protocol incremented due to @mvs-protocol surface drift (example source: src/commands/check_manifest.rs)."
+      ],
+      "changed_at_unix": 1789579648
     }
   ]
 }

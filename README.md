@@ -128,6 +128,23 @@ Only the version span inside each file is touched; every other byte of formattin
 
 Supported `kind` values: `cargo_toml`, `npm_package_json`, `pyproject_pep621`, `pyproject_poetry`, `composer_json`, `pubspec_yaml`, `gradle_properties`, `build_gradle`, `pom_xml`, `csproj`, `gemspec_literal`, `ruby_version_constant`, `lua_rockspec`, `plain_version_file`. An optional `projection` of `full` writes the complete `identity.mvs` string instead of the default `semver` projection.
 
+## Migrating From Another Versioning Scheme
+
+`convert-version` parses a legacy version string (SemVer, ZeroVer, PEP 440, Maven/Gradle, .NET four-part, Go module tags, CalVer, a bare build number, Debian/RPM `epoch:version-revision`, or a custom regex) and maps it onto MVS axes, so you can see what a migrated identity would look like before touching `mvs.json`:
+
+```bash
+mvs-manager convert-version --version 1.4.2                 # -> 1.4.0.2-cli (SemVer default mapping)
+mvs-manager convert-version --version 0.3.1                 # ZeroVer: flags minor bumps as often-breaking
+mvs-manager convert-version --version 24.04                 # CalVer: rebases to 1.0.0.0-cli by default
+mvs-manager convert-version --version 24.04 --map year=arch,month=feat,patch=fix  # date-passthrough instead
+mvs-manager convert-version --version "2:1.4.2-3ubuntu1" --scheme debian-rpm      # epoch folds into ARCH
+mvs-manager convert-version --version "1.2.3.4" --scheme dotnet4                  # 4th component flagged, not silently dropped
+mvs-manager convert-version --version "R7-F12-P3" --scheme custom \
+  --scheme-regex '(?P<arch>\d+)-F(?P<feat>\d+)-P(?P<prot>\d+)'                    # fully custom mapping
+```
+
+The default `component -> axis` mapping for each scheme, and every axis not covered by it, is documented in [docs/USAGE.md](docs/USAGE.md). `--map` replaces the mapping entirely; advisories in the output call out anything a scheme's numbering can't fully represent (a dropped `.NET` revision, a folded PEP 440/Debian epoch, CalVer's rebase choice) so nothing is silently discarded. This command only prints a conversion — it doesn't write `mvs.json`; wiring it into an end-to-end migration workflow is tracked as future work.
+
 ## Enforce MVS on Commit
 ```bash
 make install-hooks
@@ -194,6 +211,9 @@ mvs-manager report --base-manifest old-mvs.json --target-manifest new-mvs.json -
 mvs-manager sync --root . --manifest mvs.json --check
 mvs-manager sync --root . --manifest mvs.json --save-detected
 mvs-manager sync --root . --manifest mvs.json --dry-run --format json
+mvs-manager convert-version --version 1.4.2
+mvs-manager convert-version --version 24.04 --map year=arch,month=feat,patch=fix
+mvs-manager convert-version --version "2:1.4.2-3ubuntu1" --scheme debian-rpm
 mvs-manager self-update --check
 mvs-manager self-update
 ```
@@ -507,6 +527,7 @@ Example `report --format json` shape:
 - `70`: output rendering failure
 - `80`: `sync --check` found version files out of sync with the manifest projection
 - `81`: `sync` failed to read or write a version file
+- `82`: `convert-version` could not parse the input, resolve `--scheme-regex`, or apply `--map`
 
 This means CI can treat `20` as “manifest must be regenerated” and `30` as “host/extension contract is incompatible” without scraping human text.
 
