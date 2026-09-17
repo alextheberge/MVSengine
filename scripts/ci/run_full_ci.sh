@@ -8,17 +8,17 @@ cd "$ROOT"
 
 CARGO="${CARGO:-cargo}"
 
-echo "==> fmt --check"
-"$CARGO" fmt -- --check
+echo "==> fmt --check (workspace)"
+"$CARGO" fmt --all -- --check
 
-echo "==> check --all-targets"
-"$CARGO" check --all-targets
+echo "==> check --workspace --all-targets"
+"$CARGO" check --workspace --all-targets
 
-echo "==> clippy -D warnings"
-"$CARGO" clippy --all-targets --all-features -- -D warnings
+echo "==> clippy --workspace -D warnings"
+"$CARGO" clippy --workspace --all-targets --all-features -- -D warnings
 
-echo "==> test --all-targets"
-"$CARGO" test --all-targets
+echo "==> test --workspace --all-targets"
+"$CARGO" test --workspace --all-targets
 
 echo "==> fixture-smoke (generate + lint on fixture project)"
 tmp_dir="$(mktemp -d)"

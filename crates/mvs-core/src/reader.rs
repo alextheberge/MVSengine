@@ -4,9 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::mvs::manifest::{
-    InventoryDiff, LegacyShim, Manifest, ProtocolRange, StringInventoryDiff,
-};
+use crate::manifest::{InventoryDiff, LegacyShim, Manifest, ProtocolRange, StringInventoryDiff};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -868,7 +866,7 @@ mod tests {
     use super::{
         compare_manifests, validate_host_extension, ValidationAxis, ValidationCheckStatus,
     };
-    use crate::mvs::manifest::{LegacyShim, Manifest, ProtocolRange, PublicApiSnapshot};
+    use crate::manifest::{LegacyShim, Manifest, ProtocolRange, PublicApiSnapshot};
 
     fn base_manifest(context: &str, prot: u64) -> Manifest {
         let mut manifest = Manifest::default_for_context(context);

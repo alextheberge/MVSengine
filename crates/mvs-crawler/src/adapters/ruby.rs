@@ -7,7 +7,7 @@ use super::super::{
     extract_tree_sitter_prefix_signature, named_children, node_text,
     normalize_tree_sitter_signature, trim_signature_to_keywords,
 };
-use crate::mvs::manifest::RubyExportFollowing;
+use mvs_core::manifest::RubyExportFollowing;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum Visibility {

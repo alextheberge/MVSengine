@@ -17,7 +17,7 @@ use std::path::Path;
 use tree_sitter::Node;
 
 use super::language::SourceLanguage;
-use crate::mvs::manifest::{
+use mvs_core::manifest::{
     GoExportFollowing, LuaExportFollowing, PythonExportFollowing, RubyExportFollowing,
     TsExportFollowing,
 };

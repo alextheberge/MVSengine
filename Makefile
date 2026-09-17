@@ -76,23 +76,23 @@ print-config: ## Print effective build/runtime configuration.
 bootstrap: ## Pre-fetch Rust dependencies.
 	$(CARGO) fetch
 
-fmt: ## Format Rust code.
-	$(CARGO) fmt
+fmt: ## Format Rust code (whole workspace).
+	$(CARGO) fmt --all
 
-fmt-check: ## Verify formatting.
-	$(CARGO) fmt -- --check
+fmt-check: ## Verify formatting (whole workspace).
+	$(CARGO) fmt --all -- --check
 
-check: ## Type-check all targets.
-	$(CARGO) check --all-targets
+check: ## Type-check all targets (whole workspace).
+	$(CARGO) check --workspace --all-targets
 
-clippy: ## Run strict clippy lints.
-	$(CARGO) clippy --all-targets --all-features -- -D warnings
+clippy: ## Run strict clippy lints (whole workspace).
+	$(CARGO) clippy --workspace --all-targets --all-features -- -D warnings
 
-test: ## Run all unit + integration tests.
-	$(CARGO) test --all-targets
+test: ## Run all unit + integration tests (whole workspace).
+	$(CARGO) test --workspace --all-targets
 
-test-unit: ## Run library/unit tests only.
-	$(CARGO) test --lib
+test-unit: ## Run library/unit tests only (whole workspace).
+	$(CARGO) test --workspace --lib
 
 test-integration: ## Run integration CLI tests.
 	$(CARGO) test --test integration_cli

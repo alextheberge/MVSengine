@@ -1,0 +1,12 @@
+# TEMPLATE — not yet submitted to microsoft/winget-pkgs. See ../README.md before using.
+PackageIdentifier: AlexTheberge.MvsManager
+PackageVersion: 0.0.0
+PackageLocale: en-US
+Publisher: Alex Theberge
+PackageName: mvs-manager
+License: AGPL-3.0-only
+LicenseUrl: https://github.com/alextheberge/MVSengine/blob/master/LICENSE
+ShortDescription: Multidimensional (ARCH.FEAT.PROT.FIX-CONT) post-SemVer versioning CLI
+PackageUrl: https://github.com/alextheberge/MVSengine
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

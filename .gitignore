@@ -4,3 +4,4 @@
 /fuzz/corpus/
 /fuzz/target/
 /.mvs/
+/crates/*/pkg/

@@ -7,7 +7,7 @@ use super::super::{
     extract_tree_sitter_prefix_signature, named_children, node_text, normalize_signature,
     normalize_tree_sitter_signature,
 };
-use crate::mvs::manifest::LuaExportFollowing;
+use mvs_core::manifest::LuaExportFollowing;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum LuaDialect {

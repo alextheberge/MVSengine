@@ -1,8 +1,16 @@
 # MVS Engine (`mvs-manager`)
 
+[![Versioned with MVS](https://img.shields.io/badge/versioned%20with-MVS-6e40c9)](https://github.com/alextheberge/MVSengine)
+
 Cross-platform CLI implementing multidimensional versioning: `[ARCH].[FEAT].[PROT].[FIX]-[CONT]`.
 
-Package SemVer / release tags project to `ARCH.FEAT.FIX`. Protocol (`PROT`) stays in `mvs.json` for host/extension compatibility.
+Package SemVer / release tags project to `ARCH.FEAT.FIX`. Protocol (`PROT`) stays in `mvs.json` for host/extension compatibility. The scheme itself is specified independently of this tool in [docs/SPEC.md](docs/SPEC.md), so other implementations can exist.
+
+To mark your own project's README, add the same badge:
+
+```markdown
+[![Versioned with MVS](https://img.shields.io/badge/versioned%20with-MVS-6e40c9)](https://github.com/alextheberge/MVSengine)
+```
 
 ## Editor: VS Code, Cursor, VSCodium
 
@@ -472,12 +480,28 @@ Pattern rules:
 - The easiest way to author patterns is to copy a signature from `mvs.json.evidence.public_api_inventory` or `lint --format json`
 - Legacy Rust function patterns with duplicated `fn` still match during migration, but regenerated manifests rewrite them to the canonical form
 
+## Embedding & Distribution (v3.0)
+
+The Rust code is split into a small Cargo workspace so the versioning logic
+is embeddable outside the CLI: `mvs-core` (manifest, hashing, scheme
+translators — no network/process deps), `mvs-crawler` (the tree-sitter
+scanners), and `mvs-manager` (this CLI). `crates/mvs-wasm` binds `mvs-core`'s
+`convert-version` logic to WASM; try it live in the
+[interactive playground](https://claude.ai/artifact/XWg1XtbGqvtNXSwQSFHeaF).
+
+Distribution channels (GitHub Releases, `cargo binstall`, Docker, Nix,
+Homebrew/Scoop/winget templates) are cataloged in
+[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) — several are templates or
+untested-in-CI at this point, and that document says exactly which.
+`napi-rs`/`pyo3` bindings and 6 additional language crawlers (Elixir, Scala,
+C/C++, Zig, Haskell, OCaml) are planned but not yet built.
+
 ## Roadmap
 
 - Usage details: [docs/USAGE.md](docs/USAGE.md)
 - Release workflow: [docs/RELEASE.md](docs/RELEASE.md)
 - `1.x` readiness roadmap: [docs/TODO_1.0.md](docs/TODO_1.0.md)
-- Not yet built: crawler adapters that treat OpenAPI, GraphQL SDL, `.proto`, JSON Schema, and Avro files as public API/protocol surface, for teams whose real protocol is a schema rather than a function signature.
+- Not yet built: crawler adapters that treat OpenAPI, GraphQL SDL, `.proto`, JSON Schema, and Avro files as public API/protocol surface, for teams whose real protocol is a schema rather than a function signature; crawlers for Elixir, Scala, C/C++, Zig, Haskell, and OCaml; `napi-rs`/`pyo3` bindings; a hosted `mvs.dev` (schema + playground); and publishing any of the Docker/Homebrew/Scoop/winget/Nix packaging templates to their respective registries.
 
 ## Machine-Readable Output
 

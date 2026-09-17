@@ -13,7 +13,7 @@ use std::{fs, ops::Range, path::Path};
 use anyhow::{anyhow, Context, Result};
 use regex::Regex;
 
-use crate::mvs::manifest::{VersionFileEntry, VersionFileKind, VersionProjection};
+use crate::manifest::{VersionFileEntry, VersionFileKind, VersionProjection};
 
 const SIMPLE_DETECTION_CANDIDATES: &[(&str, VersionFileKind)] = &[
     ("Cargo.toml", VersionFileKind::CargoToml),
@@ -132,10 +132,7 @@ pub fn write_version(root: &Path, entry: &VersionFileEntry, new_version: &str) -
 
 /// Convenience for computing what should be written into `entry` from a
 /// manifest identity via its declared (or default) projection.
-pub fn projected_version(
-    entry: &VersionFileEntry,
-    identity: &crate::mvs::manifest::Identity,
-) -> String {
+pub fn projected_version(entry: &VersionFileEntry, identity: &crate::manifest::Identity) -> String {
     entry.projection.project(identity)
 }
 
@@ -494,7 +491,7 @@ fn narrow_before_rockspec_revision(content: &str, span: Range<usize>) -> Range<u
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mvs::manifest::Identity;
+    use crate::manifest::Identity;
     use std::fs;
     use tempfile_shim::TempDir;
 

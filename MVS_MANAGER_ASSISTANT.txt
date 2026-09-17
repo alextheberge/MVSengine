@@ -1,6 +1,6 @@
 You are preparing this project for `mvs-manager`, a multidimensional version manager that tracks:
 
-ARCH.FEAT.PROT-CONT
+ARCH.FEAT.PROT.FIX-CONT
 
 Your job is to make this repository scannable and verifiable by `mvs-manager` without changing behavior unless required.
 
@@ -8,9 +8,12 @@ Work instructions:
 
 Public contract note:
 
-- The stable `1.x` manifest and command-output contract is documented in `docs/CONTRACT_1X.md`.
+- The stable `1.x` manifest and command-output contract is documented in `docs/CONTRACT_1X.md`; the current `2.x` contract (adds `migrate`, `sync`, `suggest-decorators`, `range`, and the `release.version_files` manifest block) is in `docs/CONTRACT_2X.md`.
+- The versioning scheme itself — independent of this tool — is specified in `docs/SPEC.md`.
 - Golden fixtures under `tests/fixtures/contracts/` are the review gate for changes to canonical manifest shape and machine-readable output.
 - Use `mvs-manager report --base-manifest <old> --target-manifest <new> --format json` when you need a manifest-to-manifest compatibility diff for release automation or review.
+- If the project already has legacy version tags/history (SemVer, ZeroVer, CalVer, PEP 440, etc.) rather than starting from nothing, prefer `mvs-manager migrate detect` / `migrate plan` / `migrate apply` over hand-writing `mvs.json` — see `docs/migrations/` for ecosystem-specific walkthroughs. Use `mvs-manager sync --check` in CI to keep `mvs.json` and every version file (Cargo.toml, package.json, pyproject.toml, etc.) in agreement.
+- Use `mvs-manager suggest-decorators` to get a starting proposal for `@mvs-feature`/`@mvs-protocol` placement from the existing public-API inventory, instead of hand-placing every decorator from scratch.
 
 1. Initialize or refresh the manifest.
    - If `mvs.json` does not exist, create it by running:

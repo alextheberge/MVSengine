@@ -51,6 +51,9 @@
       "rust:enum *Arg",
       "rust:enum OutputFormat",
       "rust:struct *Args"
+    ],
+    "exclude_paths": [
+      "crates"
     ]
   },
   "release": {

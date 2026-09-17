@@ -9,7 +9,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::mvs::hashing::hash_items;
+use crate::hashing::hash_items;
 
 pub const SCHEMA_V1: &str = "https://mvs.dev/schema/v1";
 pub const SCHEMA_V2: &str = "https://mvs.dev/schema/v2";

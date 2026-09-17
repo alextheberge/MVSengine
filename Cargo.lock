@@ -298,6 +298,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "constant_time_eq"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -991,25 +1001,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "mvs-manager"
+name = "mvs-core"
 version = "2.5.1"
 dependencies = [
  "anyhow",
- "assert_cmd",
- "clap",
- "flate2",
- "minisign",
- "mockito",
- "predicates",
- "proptest",
- "quote",
  "regex",
- "semver",
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "mvs-crawler"
+version = "2.5.1"
+dependencies = [
+ "anyhow",
+ "mvs-core",
+ "quote",
+ "regex",
+ "serde",
+ "serde_json",
  "syn",
- "tar",
  "toml",
  "tree-sitter",
  "tree-sitter-c-sharp",
@@ -1025,9 +1037,44 @@ dependencies = [
  "tree-sitter-ruby",
  "tree-sitter-swift",
  "tree-sitter-typescript",
+ "walkdir",
+]
+
+[[package]]
+name = "mvs-manager"
+version = "2.5.1"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "clap",
+ "flate2",
+ "minisign",
+ "mockito",
+ "mvs-core",
+ "mvs-crawler",
+ "predicates",
+ "proptest",
+ "regex",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "toml",
  "ureq",
  "walkdir",
  "zip",
+]
+
+[[package]]
+name = "mvs-wasm"
+version = "2.5.1"
+dependencies = [
+ "console_error_panic_hook",
+ "mvs-core",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1662,7 +1709,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

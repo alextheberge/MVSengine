@@ -7,7 +7,7 @@ use super::super::{
     children_by_field_name, extract_tree_sitter_prefix_signature, is_public_python_name,
     named_children, node_text, normalize_tree_sitter_signature,
 };
-use crate::mvs::manifest::PythonExportFollowing;
+use mvs_core::manifest::PythonExportFollowing;
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub(crate) struct PythonModuleIndex {

@@ -15,7 +15,7 @@
 
 use anyhow::{bail, Result};
 
-use crate::mvs::manifest::{Identity, Manifest};
+use crate::manifest::{Identity, Manifest};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ecosystem {
@@ -141,7 +141,7 @@ pub fn format_for_ecosystem(ecosystem: Ecosystem, range: &ResolvedRange) -> Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mvs::manifest::{HistoryEntry, Identity, Manifest};
+    use crate::manifest::{HistoryEntry, Identity, Manifest};
 
     fn history_entry(arch: u64, feat: u64, prot: u64, fix: u64) -> HistoryEntry {
         HistoryEntry {

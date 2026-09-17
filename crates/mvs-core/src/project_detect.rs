@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::mvs::manifest::{
+use crate::manifest::{
     GoExportFollowing, PythonExportFollowing, RustExportFollowing, ScanPolicy, TsExportFollowing,
 };
 

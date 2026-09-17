@@ -7,7 +7,7 @@ use std::{
 use tree_sitter::Node;
 use tree_sitter::Parser;
 
-use crate::mvs::manifest::GoExportFollowing;
+use mvs_core::manifest::GoExportFollowing;
 
 use super::super::{
     children_by_field_name, extract_tree_sitter_prefix_before_fields,

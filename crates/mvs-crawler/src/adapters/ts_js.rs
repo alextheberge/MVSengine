@@ -13,7 +13,7 @@ use super::super::{
     extract_tree_sitter_prefix_signature, named_children, node_text, node_text_range,
     normalize_export_statement_signature, normalize_signature,
 };
-use crate::mvs::manifest::TsExportFollowing;
+use mvs_core::manifest::TsExportFollowing;
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub(crate) struct TsModuleIndex {

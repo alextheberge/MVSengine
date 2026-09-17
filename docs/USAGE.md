@@ -1,5 +1,10 @@
 # Usage Guide
 
+Migrating an existing project rather than starting from nothing? See
+[docs/migrations/](migrations/) for ecosystem-specific walkthroughs, and
+[docs/SPEC.md](SPEC.md) for what the `ARCH.FEAT.PROT.FIX` axes mean
+independent of this CLI.
+
 ## 1) Generate or update `mvs.json`
 
 ```bash

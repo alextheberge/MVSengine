@@ -1,0 +1,31 @@
+{
+  "//": "TEMPLATE — not yet submitted to any bucket. See ../README.md before using.",
+  "version": "0.0.0",
+  "description": "Multidimensional (ARCH.FEAT.PROT.FIX-CONT) post-SemVer versioning CLI",
+  "homepage": "https://github.com/alextheberge/MVSengine",
+  "license": "AGPL-3.0-only",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/alextheberge/MVSengine/releases/download/v$version/mvs-manager-$version-x86_64-pc-windows-msvc.zip",
+      "hash": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "arm64": {
+      "url": "https://github.com/alextheberge/MVSengine/releases/download/v$version/mvs-manager-$version-aarch64-pc-windows-msvc.zip",
+      "hash": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "bin": "mvs-manager.exe",
+  "checkver": {
+    "github": "https://github.com/alextheberge/MVSengine"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/alextheberge/MVSengine/releases/download/v$version/mvs-manager-$version-x86_64-pc-windows-msvc.zip"
+      },
+      "arm64": {
+        "url": "https://github.com/alextheberge/MVSengine/releases/download/v$version/mvs-manager-$version-aarch64-pc-windows-msvc.zip"
+      }
+    }
+  }
+}

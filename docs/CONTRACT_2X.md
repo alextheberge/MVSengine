@@ -4,6 +4,8 @@ This document defines the public compatibility contract for `mvs-manager` `2.x` 
 
 It supersedes the three-axis identity shape from [CONTRACT_1X.md](CONTRACT_1X.md). Host/extension compatibility rules, evidence inventories, scan policy, and command JSON remain additive where noted below.
 
+v3.0 split the implementation into a Cargo workspace (`mvs-core`, `mvs-crawler`, `mvs-manager`; see [DISTRIBUTION.md](DISTRIBUTION.md#crate-layout-v30)) purely as an internal refactor — every golden fixture in `tests/fixtures/contracts/` is byte-identical before and after, so nothing in this document changed as a result.
+
 ## Identity
 
 Canonical form:
